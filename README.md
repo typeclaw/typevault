@@ -41,14 +41,14 @@ typevault run --only github/bot -- agent-browser fill @e3 "$GITHUB_BOT_PASSWORD"
 `<service>[/<account>]#<field>`: `openai`, `github/bot#password`, `github/personal#totp`.
 No environments, no domains, no group in the name. Fields come from the type:
 
-| Type | Fields (default first) |
-| --- | --- |
-| `password` | password, username, totp, url |
-| `api_key` | key |
-| `oauth` | access_token, refresh_token, expires_at, token_url, client_id, client_secret |
-| `ssh` | private_key, public_key |
-| `totp` | seed |
-| `note` | text |
+| Type       | Fields (default first)                                                       |
+| ---------- | ---------------------------------------------------------------------------- |
+| `password` | password, username, totp, url                                                |
+| `api_key`  | key                                                                          |
+| `oauth`    | access_token, refresh_token, expires_at, token_url, client_id, client_secret |
+| `ssh`      | private_key, public_key                                                      |
+| `totp`     | seed                                                                         |
+| `note`     | text                                                                         |
 
 Env names are derived: `github/bot#password` becomes `GITHUB_BOT_PASSWORD`. Override the main field's name with `--env`.
 In `run`, TOTP fields carry the current code, never the seed. Secret fields are never accepted as `--field` arguments
@@ -70,12 +70,12 @@ unrelated groups hold it, reads of that name fail until the operator keeps one: 
 
 ## Grants
 
-| | Live (default) | Sealed (`--sealed`) |
-| --- | --- | --- |
-| Needs the daemon | yes | no |
-| Audit | every read | issue time (reads best-effort) |
-| TTL / revocation | enforced / instant | advisory / impossible |
-| Use for | laptops, containers, typeclaw | CI, one-shot containers |
+|                  | Live (default)                | Sealed (`--sealed`)            |
+| ---------------- | ----------------------------- | ------------------------------ |
+| Needs the daemon | yes                           | no                             |
+| Audit            | every read                    | issue time (reads best-effort) |
+| TTL / revocation | enforced / instant            | advisory / impossible          |
+| Use for          | laptops, containers, typeclaw | CI, one-shot containers        |
 
 A sealed grant can write, within its groups and `--only`, until its certificate expires by the **reader's** clock.
 A daemon (every minute) or `typevault doctor --fix` adopts those writes by re-signing them. Writes nobody adopts
