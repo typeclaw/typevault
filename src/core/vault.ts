@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { randomHex, type SecretKey } from './crypto'
@@ -111,7 +111,9 @@ export class Vault {
       const problems: ScanProblem[] = []
       const files = existsSync(this.layout.entries) ? readdirSync(this.layout.entries) : []
       const marks = new RevisionMarks(this.layout.revisionsFile)
-      for (const file of files.filter((name) => name.endsWith('.json'))) {
+      for (const file of files.filter(
+        (name) => name.endsWith('.json') && lstatSync(join(this.layout.entries, name)).isFile(),
+      )) {
         const parsed = EnvelopeSchema.safeParse(parseJson(readFileSync(join(this.layout.entries, file))))
         if (!parsed.success) {
           problems.push({ file, reason: 'malformed entry file' })

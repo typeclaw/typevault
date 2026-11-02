@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { decodeSecretKey, publicKeyOf, type SecretKey, unseal } from './crypto'
@@ -82,7 +82,7 @@ export class Keyring {
     holderKey: SecretKey,
   ): Promise<SecretKey | undefined> {
     const path = join(this.#layout.vault, wrapPath(group, gen, holder))
-    if (!existsSync(path)) return undefined
+    if (!existsSync(path) || !lstatSync(path).isFile()) return undefined
     const key = decodeSecretKey(fromUtf8(await unseal([holderKey.identity], readFileSync(path))))
     // A wrap that doesn't match the operator-signed public key is ignored rather than trusted.
     const expected = this.#state.groups[group]
