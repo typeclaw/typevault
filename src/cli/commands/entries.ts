@@ -5,6 +5,7 @@ import { TypeVaultError } from '../../core/errors'
 import {
   type EntryType,
   fieldsOf,
+  isSecretField,
   parseEntryName,
   parseEntryRef,
   parseEntryType,
@@ -63,9 +64,20 @@ function parseFields(type: EntryType, pairs: readonly string[]): Record<string, 
       const field = eq === -1 ? '' : pair.slice(0, eq)
       if (!allowed.includes(field))
         throw new TypeVaultError('invalid', `${type} entries have fields: ${allowed.join(', ')}`)
+      if (isSecretField(field)) {
+        throw new TypeVaultError('invalid', `pass ${field} on stdin (--stdin or --stdin-json), not as an argument`)
+      }
       return [field, pair.slice(eq + 1)]
     }),
   )
+}
+
+function parseFieldsJson(type: EntryType, text: string): Record<string, string> {
+  const fields = z.record(z.string(), z.string()).parse(JSON.parse(text))
+  const allowed = fieldsOf(type)
+  const stray = Object.keys(fields).find((field) => !allowed.includes(field))
+  if (stray !== undefined) throw new TypeVaultError('invalid', `${type} entries have fields: ${allowed.join(', ')}`)
+  return fields
 }
 
 export const set = defineCommand({
@@ -89,7 +101,12 @@ export const set = defineCommand({
     const type = args.type === undefined ? existing?.type : parseEntryType(args.type)
     if (type === undefined) throw new TypeVaultError('invalid', 'new entries need --type')
     const given = parseFields(type, repeated(rawArgs, '--field'))
-    const fields = { ...given, ...(args.stdin ? { [primaryField(type)]: await readStdin() } : {}) }
+    const fromStdin = args['stdin-json']
+      ? parseFieldsJson(type, await readStdin())
+      : args.stdin
+        ? { [primaryField(type)]: await readStdin() }
+        : {}
+    const fields = { ...given, ...fromStdin }
     const base = existing !== undefined && !args.replace ? (await access.get(name, 'merge fields for set')).fields : {}
     const ifRev = args['if-rev'] === undefined ? undefined : z.coerce.number().int().parse(args['if-rev'])
     const tags = csv(args.tag)

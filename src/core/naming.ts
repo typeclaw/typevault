@@ -51,6 +51,20 @@ export function parseEntryRef(input: string): EntryRef {
   return { name: parseEntryName(input.slice(0, hash)), field }
 }
 
+/** Fields that hold secrets: never accepted on the command line, where `ps` and shell history see them. */
+const SECRET_FIELDS: ReadonlySet<string> = new Set([
+  'password',
+  'totp',
+  'key',
+  'access_token',
+  'refresh_token',
+  'client_secret',
+  'private_key',
+  'seed',
+  'text',
+])
+export const isSecretField = (field: string): boolean => SECRET_FIELDS.has(field)
+
 export const fieldsOf = (type: EntryType): readonly string[] => ENTRY_TYPES[type].fields
 export const primaryField = (type: EntryType): string => ENTRY_TYPES[type].primary
 
