@@ -84,6 +84,15 @@ describe('live grants', () => {
     await expect(child.list()).rejects.toMatchObject({ code: 'denied' })
   })
 
+  it('keeps a capped socket away from grants it did not issue and from the audit trail', async () => {
+    const { token } = await grant('default', { groups: ['member'], label: 'operator:session' })
+    const bot = layout.adminSocket('bot')
+    await callDaemon(bot, '/v1/revoke', { label: 'operator:session' }, z.json())
+    expect((await new LiveAccess(layout.agentSocket, token).list()).length).toBe(2)
+    expect(await callDaemon(bot, '/v1/grants', {}, z.array(z.json()))).toEqual([])
+    await expect(callDaemon(bot, '/v1/audit', {}, z.json())).rejects.toMatchObject({ code: 'denied' })
+  })
+
   it('rejects an unknown token', async () => {
     await expect(new LiveAccess(layout.agentSocket, 'tvl1.nope.nope').list()).rejects.toMatchObject({ code: 'denied' })
   })

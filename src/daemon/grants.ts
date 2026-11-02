@@ -18,6 +18,8 @@ const RecordSchema = z.object({
   exp: z.iso.datetime(),
   created: z.iso.datetime(),
   parent: z.string().optional(),
+  /** The admin socket that issued it (derived grants inherit it). */
+  ceiling: z.string(),
   revoked: z.boolean().optional(),
 })
 export type GrantRecord = z.infer<typeof RecordSchema>
@@ -27,6 +29,7 @@ export type GrantRequest = {
   readonly ttlMs: number
   readonly label: string
   readonly parent?: string
+  readonly ceiling: string
 }
 export type ResolvedGrant = { readonly record: GrantRecord; readonly chain: ScopeChain }
 
@@ -64,6 +67,7 @@ export class GrantStore {
       only: [...request.only],
       exp: new Date(exp).toISOString(),
       created: new Date().toISOString(),
+      ceiling: request.ceiling,
       ...(request.parent === undefined ? {} : { parent: request.parent }),
     }
     this.#records.push(record)
