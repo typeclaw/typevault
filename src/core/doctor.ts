@@ -1,0 +1,74 @@
+import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+
+import { type Envelope, EnvelopeSchema, verifyEnvelope } from './entries'
+import { atomicWrite } from './fsx'
+import { withLock } from './lock'
+import type { ScanProblem, Vault } from './vault'
+
+export type DoctorReport = {
+  readonly problems: readonly ScanProblem[]
+  readonly mergesResolved: readonly string[]
+  readonly duplicatesRemoved: readonly string[]
+  readonly needsRotation: readonly string[]
+}
+
+const CONFLICT = /^<<<<<<< [^\n]*\n([\s\S]*?)^=======\n([\s\S]*?)^>>>>>>> [^\n]*\n?/m
+
+function parseSide(text: string): Envelope | undefined {
+  try {
+    const parsed = EnvelopeSchema.safeParse(JSON.parse(text))
+    return parsed.success ? parsed.data : undefined
+  } catch (error) {
+    if (error instanceof SyntaxError) return undefined
+    throw error
+  }
+}
+
+/** Splits a git conflict in an entry file into both sides and keeps the highest validly signed revision. */
+function resolveMerge(vault: Vault, file: string): boolean {
+  const path = join(vault.layout.entries, file)
+  const text = readFileSync(path, 'utf8')
+  const match = CONFLICT.exec(text)
+  if (match === null) return false
+  const before = text.slice(0, match.index)
+  const after = text.slice(match.index + match[0].length)
+  const sides = [match[1] ?? '', match[2] ?? '']
+    .map((side) => parseSide(before + side + after))
+    .filter((side): side is Envelope => side !== undefined && verifyEnvelope(side, vault.state) === undefined)
+  const winner = sides.reduce<Envelope | undefined>(
+    (best, side) =>
+      best === undefined || side.rev > best.rev || (side.rev === best.rev && side.at > best.at) ? side : best,
+    undefined,
+  )
+  if (winner === undefined) return false
+  atomicWrite(path, `${JSON.stringify(winner, null, 2)}\n`)
+  return true
+}
+
+/** Verifies every entry, resolves git merge conflicts and duplicate names. `fix` applies the repairs. */
+export function doctor(vault: Vault, fix: boolean): Promise<DoctorReport> {
+  return withLock(vault.layout.lockFile, 'exclusive', async () => {
+    vault.refresh()
+    const files = existsSync(vault.layout.entries) ? readdirSync(vault.layout.entries) : []
+    const mergesResolved = fix ? files.filter((file) => file.endsWith('.json') && resolveMerge(vault, file)) : []
+    const { entries, problems } = await vault.scan()
+    const byName = Map.groupBy(entries, (entry) => entry.payload.name)
+    const duplicatesRemoved: string[] = []
+    for (const [name, copies] of byName) {
+      if (copies.length < 2) continue
+      const [keep, ...drop] = copies.toSorted(
+        (a, b) => b.envelope.rev - a.envelope.rev || b.envelope.at.localeCompare(a.envelope.at),
+      )
+      if (keep === undefined) continue
+      for (const copy of drop) {
+        if (fix) rmSync(join(vault.layout.entries, `${copy.envelope.id}.json`))
+        duplicatesRemoved.push(`${name} (${copy.envelope.id})`)
+      }
+    }
+    const needsRotation = entries
+      .filter((entry) => entry.payload.needsRotation === true)
+      .map((entry) => entry.payload.name)
+    return { problems, mergesResolved, duplicatesRemoved, needsRotation }
+  })
+}
