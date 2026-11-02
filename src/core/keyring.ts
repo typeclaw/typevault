@@ -2,8 +2,8 @@ import { existsSync, lstatSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { decodeSecretKey, publicKeyOf, type SecretKey, unseal } from './crypto'
-import { fromUtf8 } from './encoding'
 import { TypeVaultError } from './errors'
+import { assertNoSymlinks } from './fsx'
 import type { Layout } from './layout'
 import { includersOf, type VaultState } from './state'
 
@@ -82,15 +82,17 @@ export class Keyring {
     holder: WrapHolder,
     holderKey: SecretKey,
   ): Promise<SecretKey | undefined> {
-    const path = join(this.#layout.vault, wrapPath(group, gen, holder))
+    const rel = wrapPath(group, gen, holder)
+    assertNoSymlinks(this.#layout.vault, rel)
+    const path = join(this.#layout.vault, rel)
     if (!existsSync(path) || !lstatSync(path).isFile()) return undefined
-    const key = await unseal([holderKey.identity], readFileSync(path)).then(
-      (bytes) => decodeSecretKey(fromUtf8(bytes)),
-      (error: unknown) => {
+    // Wrap files aren't signed and the operator's recipient is public, so a planted wrap must fail quietly.
+    const key = await unseal([holderKey.identity], readFileSync(path))
+      .then((bytes) => decodeSecretKey(new TextDecoder().decode(bytes)))
+      .catch((error: unknown) => {
         if (error instanceof TypeVaultError) return undefined
         throw error
-      },
-    )
+      })
     if (key === undefined) return undefined
     // A wrap that doesn't match the operator-signed public key is ignored rather than trusted.
     const expected = this.#state.groups[group]

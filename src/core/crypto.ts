@@ -40,7 +40,16 @@ export const encodeSecretKey = (key: SecretKey): string =>
 export function decodeSecretKey(text: string): SecretKey {
   const trimmed = text.trim()
   if (!trimmed.startsWith(KEY_PREFIX)) throw new TypeVaultError('invalid', 'not a typevault key')
-  const parsed = EncodedKeySchema.safeParse(JSON.parse(fromUtf8(fromBase64Url(trimmed.slice(KEY_PREFIX.length)))))
+  let raw: unknown
+  try {
+    raw = JSON.parse(fromUtf8(fromBase64Url(trimmed.slice(KEY_PREFIX.length))))
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new TypeVaultError('invalid', 'malformed typevault key')
+    }
+    throw error
+  }
+  const parsed = EncodedKeySchema.safeParse(raw)
   if (!parsed.success) throw new TypeVaultError('invalid', 'malformed typevault key')
   const signSecret = fromBase64(parsed.data.ed)
   if (signSecret.length !== 32) throw new TypeVaultError('invalid', 'malformed typevault signing key')
