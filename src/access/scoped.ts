@@ -5,7 +5,15 @@ import { type EntryName, matchesOnly } from '../core/naming'
 import type { StoredEntry, Vault } from '../core/vault'
 import { needsRefresh, refreshOAuth } from '../oauth/refresh'
 import { allowsEntry, allowsGroup, type ScopeChain } from './scope'
-import { type Access, type EntrySummary, type EntryValue, type SetInput, toSummary, toValue } from './types'
+import {
+  type Access,
+  type EntrySummary,
+  type EntryValue,
+  entryInputOf,
+  type SetInput,
+  toSummary,
+  toValue,
+} from './types'
 
 export type ScopedIdentity = {
   readonly mode: AuditMode
@@ -121,9 +129,9 @@ export class ScopedVault implements Access {
     if (existing !== undefined && !this.#allows(existing)) {
       throw new TypeVaultError('denied', `the name ${input.name} is not available to this grant`)
     }
-    const { ifRev, ...rest } = input
+    const { ifRev } = input
     const stored = await this.#vault.put(
-      { ...rest, group },
+      entryInputOf(input, group),
       await this.#signerFor(group),
       ifRev === undefined ? {} : { ifRev },
     )

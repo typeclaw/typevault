@@ -23,12 +23,23 @@ export type SetInput = {
   readonly name: EntryName
   readonly type: EntryType
   readonly fields: Readonly<Record<string, string>>
-  readonly group?: string
-  readonly env?: string
-  readonly origin?: string
-  readonly tags?: readonly string[]
-  readonly ifRev?: number
+  readonly group?: string | undefined
+  readonly env?: string | undefined
+  readonly origin?: string | undefined
+  readonly tags?: readonly string[] | undefined
+  readonly ifRev?: number | undefined
 }
+
+/** The vault-level input for a write, without the optional keys a parsed request leaves undefined. */
+export const entryInputOf = (input: SetInput, group: string) => ({
+  name: input.name,
+  type: input.type,
+  fields: input.fields,
+  group,
+  ...(input.env === undefined ? {} : { env: input.env }),
+  ...(input.origin === undefined ? {} : { origin: input.origin }),
+  ...(input.tags === undefined ? {} : { tags: input.tags }),
+})
 
 /** What a CLI command can do with secrets, whether the values come from a daemon, a sealed grant or a local key. */
 export interface Access {

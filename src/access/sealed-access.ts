@@ -7,7 +7,7 @@ import { type EntryName, matchesOnly } from '../core/naming'
 import { Vault } from '../core/vault'
 import { allowsEntry } from './scope'
 import { type SealedBundle, sealedSigningSecret } from './sealed'
-import { type Access, type EntrySummary, type EntryValue, type SetInput, toSummary } from './types'
+import { type Access, type EntrySummary, type EntryValue, entryInputOf, type SetInput, toSummary } from './types'
 
 type Env = Readonly<Record<string, string | undefined>>
 
@@ -79,9 +79,9 @@ export class SealedAccess implements Access {
       throw new TypeVaultError('denied', `this grant cannot write ${input.name} in group "${group ?? '?'}"`)
     }
     const prior = bundle.entries.find((value) => value.name === input.name)
-    const { ifRev, ...rest } = input
+    const { ifRev } = input
     const stored = await vault.put(
-      { ...rest, group },
+      entryInputOf(input, group),
       { ref: { kind: 'cert', cert: bundle.write.cert }, signSecret: sealedSigningSecret(bundle) },
       { ...(ifRev === undefined ? {} : { ifRev }), ...(prior === undefined ? {} : { base: prior }) },
     )

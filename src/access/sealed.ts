@@ -8,28 +8,14 @@ import { generateSigningKey, randomHex, seal, unseal } from '../core/crypto'
 import { fromBase64, fromBase64Url, fromUtf8, toBase64, toBase64Url, utf8 } from '../core/encoding'
 import { CertSchema, issueCert, signerOf } from '../core/entries'
 import { TypeVaultError } from '../core/errors'
-import { isEntryType, parseEntryName } from '../core/naming'
 import { reach } from '../core/state'
 import type { Vault } from '../core/vault'
+import { EntryValueSchema, toEntryValue } from './schemas'
 import { allowsEntry, type GrantScope } from './scope'
 import { type EntryValue, toValue } from './types'
 
 const PREFIX = 'tvg1:'
 
-const ValueSchema = z.object({
-  id: z.string(),
-  name: z.string().transform((name) => parseEntryName(name)),
-  type: z.string().refine(isEntryType),
-  group: z.string(),
-  rev: z.number().int(),
-  tags: z.array(z.string()),
-  created: z.string(),
-  rotated: z.string(),
-  needsRotation: z.boolean(),
-  fields: z.record(z.string(), z.string()),
-  env: z.string().optional(),
-  origin: z.string().optional(),
-})
 const BundleSchema = z.object({
   v: z.literal(1),
   id: z.string(),
@@ -37,7 +23,7 @@ const BundleSchema = z.object({
   groups: z.array(z.string()),
   only: z.array(z.string()),
   exp: z.iso.datetime(),
-  entries: z.array(ValueSchema),
+  entries: z.array(EntryValueSchema),
   write: z.object({ signSecret: z.string(), cert: CertSchema }),
 })
 
@@ -102,11 +88,7 @@ export async function readSealedGrant(raw: string): Promise<SealedBundle> {
   return {
     ...rest,
     scope: { groups, only },
-    entries: entries.flatMap((entry) => {
-      const { type, env, origin, ...value } = entry
-      if (!isEntryType(type)) return []
-      return [{ ...value, type, ...(env === undefined ? {} : { env }), ...(origin === undefined ? {} : { origin }) }]
-    }),
+    entries: entries.map(toEntryValue),
   }
 }
 
