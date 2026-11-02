@@ -62,7 +62,11 @@ caller holds directly. An entry from an included group is loaded only when `--on
 change how programs load code or route traffic (`PATH`, `LD_*`, `NODE_OPTIONS`, `GIT_*`, `HTTPS_PROXY`, ...) are never set
 from the vault. The child never receives `TYPEVAULT_*` variables.
 
-When the same name exists in several groups, the copy in the higher group wins; timestamps never decide.
+An entry from an included group also can't choose its variable name: `--env` overrides apply only to the caller's own
+groups. The operator holds no group directly, so the operator's own `run` loads only what `--only` names.
+
+When the same name exists in several groups, the copy in the higher group wins; timestamps never decide. If two
+unrelated groups hold it, reads of that name fail until the operator keeps one: `typevault rm <name> --group <g>`.
 
 ## Grants
 
@@ -74,8 +78,8 @@ When the same name exists in several groups, the copy in the higher group wins; 
 | Use for | laptops, containers, typeclaw | CI, one-shot containers |
 
 A sealed grant can write, within its groups and `--only`, until its certificate expires by the **reader's** clock.
-A daemon (every minute) or `typevault doctor --fix` adopts those writes by re-signing them; writes nobody adopts
-before expiry stop being trusted.
+A daemon (every minute) or `typevault doctor --fix` adopts those writes by re-signing them. Writes nobody adopts
+before expiry stop being trusted; the operator can still keep them with `typevault doctor --fix --adopt-expired`.
 
 ```sh
 typevault grant --group member --only 'github/*' --ttl 30m --label ci:deploy
@@ -151,7 +155,8 @@ Old ciphertext stays in history forever. If a key leaks, rotate the key **and** 
 Removing an entry does not remove it from history.
 
 Every old revision is still validly signed, so each machine remembers the newest revision it has seen of every entry
-and manifest and refuses older ones (a rollback from history). A fresh clone trusts what it first sees.
+and manifest, and every entry it deleted, and refuses older or deleted ones restored from history. A fresh clone trusts
+what it first sees.
 
 ## Known limits
 
