@@ -26,6 +26,7 @@ typevault group include trusted member           # trusted reaches everything me
 
 printf '%s' "$OPENAI_KEY" | typevault set openai --type api_key --group member --stdin
 typevault set github/bot --type password --group member --field username=bot --stdin < password.txt
+echo '{"access_token":"…","refresh_token":"…"}' | typevault set google --type oauth --group member --stdin-json
 
 # Hand an agent a grant instead of a key (the daemon starts automatically)
 export TYPEVAULT_GRANT=$(typevault grant --group member --label session:abc)
@@ -50,7 +51,18 @@ No environments, no domains, no group in the name. Fields come from the type:
 | `note` | text |
 
 Env names are derived: `github/bot#password` becomes `GITHUB_BOT_PASSWORD`. Override the main field's name with `--env`.
-In `run`, TOTP fields carry the current code, never the seed.
+In `run`, TOTP fields carry the current code, never the seed. Secret fields are never accepted as `--field` arguments
+(they would land in `ps` and shell history): pass them with `--stdin` or `--stdin-json`.
+
+### What `run` loads
+
+A lower group can write entries a higher group reads, so `run` only loads, in bulk, entries from the groups the
+caller holds directly. An entry from an included group is loaded only when `--only` names it exactly
+(`--only github/bot`, not `--only 'github/*'`). Two entries setting the same variable is an error, and variables that
+change how programs load code or route traffic (`PATH`, `LD_*`, `NODE_OPTIONS`, `GIT_*`, `HTTPS_PROXY`, ...) are never set
+from the vault. The child never receives `TYPEVAULT_*` variables.
+
+When the same name exists in several groups, the copy in the higher group wins; timestamps never decide.
 
 ## Grants
 
@@ -60,6 +72,10 @@ In `run`, TOTP fields carry the current code, never the seed.
 | Audit | every read | issue time (reads best-effort) |
 | TTL / revocation | enforced / instant | advisory / impossible |
 | Use for | laptops, containers, typeclaw | CI, one-shot containers |
+
+A sealed grant can write, within its groups and `--only`, until its certificate expires by the **reader's** clock.
+A daemon (every minute) or `typevault doctor --fix` adopts those writes by re-signing them; writes nobody adopts
+before expiry stop being trusted.
 
 ```sh
 typevault grant --group member --only 'github/*' --ttl 30m --label ci:deploy
@@ -81,6 +97,7 @@ TYPEVAULT_CEILING=bot typevault grant --group member
 ```
 
 The socket is the caller's identity, so protect it with file permissions or by mounting it only where it belongs.
+A capped socket lists and revokes only the grants it issued, and only the uncapped operator socket reads the audit trail.
 Processes under one OS user that can reach the same socket share its ceiling; per-session enforcement needs isolation
 (typeclaw sandboxes each session and mounts only the agent socket).
 
@@ -125,13 +142,23 @@ $TYPEVAULT_DIR/
     operator.json audit-anchors.jsonl
   keys/             # private keys (0600), never commit
   audit/            # full local audit log
-  run/              # sockets, lock, grants
+  run/              # sockets, lock, grants, staged transactions, revision high-water marks
 ```
 
 ## Git history
 
 Old ciphertext stays in history forever. If a key leaks, rotate the key **and** every secret it could reach.
 Removing an entry does not remove it from history.
+
+Every old revision is still validly signed, so each machine remembers the newest revision it has seen of every entry
+and manifest and refuses older ones (a rollback from history). A fresh clone trusts what it first sees.
+
+## Known limits
+
+- Redaction is best effort: values shorter than 4 characters, hex or composed encodings (such as HTTP Basic auth) can slip
+  through. Prefer `run` over `get`.
+- The local audit chain is unkeyed: a process running as the same user can rewrite records since the last anchor.
+- Same-user processes that can reach one admin socket share its ceiling; isolate sessions to enforce more.
 
 ## License
 
