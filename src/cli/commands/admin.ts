@@ -159,7 +159,10 @@ export const doctor = defineCommand({
     for (const problem of report.problems) print(`problem: ${problem.file}: ${problem.reason}`)
     for (const file of report.mergesResolved) print(`merged: ${file}`)
     for (const dup of report.duplicatesRemoved) print(`${args.fix === true ? 'removed' : 'duplicate'}: ${dup}`)
-    for (const dup of report.duplicatesKept) print(`same name in several groups: ${dup}`)
+    for (const dup of report.duplicatesKept)
+      print(
+        `same name in several groups: ${dup} (if the groups are unrelated, reads of it fail: keep one with \`typevault rm <name> --group <g>\`)`,
+      )
     for (const name of report.needsRotation) print(`needs rotation: ${name}`)
     const audit = verifyAudit(vault.layout)
     print(audit.ok ? `audit: ok (${audit.records} records)` : `audit: BROKEN: ${audit.reason}`)

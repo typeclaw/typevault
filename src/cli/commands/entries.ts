@@ -126,9 +126,12 @@ export const set = defineCommand({
 
 export const rm = defineCommand({
   meta: { name: 'rm', description: 'Remove an entry' },
-  args: { name: { type: 'positional', required: true } },
+  args: {
+    name: { type: 'positional', required: true },
+    group: { type: 'string', description: 'Remove the copy in this group (settles a name held by unrelated groups)' },
+  },
   async run({ args }) {
-    await (await accessOf(process.env)).remove(parseEntryName(args.name))
+    await (await accessOf(process.env)).remove(parseEntryName(args.name), args.group)
     note(`removed ${args.name}. Git history still holds its old ciphertext: rotate the secret if it mattered.`)
   },
 })
