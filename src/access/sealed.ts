@@ -58,7 +58,10 @@ export async function issueSealedGrant(vault: Vault, request: SealedRequest): Pr
   const id = randomHex(8)
   const exp = new Date(Date.now() + request.ttlMs).toISOString()
   const signing = generateSigningKey()
-  const cert = issueCert({ signPublic: signing.signPublic, groups: [...request.groups], exp }, signerOf(issuer))
+  const cert = issueCert(
+    { signPublic: signing.signPublic, groups: [...request.groups], only: [...request.only], exp },
+    signerOf(issuer),
+  )
   const bundle = { v: 1, id, label: request.label, groups: request.groups, only: request.only, exp, entries: granted }
   const write = { signSecret: toBase64(signing.signSecret), cert }
   const identity = await generateX25519Identity()

@@ -4,6 +4,7 @@ import { seal, type SecretKey, sign, unseal, verifySignature } from './crypto'
 import { canonicalJson, fromBase64, type Json, toBase64, utf8 } from './encoding'
 import { TypeVaultError } from './errors'
 import type { Keyring } from './keyring'
+import { matchesOnly } from './naming'
 import { decodePayload, encodePayload, type EntryPayload } from './payload'
 import { reach, reachesGroup, type VaultState } from './state'
 
@@ -15,6 +16,8 @@ const IssuerSchema = z.discriminatedUnion('kind', [
 export const CertSchema = z.object({
   signPublic: z.string(),
   groups: z.array(z.string()),
+  /** Name patterns the holder may write; empty means any name in its groups. */
+  only: z.array(z.string()),
   exp: z.iso.datetime(),
   issuer: IssuerSchema,
   sig: z.string(),
@@ -70,7 +73,15 @@ function assertNever(value: never): never {
 }
 
 const certBytes = (cert: Omit<Cert, 'sig'>): Uint8Array =>
-  utf8(canonicalJson({ signPublic: cert.signPublic, groups: cert.groups, exp: cert.exp, issuer: cert.issuer }))
+  utf8(
+    canonicalJson({
+      signPublic: cert.signPublic,
+      groups: cert.groups,
+      only: cert.only,
+      exp: cert.exp,
+      issuer: cert.issuer,
+    }),
+  )
 
 export function issueCert(cert: Omit<Cert, 'sig' | 'issuer'>, issuer: SignerContext): Cert {
   if (issuer.ref.kind === 'cert') throw new TypeVaultError('denied', 'a grant certificate cannot issue another')
@@ -96,7 +107,9 @@ export function signerAuthority(signer: SignerRef, group: string, state: VaultSt
   const issuer = authorityOf(cert.issuer, state)
   if (issuer === undefined || !verifySignature(issuer.signPublic, certBytes(cert), cert.sig)) return undefined
   if (!cert.groups.every((g) => reachesGroup(state.groups, issuer.groups, g))) return undefined
-  if (!cert.groups.some((g) => reach(state.groups, g).has(group)) || Date.parse(at) > Date.parse(cert.exp)) {
+  // Expiry is judged by the reader's clock: `at` is chosen by the holder, so it can't be trusted to bound it.
+  const exp = Date.parse(cert.exp)
+  if (!cert.groups.some((g) => reach(state.groups, g).has(group)) || Date.parse(at) > exp || Date.now() > exp) {
     return undefined
   }
   return cert.signPublic
@@ -150,5 +163,10 @@ export function verifyEnvelope(envelope: Envelope, state: VaultState): string | 
 export async function openEntry(envelope: Envelope, keyring: Keyring): Promise<EntryPayload | undefined> {
   const key = await keyring.unlock(envelope.group)
   if (key === undefined) return undefined
-  return decodePayload(await unseal([key.identity], fromBase64(envelope.payload)))
+  const payload = decodePayload(await unseal([key.identity], fromBase64(envelope.payload)))
+  const { signer } = envelope
+  if (signer.kind === 'cert' && signer.cert.only.length > 0 && !matchesOnly(payload.name, signer.cert.only)) {
+    throw new TypeVaultError('tampered', `${payload.name} is outside the writing grant's --only`)
+  }
+  return payload
 }
