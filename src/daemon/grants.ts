@@ -95,6 +95,17 @@ export class GrantStore {
     return { record, chain: chain.map(({ groups, only }) => ({ groups, only })) }
   }
 
+  /** Whether grant `id` and all its ancestors are still unrevoked and unexpired. */
+  isLive(id: string): boolean {
+    for (let link = this.#records.find((r) => r.id === id); link !== undefined;) {
+      if (link.revoked === true || Date.parse(link.exp) <= Date.now()) return false
+      const parentId: string | undefined = link.parent
+      if (parentId === undefined) return true
+      link = this.#records.find((r) => r.id === parentId)
+    }
+    return false
+  }
+
   /** Revokes matching grants and everything derived from them. Returns the revoked ids. */
   revoke(match: (record: GrantRecord) => boolean): readonly string[] {
     const revoked = new Set(this.#records.filter(match).map((record) => record.id))
