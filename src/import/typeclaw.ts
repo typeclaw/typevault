@@ -1,3 +1,4 @@
+import { isUsableEnvName } from '../core/naming'
 import { parseDotenvVariables } from './dotenv'
 import { collectEntries } from './shared'
 import type { ImportResult } from './types'
@@ -12,7 +13,7 @@ export function parseTypeclaw(text: string): ImportResult {
         title: name.slice(PREFIX.length),
         type: 'password',
         fields: { password: value },
-        env: name,
+        ...(isUsableEnvName(name) ? { env: name } : {}),
       })),
   )
 }

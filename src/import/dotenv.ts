@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import { TypeVaultError } from '../core/errors'
+import { isUsableEnvName } from '../core/naming'
 import { collectEntries, parseExternal } from './shared'
 import type { ImportResult } from './types'
 
@@ -12,7 +13,7 @@ export function parseDotenv(text: string): ImportResult {
       title: name,
       type: 'api_key',
       fields: { key: value },
-      env: name,
+      ...(isUsableEnvName(name) ? { env: name } : {}),
     })),
   )
 }
