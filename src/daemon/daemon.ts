@@ -49,7 +49,7 @@ export async function startDaemon(options: DaemonOptions): Promise<RunningDaemon
     requests: new PromptRequests(vault, options.prompt ?? {}),
   }
   const listen = (path: string, fetch: (request: Request) => Promise<Response>) => {
-    const server = Bun.serve({ unix: path, fetch })
+    const server = Bun.serve({ unix: path, fetch, maxRequestBodySize: 1 << 20 })
     chmodSync(path, 0o600)
     return server
   }
