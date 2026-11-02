@@ -29,10 +29,12 @@ export function envFor(values: readonly EntryValue[], now: Date, policy: EnvPoli
   for (const value of values.filter((candidate) => envEligible(candidate, policy))) {
     for (const [field, raw] of Object.entries(value.fields)) {
       if (raw === '') continue
-      // An entry from an included group may not pick its variable name: it gets the one derived from the name the
-      // runner chose, so a lower writer can't aim it at OPENAI_BASE_URL or the like.
+      // An entry from an included group may pick its variable name only if its writer is at least as privileged
+      // as the runner; otherwise it gets the derived name, so a lower writer can't aim it at OPENAI_BASE_URL.
       const ownOverride =
-        value.env !== undefined && field === primaryField(value.type) && policy.ownGroups.includes(value.group)
+        value.env !== undefined &&
+        field === primaryField(value.type) &&
+        (policy.ownGroups.includes(value.group) || value.trustedWriter === true)
       const name = ownOverride && value.env !== undefined ? value.env : deriveEnvName(value.name, field)
       if (isReservedEnvName(name)) continue
       const previous = owner.get(name)

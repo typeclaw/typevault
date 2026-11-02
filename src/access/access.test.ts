@@ -129,6 +129,22 @@ describe('ScopedVault', () => {
     })
   })
 
+  it('honors the env override of an included-group entry written from above the reader', async () => {
+    const base = await member().get(n('github/bot'))
+    const imported = {
+      ...base,
+      name: n('openai'),
+      type: 'api_key' as const,
+      group: 'guest',
+      env: 'OPENAI_API_KEY',
+      fields: { key: 'sk' },
+      trustedWriter: true,
+    }
+    expect(envFor([imported], new Date(0), { ownGroups: ['member'], explicit: ['openai'] })).toEqual({
+      OPENAI_API_KEY: 'sk',
+    })
+  })
+
   it('refuses two entries that set the same variable', async () => {
     const base = await member().get(n('github/bot'))
     const values = [
@@ -156,6 +172,31 @@ describe('ScopedVault', () => {
       own,
     )
     expect(env).toEqual({ GITHUB_BOT_PASSWORD: 'p4ss', GITHUB_BOT_TOTP: '287082' })
+  })
+})
+
+describe('OAuth refresh', () => {
+  it('refreshes an expired token on read, stores it and audits the refresh', async () => {
+    const server = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: () => Response.json({ access_token: 'fresh-token', expires_in: 3600 }),
+    })
+    try {
+      const fields = {
+        access_token: 'stale-token',
+        refresh_token: 'rt',
+        expires_at: '2000-01-01T00:00:00.000Z',
+        token_url: `http://127.0.0.1:${server.port}/token`,
+      }
+      await vault.put({ name: n('google'), type: 'oauth', fields, group: 'member' }, signerOf(operator))
+      const access = new ScopedVault(vault, [{ groups: ['member'], only: [] }], { mode: 'live', label: 's' })
+      expect((await access.get(n('google'))).fields['access_token']).toBe('fresh-token')
+      expect((await vault.find(n('google')))?.payload.fields['access_token']).toBe('fresh-token')
+      expect(readAudit(vault.layout).map((record) => record['action'])).toContain('refresh')
+    } finally {
+      await server.stop(true)
+    }
   })
 })
 
