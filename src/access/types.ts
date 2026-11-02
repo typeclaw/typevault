@@ -1,7 +1,6 @@
 import { TypeVaultError } from '../core/errors'
-import type { EntryName, EntryType } from '../core/naming'
+import { type EntryName, type EntryType, isReservedEnvName } from '../core/naming'
 import type { EntryPayload } from '../core/payload'
-import { isReservedEnvName } from './env'
 
 export type EntrySummary = {
   readonly name: EntryName

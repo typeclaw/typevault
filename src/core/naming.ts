@@ -73,3 +73,17 @@ export function slugifySegment(raw: string): string {
 export function matchesOnly(name: EntryName, patterns: readonly string[]): boolean {
   return patterns.some((pattern) => new Bun.Glob(pattern.toLowerCase()).match(name))
 }
+
+/**
+ * Variables that change how the child or its interpreter loads code. A lower group can write entries a higher
+ * group's `run` loads, so an entry must never set these, whether by --env override or by a derived name.
+ */
+const RESERVED_ENV =
+  /^(PATH|HOME|SHELL|USER|LOGNAME|TMPDIR|IFS|ENV|BASH_ENV|PS4|PROMPT_COMMAND|EDITOR|VISUAL|PAGER|BROWSER|NODE_OPTIONS|NODE_PATH|PYTHONPATH|PYTHONHOME|PYTHONSTARTUP|RUBYOPT|RUBYLIB|PERL5OPT|PERL5LIB|JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|SSH_AUTH_SOCK|GIT_SSH|GIT_SSH_COMMAND|GIT_EXEC_PATH|GIT_CONFIG_\w*|LD_\w*|DYLD_\w*|BUN_\w*|NPM_CONFIG_\w*|TYPEVAULT_\w*)$/
+
+export const isReservedEnvName = (name: string): boolean => RESERVED_ENV.test(name)
+
+const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/
+
+/** A name `run` may set: well-formed and not reserved. */
+export const isUsableEnvName = (name: string): boolean => ENV_NAME.test(name) && !isReservedEnvName(name)
