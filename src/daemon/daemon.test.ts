@@ -71,7 +71,7 @@ describe('live grants', () => {
   })
 
   it('refuses a grant above the socket ceiling', async () => {
-    expect(grant('bot', { groups: ['trusted'] })).rejects.toMatchObject({ code: 'denied' })
+    await expect(grant('bot', { groups: ['trusted'] })).rejects.toMatchObject({ code: 'denied' })
   })
 
   it('narrows a derived grant and revokes it with its parent', async () => {
@@ -81,11 +81,11 @@ describe('live grants', () => {
     const child = new LiveAccess(layout.agentSocket, derived.token)
     expect((await child.list()).map((e): string => e.name)).toEqual(['github/bot'])
     await callDaemon(layout.adminSocket('default'), '/v1/revoke', { label: 'agent:a' }, z.json())
-    expect(child.list()).rejects.toMatchObject({ code: 'denied' })
+    await expect(child.list()).rejects.toMatchObject({ code: 'denied' })
   })
 
   it('rejects an unknown token', async () => {
-    expect(new LiveAccess(layout.agentSocket, 'tvl1.nope.nope').list()).rejects.toMatchObject({ code: 'denied' })
+    await expect(new LiveAccess(layout.agentSocket, 'tvl1.nope.nope').list()).rejects.toMatchObject({ code: 'denied' })
   })
 
   it('remembers what a grant read, for redaction', async () => {
@@ -128,6 +128,36 @@ describe('secret prompt', () => {
     expect(done.stored).toBe('resend')
     expect((await access.get(n('resend'))).fields).toEqual({ key: 're_test_1' })
   })
+})
+
+it('refuses a prompt submission for a different entry than the one requested', async () => {
+  const { token } = await grant('default', { groups: ['member'], only: ['resend'] })
+  const access = new LiveAccess(layout.agentSocket, token)
+  const opened = await access.call(
+    '/v1/request',
+    { name: 'resend', type: 'api_key', reason: 'mail' },
+    z.object({ id: z.string(), url: z.string(), code: z.string() }),
+  )
+  const vault = await Vault.open(layout.root, [operator], {})
+  const recipients = [vault.state.groups['member']?.recipient ?? '', vault.state.operator.recipient]
+  const now = new Date().toISOString()
+  const forged = {
+    v: 1,
+    name: 'openai',
+    type: 'api_key',
+    fields: { key: 'forged' },
+    tags: [],
+    created: now,
+    rotated: now,
+  }
+  const body = new Uint8Array(await seal(recipients, utf8(JSON.stringify(forged))))
+  await fetch(opened.url, { method: 'POST', body, headers: { 'content-type': 'application/octet-stream' } })
+  await expect(
+    access.call('/v1/request/wait', { id: opened.id }, z.object({ stored: z.string() })),
+  ).rejects.toMatchObject({
+    code: 'tampered',
+  })
+  expect((await vault.find(n('openai')))?.payload.fields).toEqual({ key: 'sk-test-openai' })
 })
 
 it('keeps sockets private to the owner', async () => {

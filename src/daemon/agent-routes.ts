@@ -88,8 +88,14 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
       return json({ token: issued.token, id: record.id, exp: record.exp })
     },
     '/v1/request': async (request) => {
-      const { grant } = session(context, request)
-      return json(await context.requests.open(grant.chain, grant.record, await parseBody(request, RequestBody)))
+      const { grant, access } = session(context, request)
+      const isLive = () => context.grants.isLive(grant.record.id)
+      return json(
+        await context.requests.open(
+          { chain: grant.chain, grant: grant.record, access, isLive },
+          await parseBody(request, RequestBody),
+        ),
+      )
     },
     '/v1/request/wait': async (request) => {
       const { grant } = session(context, request)

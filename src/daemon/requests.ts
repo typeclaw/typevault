@@ -1,9 +1,11 @@
 import { allowsEntry, type ScopeChain } from '../access/scope'
+import type { Access } from '../access/types'
 import { appendAudit } from '../audit/log'
 import { randomToken } from '../core/crypto'
-import { signerOf } from '../core/entries'
+import { unseal } from '../core/crypto'
 import { TypeVaultError } from '../core/errors'
 import type { EntryName, EntryType } from '../core/naming'
+import { decodePayload } from '../core/payload'
 import type { Vault } from '../core/vault'
 import { type PromptServer, startPromptServer } from '../prompt'
 import type { GrantRecord } from './grants'
@@ -12,6 +14,14 @@ const TTL_MS = 10 * 60_000
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
 export type PromptOptions = { readonly port?: number; readonly publicUrl?: string }
+/** The requesting grant: its scope, a scoped access that stores and audits, and a liveness check. */
+export type RequestSession = {
+  readonly chain: ScopeChain
+  readonly grant: GrantRecord
+  readonly access: Access
+  readonly isLive: () => boolean
+}
+
 export type RequestInput = {
   readonly name: EntryName
   readonly type: EntryType
@@ -42,11 +52,8 @@ export class PromptRequests {
     return server
   }
 
-  async open(
-    chain: ScopeChain,
-    grant: GrantRecord,
-    input: RequestInput,
-  ): Promise<{ id: string; url: string; code: string }> {
+  async open(session: RequestSession, input: RequestInput): Promise<{ id: string; url: string; code: string }> {
+    const { chain, grant } = session
     const state = this.#vault.state
     const group = input.group ?? grant.groups[0]
     const meta = group === undefined ? undefined : state.groups[group]
@@ -68,10 +75,22 @@ export class PromptRequests {
       recipients: [meta.recipient, state.operator.recipient],
       expiresAt: new Date(Date.now() + TTL_MS),
     })
+    // Whoever holds the URL can submit, the requesting agent included, so the daemon checks what it got instead
+    // of signing it blind: it must be exactly the requested entry, and the grant must still be live.
     const stored = handle.done.then(async (ciphertext) => {
       const key = (await this.#vault.keyring.unlock(group)) ?? this.#vault.keyring.operator
-      if (key === undefined) throw new TypeVaultError('denied', `no key here can write group "${group}"`)
-      await this.#vault.putCiphertext(input.name, group, ciphertext, signerOf(key))
+      if (key === undefined) throw new TypeVaultError('denied', `no key here can read group "${group}"`)
+      const payload = decodePayload(await unseal([key.identity], ciphertext))
+      if (
+        payload.name !== input.name ||
+        payload.type !== input.type ||
+        payload.env !== undefined ||
+        payload.needsRotation !== undefined
+      ) {
+        throw new TypeVaultError('tampered', 'the submitted secret does not match the request')
+      }
+      if (!session.isLive()) throw new TypeVaultError('denied', 'the requesting grant is no longer live')
+      await session.access.set({ name: input.name, type: input.type, fields: payload.fields, group })
       await appendAudit(this.#vault.layout, {
         action: 'request.stored',
         mode: 'live',
@@ -81,6 +100,11 @@ export class PromptRequests {
       })
       return input.name
     })
+    // Forget the request a while after it settles, whether or not anyone waits for it.
+    const forget = (): void => {
+      setTimeout(() => this.#pending.delete(handle.id), TTL_MS).unref()
+    }
+    stored.then(forget, forget)
     // Keep a rejected prompt (expired, cancelled) from surfacing as an unhandled rejection before anyone waits.
     stored.then(undefined, (error: unknown) => {
       if (!(error instanceof TypeVaultError)) console.error('typevault daemon: storing a prompted secret failed', error)
