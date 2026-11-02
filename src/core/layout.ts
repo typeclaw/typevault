@@ -20,6 +20,7 @@ export type Layout = {
   readonly auditLog: string
   readonly run: string
   readonly lockFile: string
+  readonly auditLock: string
   readonly grantsFile: string
   readonly agentSocket: string
   readonly adminSocket: (ceiling: string) => string
@@ -57,6 +58,7 @@ export function layoutOf(root: string): Layout {
     auditLog: join(audit, 'log.jsonl'),
     run,
     lockFile: join(run, 'lock'),
+    auditLock: join(run, 'audit.lock'),
     grantsFile: join(run, 'grants.json'),
     agentSocket: join(run, 'agent.sock'),
     adminSocket: (ceiling: string) => join(run, `admin-${ceiling}.sock`),
