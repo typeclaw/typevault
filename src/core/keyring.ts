@@ -3,6 +3,7 @@ import { join } from 'node:path'
 
 import { decodeSecretKey, publicKeyOf, type SecretKey, unseal } from './crypto'
 import { fromUtf8 } from './encoding'
+import { TypeVaultError } from './errors'
 import type { Layout } from './layout'
 import { includersOf, type VaultState } from './state'
 
@@ -83,7 +84,14 @@ export class Keyring {
   ): Promise<SecretKey | undefined> {
     const path = join(this.#layout.vault, wrapPath(group, gen, holder))
     if (!existsSync(path) || !lstatSync(path).isFile()) return undefined
-    const key = decodeSecretKey(fromUtf8(await unseal([holderKey.identity], readFileSync(path))))
+    const key = await unseal([holderKey.identity], readFileSync(path)).then(
+      (bytes) => decodeSecretKey(fromUtf8(bytes)),
+      (error: unknown) => {
+        if (error instanceof TypeVaultError) return undefined
+        throw error
+      },
+    )
+    if (key === undefined) return undefined
     // A wrap that doesn't match the operator-signed public key is ignored rather than trusted.
     const expected = this.#state.groups[group]
     const actual = await publicKeyOf(key)

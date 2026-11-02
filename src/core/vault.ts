@@ -131,8 +131,16 @@ export class Vault {
           problems.push({ file, reason: `rolled back to revision ${parsed.data.rev} (this machine has seen newer)` })
           continue
         }
-        const payload = await openEntry(parsed.data, this.#keyring)
-        if (payload !== undefined) entries.push({ envelope: parsed.data, payload })
+        // One unreadable file must never take the whole vault down with it.
+        const opened = await openEntry(parsed.data, this.#keyring).then(
+          (payload) => ({ payload }),
+          (error: unknown) => {
+            if (error instanceof TypeVaultError) return { problem: error.message }
+            throw error
+          },
+        )
+        if ('problem' in opened) problems.push({ file, reason: opened.problem })
+        else if (opened.payload !== undefined) entries.push({ envelope: parsed.data, payload: opened.payload })
       }
       marks.save()
       return { entries, problems }

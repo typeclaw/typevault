@@ -75,6 +75,22 @@ describe('integrity', () => {
     expect(scan.problems).toEqual([{ file: `${envelope.id}.json`, reason: 'bad signature' }])
   })
 
+  it('contains a validly signed but undecryptable entry instead of failing every scan', async () => {
+    const vault = await open([operator])
+    await vault.put(stripe, signerOf(operator))
+    await vault.putCiphertext(parseEntryName('junk'), 'member', new Uint8Array([1, 2, 3]), signerOf(operator))
+    const scan = await vault.scan()
+    expect(scan.entries.map((entry): string => entry.payload.name)).toEqual(['stripe'])
+    expect(scan.problems).toHaveLength(1)
+  })
+
+  it('refuses to store a field the entry type does not have', async () => {
+    const vault = await open([operator])
+    expect(
+      vault.put({ ...stripe, fields: { key: 'x', external_diff: 'sh' } }, signerOf(operator)),
+    ).rejects.toMatchObject({ code: 'invalid' })
+  })
+
   it('reports an entry swapped back to an older signed revision', async () => {
     const vault = await open([operator])
     const first = await vault.put(stripe, signerOf(operator))
