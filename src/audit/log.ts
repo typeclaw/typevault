@@ -1,10 +1,11 @@
 import { appendFileSync, closeSync, existsSync, fsyncSync, openSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { z } from 'zod'
 
 import { sha256Hex } from '../core/crypto'
 import { canonicalJson, type Json, utf8 } from '../core/encoding'
-import { ensureDir } from '../core/fsx'
+import { atomicWrite, ensureDir } from '../core/fsx'
 import type { Layout } from '../core/layout'
 import { withLock } from '../core/lock'
 
@@ -40,6 +41,16 @@ function appendLine(path: string, line: string): void {
   }
 }
 
+const HeadSchema = z.object({ seq: z.number().int(), hash: z.string() })
+
+/** The chain head, kept beside the log so an append never re-reads the whole trail. */
+function readHead(layout: Layout): { readonly seq: number; readonly hash: string } | undefined {
+  const path = join(layout.audit, 'head.json')
+  if (existsSync(path)) return HeadSchema.parse(JSON.parse(readFileSync(path, 'utf8')))
+  const last = readAudit(layout).at(-1)
+  return last === undefined ? undefined : { seq: last.seq, hash: last.hash }
+}
+
 export function readAudit(layout: Layout): readonly AuditRecord[] {
   if (!existsSync(layout.auditLog)) return []
   return readFileSync(layout.auditLog, 'utf8')
@@ -57,11 +68,12 @@ function writeAnchor(layout: Layout, last: AuditRecord): void {
 export function appendAudit(layout: Layout, event: AuditEvent): Promise<void> {
   return withLock(layout.auditLock, 'exclusive', async () => {
     ensureDir(layout.audit, 0o700)
-    const last = readAudit(layout).at(-1)
+    const last = readHead(layout)
     const fields = Object.fromEntries(Object.entries(event).filter(([, value]) => value !== undefined))
     const unhashed = { ...fields, seq: (last?.seq ?? 0) + 1, at: new Date().toISOString(), prev: last?.hash ?? GENESIS }
     const record = { ...unhashed, hash: hashOf(unhashed) }
     appendLine(layout.auditLog, JSON.stringify(record))
+    atomicWrite(join(layout.audit, 'head.json'), JSON.stringify({ seq: record.seq, hash: record.hash }), 0o600)
     if (record.seq % ANCHOR_EVERY === 0) writeAnchor(layout, record)
   })
 }

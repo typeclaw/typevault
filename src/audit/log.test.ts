@@ -33,6 +33,7 @@ it('detects a rewritten log that no longer matches its anchor', async () => {
   await read(['github/bot'])
   await anchorAudit(layout)
   rmSync(layout.auditLog)
+  rmSync(join(layout.audit, 'head.json'))
   await appendAudit(layout, { action: 'read', mode: 'live', entries: ['other'] })
   expect(verifyAudit(layout)).toEqual({ ok: false, reason: 'local log no longer matches the anchor at record 1' })
 })
