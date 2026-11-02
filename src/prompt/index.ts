@@ -16,6 +16,8 @@ type Pending = {
 
 const MAX_BODY = 64 * 1024
 
+const GONE_TTL_MS = 60 * 60_000
+
 export async function startPromptServer(
   options: { readonly port?: number; readonly publicUrl?: string } = {},
 ): Promise<PromptServer> {
@@ -38,6 +40,8 @@ export async function startPromptServer(
     pending.delete(token)
     ids.delete(entry.id)
     gone.add(token)
+    // Remember a spent token only long enough to answer 410 to a late reload, then forget it.
+    setTimeout(() => gone.delete(token), GONE_TTL_MS).unref()
   }
 
   function expire(token: string, entry: Pending): void {
