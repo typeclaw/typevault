@@ -115,7 +115,10 @@ export class Vault {
           problems.push({ file, reason: 'malformed entry file' })
           continue
         }
-        const reason = verifyEnvelope(parsed.data, this.#state)
+        const reason =
+          file === `${parsed.data.id}.json`
+            ? verifyEnvelope(parsed.data, this.#state)
+            : 'file name does not match its entry id'
         if (reason !== undefined) {
           problems.push({ file, reason })
           continue
