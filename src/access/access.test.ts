@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import { readAudit } from '../audit/log'
 import { Admin } from '../core/admin'
+import { adoptCertWrites } from '../core/adopt'
 import type { SecretKey } from '../core/crypto'
 import { signerOf } from '../core/entries'
 import { initVault } from '../core/init'
@@ -12,7 +13,7 @@ import { parseEntryName } from '../core/naming'
 import { Vault } from '../core/vault'
 import { envFor } from './env'
 import { ScopedVault } from './scoped'
-import { issueSealedGrant, readSealedGrant } from './sealed'
+import { issueSealedGrant, readSealedGrant, sealedSigningSecret } from './sealed'
 import { SealedAccess } from './sealed-access'
 
 let root: string
@@ -141,6 +142,37 @@ describe('sealed grants', () => {
   it('refuses to work once expired', async () => {
     const access = new SealedAccess(await readSealedGrant(await issue(-1)), root, {})
     expect(access.list()).rejects.toMatchObject({ code: 'expired' })
+  })
+
+  const certSigner = async (ttlMs: number) => {
+    const bundle = await readSealedGrant(await issue(ttlMs))
+    return { ref: { kind: 'cert' as const, cert: bundle.write.cert }, signSecret: sealedSigningSecret(bundle) }
+  }
+
+  it('rejects a certificate write outside its --only, whatever the holder signs', async () => {
+    await vault.put(
+      { name: n('aws/root'), type: 'api_key', fields: { key: 'forged' }, group: 'member' },
+      await certSigner(60_000),
+    )
+    expect(await vault.find(n('aws/root'))).toBeUndefined()
+    expect((await vault.scan()).problems.map((p) => p.reason)).toContain(
+      "aws/root is outside the writing grant's --only",
+    )
+  })
+
+  it('stops honoring a certificate once the reader clock passes its expiry', async () => {
+    expect(
+      vault.put({ name: n('github/x'), type: 'note', fields: { text: 'late' }, group: 'member' }, await certSigner(-1)),
+    ).rejects.toMatchObject({ code: 'denied' })
+  })
+
+  it('adopts certificate writes so they outlive the certificate', async () => {
+    await vault.put(
+      { name: n('github/new'), type: 'note', fields: { text: 'hi' }, group: 'member' },
+      await certSigner(60_000),
+    )
+    expect(await adoptCertWrites(vault)).toEqual(['github/new'])
+    expect((await vault.find(n('github/new')))?.envelope.signer.kind).toBe('group')
   })
 
   it('records the issue in the audit trail without values', async () => {

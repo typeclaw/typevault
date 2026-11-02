@@ -1,6 +1,7 @@
 import { defineCommand } from 'citty'
 
 import { verifyAudit } from '../../audit/log'
+import { adoptCertWrites } from '../../core/adopt'
 import { doctor as runDoctor } from '../../core/doctor'
 import { initVault } from '../../core/init'
 import { layoutFrom, openAdmin, openDirect } from '../context'
@@ -145,6 +146,7 @@ export const doctor = defineCommand({
   args: { fix: { type: 'boolean' } },
   async run({ args }) {
     const vault = await openDirect(process.env)
+    if (args.fix === true) for (const name of await adoptCertWrites(vault)) print(`adopted sealed write: ${name}`)
     const report = await runDoctor(vault, args.fix === true)
     for (const problem of report.problems) print(`problem: ${problem.file}: ${problem.reason}`)
     for (const file of report.mergesResolved) print(`merged: ${file}`)

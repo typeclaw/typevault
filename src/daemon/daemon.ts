@@ -3,6 +3,7 @@ import { join } from 'node:path'
 
 import { loadLocalKeys } from '../access/keys'
 import { anchorAudit } from '../audit/log'
+import { adoptCertWrites } from '../core/adopt'
 import { TypeVaultError } from '../core/errors'
 import { atomicWrite, ensureDir } from '../core/fsx'
 import { layoutOf } from '../core/layout'
@@ -13,6 +14,8 @@ import { isDaemonAlive } from './client'
 import { GrantStore } from './grants'
 import { router } from './http'
 import { type PromptOptions, PromptRequests } from './requests'
+
+const ADOPT_EVERY_MS = 60_000
 
 export type DaemonOptions = {
   readonly root: string
@@ -58,10 +61,18 @@ export async function startDaemon(options: DaemonOptions): Promise<RunningDaemon
     ...ceilings.map((ceiling) => listen(layout.adminSocket(ceiling.name), router(adminRoutes(context, ceiling)))),
   ]
   atomicWrite(join(layout.run, 'daemon.pid'), String(process.pid), 0o600)
+  const adopt = (): void => {
+    adoptCertWrites(vault).then(undefined, (error: unknown) =>
+      console.error('typevault daemon: adopting sealed writes failed', error),
+    )
+  }
+  adopt()
+  const adoption = setInterval(adopt, ADOPT_EVERY_MS)
 
   return {
     ceilings,
     stop: async () => {
+      clearInterval(adoption)
       await Promise.all(servers.map((server) => server.stop(true)))
       await context.requests.stop()
       await anchorAudit(layout)
