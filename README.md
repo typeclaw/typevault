@@ -1,0 +1,138 @@
+# typevault
+
+A CLI-first secrets vault for agents. `.env` exposes too much; password managers are too heavy.
+
+> Each session gets exactly the secrets its grant allows, every read leaves a trail, and secrets stay out of transcripts.
+
+- **Git-friendly:** the vault is a directory of age-encrypted, signed files. Only `vault/` is safe to commit, and it is.
+- **Groups are keys:** each group has a keypair; groups can include others (`trusted` includes `member`). Access is enforced by cryptography, not by checks.
+- **Grants, not keys:** agents hold short-lived grants. A daemon holds the keys, serves values and audits every read.
+- **No human in the loop:** an operator-signed ceiling caps what each admin socket may grant.
+- **Reading = using:** if a grant can use a secret it can read it, so put secrets in a group only if that group may see them.
+
+## Install
+
+```sh
+bun add -g typevault
+```
+
+## Quick start
+
+```sh
+typevault init                                   # creates ~/.config/typevault (TYPEVAULT_DIR overrides)
+typevault group add member
+typevault group add trusted
+typevault group include trusted member           # trusted reaches everything member reaches
+
+printf '%s' "$OPENAI_KEY" | typevault set openai --type api_key --group member --stdin
+typevault set github/bot --type password --group member --field username=bot --stdin < password.txt
+
+# Hand an agent a grant instead of a key (the daemon starts automatically)
+export TYPEVAULT_GRANT=$(typevault grant --group member --label session:abc)
+
+typevault ls
+typevault run -- psql                            # secrets arrive as env vars; output is redacted
+typevault run --only github/bot -- agent-browser fill @e3 "$GITHUB_BOT_PASSWORD"
+```
+
+## Naming
+
+`<service>[/<account>]#<field>`: `openai`, `github/bot#password`, `github/personal#totp`.
+No environments, no domains, no group in the name. Fields come from the type:
+
+| Type | Fields (default first) |
+| --- | --- |
+| `password` | password, username, totp, url |
+| `api_key` | key |
+| `oauth` | access_token, refresh_token, expires_at, token_url, client_id, client_secret |
+| `ssh` | private_key, public_key |
+| `totp` | seed |
+| `note` | text |
+
+Env names are derived: `github/bot#password` becomes `GITHUB_BOT_PASSWORD`. Override the main field's name with `--env`.
+In `run`, TOTP fields carry the current code, never the seed.
+
+## Grants
+
+| | Live (default) | Sealed (`--sealed`) |
+| --- | --- | --- |
+| Needs the daemon | yes | no |
+| Audit | every read | issue time (reads best-effort) |
+| TTL / revocation | enforced / instant | advisory / impossible |
+| Use for | laptops, containers, typeclaw | CI, one-shot containers |
+
+```sh
+typevault grant --group member --only 'github/*' --ttl 30m --label ci:deploy
+typevault grant ls
+typevault grant revoke --label ci:deploy         # also revokes grants derived from it
+TYPEVAULT_GRANT=@/run/agent/grant typevault get github/bot
+```
+
+`TYPEVAULT_GRANT` takes a live grant (`tvl1.…`), a sealed one (`tvg1:…`) or `@path` to a file holding either.
+Without it, the CLI uses local keys (direct mode: the operator, or a launcher with `TYPEVAULT_KEY`).
+
+### Ceilings
+
+Each admin socket (`run/admin-<name>.sock`) may issue grants only up to its ceiling, signed by the operator:
+
+```sh
+typevault ceiling set bot member                 # admin-bot.sock can grant member and below
+TYPEVAULT_CEILING=bot typevault grant --group member
+```
+
+The socket is the caller's identity, so protect it with file permissions or by mounting it only where it belongs.
+Processes under one OS user that can reach the same socket share its ceiling; per-session enforcement needs isolation
+(typeclaw sandboxes each session and mounts only the agent socket).
+
+## Asking a human for a secret
+
+```sh
+typevault request resend --type api_key --reason "send the weekly digest"
+```
+
+The daemon serves a one-time page (`TYPEVAULT_PROMPT_PORT`, `TYPEVAULT_PUBLIC_URL` for tunnels). The browser encrypts the
+value to the group before submitting, so the plaintext never reaches the server, logs or the model.
+
+## Redaction
+
+- `typevault run` redacts its child's stdout and stderr by default.
+- `cmd | typevault redact` scrubs anything your grant has read.
+- `typevault scrub <files>` rewrites transcripts in place.
+- `typevault get` prints the value on purpose; prefer `run`.
+
+## Operator tasks
+
+```sh
+typevault key export member                      # TYPEVAULT_KEY for a CI launcher or remote daemon
+typevault key rotate member                      # new generation; lists every secret to rotate at its source
+typevault group exclude trusted member           # drop an include (rotates member)
+typevault signer add ci-bot <ed25519-public-key> --groups member
+typevault import 1password export.1pux --group member
+typevault doctor --fix                           # verify signatures, resolve git merges and duplicates
+typevault audit --verify
+```
+
+Operator key rotation and recovery are manual: back up `keys/operator.key` offline.
+
+## Layout
+
+```
+$TYPEVAULT_DIR/
+  vault/            # ciphertext only, safe to commit
+    entries/        # one signed file per entry, opaque names
+    groups/         # wrapped group keys
+    groups.json signers.json ceilings.json   # operator-signed
+    operator.json audit-anchors.jsonl
+  keys/             # private keys (0600), never commit
+  audit/            # full local audit log
+  run/              # sockets, lock, grants
+```
+
+## Git history
+
+Old ciphertext stays in history forever. If a key leaks, rotate the key **and** every secret it could reach.
+Removing an entry does not remove it from history.
+
+## License
+
+MIT
