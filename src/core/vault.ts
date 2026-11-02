@@ -251,9 +251,13 @@ export class Vault {
     })
   }
 
-  remove(name: EntryName): Promise<StoredEntry> {
+  /** Removes the entry `name` resolves to, or the copy in `group` (how a cross-group conflict is settled). */
+  remove(name: EntryName, group?: string): Promise<StoredEntry> {
     return withLock(this.layout.lockFile, 'exclusive', async () => {
-      const existing = await this.find(name)
+      const existing =
+        group === undefined
+          ? await this.find(name)
+          : (await this.scan()).entries.find((entry) => entry.payload.name === name && entry.envelope.group === group)
       if (existing === undefined) throw new TypeVaultError('not_found', `no entry named ${name}`)
       rmSync(join(this.layout.entries, `${existing.envelope.id}.json`))
       fsyncDir(this.layout.entries)

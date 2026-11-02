@@ -116,6 +116,17 @@ describe('integrity', () => {
     expect(scan.problems[0]?.reason).toContain('replaced or deleted')
   })
 
+  it('settles a name held by unrelated groups by removing one copy', async () => {
+    const vault = await open([operator])
+    await admin.addGroup('ci')
+    await vault.put(stripe, signerOf(operator))
+    const ciKey = await keyOf('ci')
+    await (await open([ciKey])).put({ ...stripe, group: 'ci', fields: { key: 'from-ci' } }, signerOf(ciKey))
+    await expect(vault.find(stripe.name)).rejects.toMatchObject({ code: 'conflict' })
+    await vault.remove(stripe.name, 'ci')
+    expect((await vault.find(stripe.name))?.payload.fields).toEqual({ key: 'sk_test_123' })
+  })
+
   it('refuses a deleted entry restored from history', async () => {
     const vault = await open([operator])
     const old = await vault.put(stripe, signerOf(operator))
