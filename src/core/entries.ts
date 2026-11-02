@@ -12,7 +12,7 @@ const IssuerSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('group'), group: z.string(), gen: z.number().int().positive() }),
   z.object({ kind: z.literal('signer'), id: z.string() }),
 ])
-const CertSchema = z.object({
+export const CertSchema = z.object({
   signPublic: z.string(),
   groups: z.array(z.string()),
   exp: z.iso.datetime(),

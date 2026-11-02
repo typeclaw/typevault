@@ -65,6 +65,12 @@ export async function unseal(identities: readonly string[], ciphertext: Uint8Arr
   }
 }
 
+/** A bare Ed25519 key pair, e.g. for a sealed grant's write certificate. */
+export function generateSigningKey(): { readonly signSecret: Uint8Array; readonly signPublic: string } {
+  const signSecret = ed25519.utils.randomSecretKey()
+  return { signSecret, signPublic: toBase64(ed25519.getPublicKey(signSecret)) }
+}
+
 export const sign = (signSecret: Uint8Array, message: Uint8Array): string => toBase64(ed25519.sign(message, signSecret))
 
 export function verifySignature(signPublic: string, message: Uint8Array, signature: string): boolean {
