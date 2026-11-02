@@ -59,7 +59,7 @@ export class Admin {
         wrapPath(name, 1, { kind: 'operator' }),
         await seal([state.operator.recipient], utf8(encodeSecretKey(key))),
       )
-      txn.put('groups.json', groupsDoc({ ...state.groups, [name]: group }, this.#operator))
+      txn.put('groups.json', groupsDoc({ ...state.groups, [name]: group }, this.#operator, state.seqs.groups + 1))
     })
   }
 
@@ -78,7 +78,7 @@ export class Admin {
         txn.remove(wrapPath(included, gen, { kind: 'group', group: name, gen: state.groups[name]?.gen ?? 0 }))
       }
       txn.remove(`groups/${name}`)
-      txn.put('groups.json', groupsDoc(rest, this.#operator))
+      txn.put('groups.json', groupsDoc(rest, this.#operator, state.seqs.groups + 1))
     })
   }
 
@@ -93,7 +93,7 @@ export class Admin {
       }
       await this.#wrapFor(txn, included, state, { name: group, group: holder })
       const updated = { ...holder, includes: [...holder.includes, included] }
-      txn.put('groups.json', groupsDoc({ ...state.groups, [group]: updated }, this.#operator))
+      txn.put('groups.json', groupsDoc({ ...state.groups, [group]: updated }, this.#operator, state.seqs.groups + 1))
     })
   }
 
@@ -107,7 +107,7 @@ export class Admin {
       const meta = state.groups[included]
       txn.remove(wrapPath(included, meta?.gen ?? 0, { kind: 'group', group, gen: holder.gen }))
       const updated = { ...holder, includes: holder.includes.filter((name) => name !== included) }
-      txn.put('groups.json', groupsDoc({ ...state.groups, [group]: updated }, this.#operator))
+      txn.put('groups.json', groupsDoc({ ...state.groups, [group]: updated }, this.#operator, state.seqs.groups + 1))
     })
     return this.rotate(included)
   }
@@ -123,28 +123,34 @@ export class Admin {
 
   setSigner(id: string, signPublic: string, groups: readonly string[]): Promise<void> {
     return this.#mutate(async (state, txn) => {
-      txn.put('signers.json', signersDoc({ ...state.signers, [id]: { signPublic, groups } }, this.#operator))
+      txn.put(
+        'signers.json',
+        signersDoc({ ...state.signers, [id]: { signPublic, groups } }, this.#operator, state.seqs.signers + 1),
+      )
     })
   }
 
   removeSigner(id: string): Promise<void> {
     return this.#mutate(async (state, txn) => {
       const { [id]: _removed, ...rest } = state.signers
-      txn.put('signers.json', signersDoc(rest, this.#operator))
+      txn.put('signers.json', signersDoc(rest, this.#operator, state.seqs.signers + 1))
     })
   }
 
   setCeiling(name: string, group: string): Promise<void> {
     return this.#mutate(async (state, txn) => {
       if (state.groups[group] === undefined) throw new TypeVaultError('not_found', `no group "${group}"`)
-      txn.put('ceilings.json', ceilingsDoc({ ...state.ceilings, [parseGroupName(name)]: group }, this.#operator))
+      txn.put(
+        'ceilings.json',
+        ceilingsDoc({ ...state.ceilings, [parseGroupName(name)]: group }, this.#operator, state.seqs.ceilings + 1),
+      )
     })
   }
 
   removeCeiling(name: string): Promise<void> {
     return this.#mutate(async (state, txn) => {
       const { [name]: _removed, ...rest } = state.ceilings
-      txn.put('ceilings.json', ceilingsDoc(rest, this.#operator))
+      txn.put('ceilings.json', ceilingsDoc(rest, this.#operator, state.seqs.ceilings + 1))
     })
   }
 

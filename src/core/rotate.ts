@@ -68,6 +68,6 @@ export async function rotateGroup(context: RotateContext, name: string): Promise
     )
     txn.put(`entries/${envelope.id}.json`, `${JSON.stringify(resealed, null, 2)}\n`)
   }
-  txn.put('groups.json', groupsDoc(next.groups, operator))
+  txn.put('groups.json', groupsDoc(next.groups, operator, state.seqs.groups + 1))
   return affected.sort()
 }

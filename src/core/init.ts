@@ -19,9 +19,9 @@ export async function initVault(root: string): Promise<SecretKey> {
   const operatorKey = await generateSecretKey({ kind: 'operator' })
   const operator = await publicKeyOf(operatorKey)
   atomicWrite(layout.operatorKey, `${encodeSecretKey(operatorKey)}\n`, 0o600)
-  atomicWrite(layout.groupsFile, groupsDoc({}, operatorKey))
-  atomicWrite(layout.signersFile, signersDoc({}, operatorKey))
-  atomicWrite(layout.ceilingsFile, ceilingsDoc({}, operatorKey))
+  atomicWrite(layout.groupsFile, groupsDoc({}, operatorKey, 1))
+  atomicWrite(layout.signersFile, signersDoc({}, operatorKey, 1))
+  atomicWrite(layout.ceilingsFile, ceilingsDoc({}, operatorKey, 1))
   atomicWrite(join(layout.root, '.gitignore'), ROOT_GITIGNORE)
   atomicWrite(layout.trustFile, JSON.stringify({ operatorSignPublic: operator.signPublic }), 0o600)
   // operator.json last: its presence is what marks the directory as an initialized vault.

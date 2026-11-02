@@ -115,6 +115,16 @@ describe('integrity', () => {
     expect(scan.problems[0]?.reason).toContain('rolled back')
   })
 
+  it('rejects a manifest rolled back to an older signed copy', async () => {
+    const file = join(root, 'vault', 'signers.json')
+    const before = readFileSync(file, 'utf8')
+    await admin.setSigner('ci', 'AAAA', ['member'])
+    await admin.removeSigner('ci')
+    await open([operator])
+    writeFileSync(file, before)
+    expect(open([operator])).rejects.toMatchObject({ code: 'tampered' })
+  })
+
   it('rejects a vault whose operator key changed after it was first trusted', async () => {
     const file = join(root, 'vault', 'operator.json')
     const doc = JSON.parse(readFileSync(file, 'utf8'))

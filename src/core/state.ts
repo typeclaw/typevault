@@ -7,6 +7,7 @@ import { canonicalJson, fromUtf8, type Json, utf8 } from './encoding'
 import { TypeVaultError } from './errors'
 import { atomicWrite } from './fsx'
 import type { Layout } from './layout'
+import { RevisionMarks } from './revisions'
 
 export type Group = {
   readonly includes: readonly string[]
@@ -18,8 +19,12 @@ export type Signer = { readonly signPublic: string; readonly groups: readonly st
 export type Groups = Readonly<Record<string, Group>>
 
 /** Everything public about a vault. Groups, signers and ceilings are signed by the operator key. */
+export type ManifestSeqs = { readonly groups: number; readonly signers: number; readonly ceilings: number }
+
 export type VaultState = {
   readonly operator: PublicKey
+  /** Each manifest's sequence number: every signed change bumps it, and a lower one is a rollback. */
+  readonly seqs: ManifestSeqs
   readonly groups: Groups
   readonly signers: Readonly<Record<string, Signer>>
   readonly ceilings: Readonly<Record<string, string>>
@@ -33,21 +38,24 @@ export function parseGroupName(name: string): string {
 
 const PublicKeySchema = z.object({ recipient: z.string().startsWith('age1'), signPublic: z.string() })
 const GroupSchema = PublicKeySchema.extend({ includes: z.array(z.string()), gen: z.number().int().positive() })
-const GroupsBody = z.object({ v: z.literal(1), groups: z.record(z.string(), GroupSchema) })
+const seq = z.number().int().positive()
+const GroupsBody = z.object({ v: z.literal(1), seq, groups: z.record(z.string(), GroupSchema) })
 const SignersBody = z.object({
   v: z.literal(1),
+  seq,
   signers: z.record(z.string(), z.object({ signPublic: z.string(), groups: z.array(z.string()) })),
 })
-const CeilingsBody = z.object({ v: z.literal(1), ceilings: z.record(z.string(), z.string()) })
+const CeilingsBody = z.object({ v: z.literal(1), seq, ceilings: z.record(z.string(), z.string()) })
 const TrustSchema = z.object({ operatorSignPublic: z.string() })
 
 export const signedDoc = (body: Json, key: SecretKey): string =>
   `${JSON.stringify({ body, sig: sign(key.signSecret, utf8(canonicalJson(body))) }, null, 2)}\n`
 
-export const groupsDoc = (groups: Groups, key: SecretKey): string => signedDoc({ v: 1, groups }, key)
-export const signersDoc = (signers: VaultState['signers'], key: SecretKey): string => signedDoc({ v: 1, signers }, key)
-export const ceilingsDoc = (ceilings: VaultState['ceilings'], key: SecretKey): string =>
-  signedDoc({ v: 1, ceilings }, key)
+export const groupsDoc = (groups: Groups, key: SecretKey, seq: number): string => signedDoc({ v: 1, seq, groups }, key)
+export const signersDoc = (signers: VaultState['signers'], key: SecretKey, seq: number): string =>
+  signedDoc({ v: 1, seq, signers }, key)
+export const ceilingsDoc = (ceilings: VaultState['ceilings'], key: SecretKey, seq: number): string =>
+  signedDoc({ v: 1, seq, ceilings }, key)
 
 function readSigned<T extends Json>(path: string, schema: z.ZodType<T>, operator: PublicKey): T {
   const doc = z.object({ body: z.json(), sig: z.string() }).parse(JSON.parse(fromUtf8(readFileSync(path))))
@@ -80,11 +88,30 @@ export function loadState(layout: Layout, env: Readonly<Record<string, string | 
     throw new TypeVaultError('not_found', `no vault at ${layout.root} (run typevault init)`)
   const operator = PublicKeySchema.parse(JSON.parse(fromUtf8(readFileSync(layout.operatorFile))))
   checkTrust(layout, operator, env)
+  const groups = readSigned(layout.groupsFile, GroupsBody, operator)
+  const signers = readSigned(layout.signersFile, SignersBody, operator)
+  const ceilings = readSigned(layout.ceilingsFile, CeilingsBody, operator)
+  // An older, still validly signed manifest from git history would resurrect removed signers or ceilings.
+  const marks = new RevisionMarks(layout.revisionsFile)
+  for (const [name, doc] of [
+    ['groups', groups],
+    ['signers', signers],
+    ['ceilings', ceilings],
+  ] as const) {
+    if (!marks.accept(`manifest:${name}`, doc.seq)) {
+      throw new TypeVaultError(
+        'tampered',
+        `${name}.json was rolled back to seq ${doc.seq} (this machine has seen newer)`,
+      )
+    }
+  }
+  marks.save()
   return {
     operator,
-    groups: readSigned(layout.groupsFile, GroupsBody, operator).groups,
-    signers: readSigned(layout.signersFile, SignersBody, operator).signers,
-    ceilings: readSigned(layout.ceilingsFile, CeilingsBody, operator).ceilings,
+    seqs: { groups: groups.seq, signers: signers.seq, ceilings: ceilings.seq },
+    groups: groups.groups,
+    signers: signers.signers,
+    ceilings: ceilings.ceilings,
   }
 }
 
