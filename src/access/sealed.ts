@@ -9,7 +9,7 @@ import { fromBase64, fromBase64Url, fromUtf8, toBase64, toBase64Url, utf8 } from
 import { CertSchema, issueCert, signerOf } from '../core/entries'
 import { TypeVaultError } from '../core/errors'
 import { reach } from '../core/state'
-import type { Vault } from '../core/vault'
+import { resolveName, type Vault } from '../core/vault'
 import { EntryValueSchema, toEntryValue } from './schemas'
 import { allowsEntry, type GrantScope } from './scope'
 import { type EntryValue, toValue } from './types'
@@ -52,8 +52,9 @@ export async function issueSealedGrant(vault: Vault, request: SealedRequest): Pr
   }
   const chain = [{ groups: request.groups, only: request.only }]
   const { entries } = await vault.scan()
-  const granted = entries
-    .filter((entry) => allowsEntry(chain, vault.state, entry.envelope.group, entry.payload.name))
+  const allowed = entries.filter((entry) => allowsEntry(chain, vault.state, entry.envelope.group, entry.payload.name))
+  const granted = [...Map.groupBy(allowed, (entry) => entry.payload.name).values()]
+    .flatMap((copies) => resolveName(vault.state.groups, copies) ?? [])
     .map((entry) => toValue(entry.envelope.group, entry.envelope.id, entry.envelope.rev, entry.payload))
   const id = randomHex(8)
   const exp = new Date(Date.now() + request.ttlMs).toISOString()
