@@ -13,7 +13,7 @@ import {
   verifyEnvelope,
 } from './entries'
 import { TypeVaultError } from './errors'
-import { atomicWrite, fsyncDir } from './fsx'
+import { assertNoSymlinks, atomicWrite, fsyncDir } from './fsx'
 import { Keyring } from './keyring'
 import { type Layout, layoutOf } from './layout'
 import { withLock } from './lock'
@@ -128,6 +128,7 @@ export class Vault {
       this.refresh()
       const entries: StoredEntry[] = []
       const problems: ScanProblem[] = []
+      assertNoSymlinks(this.layout.root, 'vault/entries')
       const files = existsSync(this.layout.entries) ? readdirSync(this.layout.entries) : []
       const marks = new RevisionMarks(this.layout.revisionsFile)
       for (const file of files.filter(
@@ -147,7 +148,7 @@ export class Vault {
           continue
         }
         if (!marks.accept(parsed.data.id, parsed.data.rev)) {
-          problems.push({ file, reason: `rolled back to revision ${parsed.data.rev} (this machine has seen newer)` })
+          problems.push({ file, reason: `revision ${parsed.data.rev} was replaced or deleted on this machine` })
           continue
         }
         // One unreadable file must never take the whole vault down with it.
@@ -164,6 +165,12 @@ export class Vault {
       marks.save()
       return { entries, problems }
     })
+  }
+
+  #tombstone(id: string): void {
+    const marks = new RevisionMarks(this.layout.revisionsFile)
+    marks.tombstone(id)
+    marks.save()
   }
 
   /** The entry `name` resolves to among the readable ones (see `resolveName`). */
@@ -249,6 +256,7 @@ export class Vault {
       if (existing === undefined) throw new TypeVaultError('not_found', `no entry named ${name}`)
       rmSync(join(this.layout.entries, `${existing.envelope.id}.json`))
       fsyncDir(this.layout.entries)
+      this.#tombstone(existing.envelope.id)
       return existing
     })
   }
@@ -272,6 +280,7 @@ export class Vault {
       if (!existsSync(path)) throw new TypeVaultError('not_found', 'entry is already gone')
       rmSync(path)
       fsyncDir(this.layout.entries)
+      this.#tombstone(id)
     })
   }
 

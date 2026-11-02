@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { Admin } from './admin'
-import { decodeSecretKey, type SecretKey } from './crypto'
+import { decodeSecretKey, seal, type SecretKey } from './crypto'
+import { utf8 } from './encoding'
 import { signerOf } from './entries'
 import { TypeVaultError } from './errors'
 import { initVault } from './init'
@@ -112,7 +113,36 @@ describe('integrity', () => {
     writeFileSync(file, JSON.stringify(first.envelope))
     const scan = await vault.scan()
     expect(scan.entries).toHaveLength(0)
-    expect(scan.problems[0]?.reason).toContain('rolled back')
+    expect(scan.problems[0]?.reason).toContain('replaced or deleted')
+  })
+
+  it('refuses a deleted entry restored from history', async () => {
+    const vault = await open([operator])
+    const old = await vault.put(stripe, signerOf(operator))
+    await vault.remove(stripe.name)
+    await vault.put({ ...stripe, fields: { key: 'sk_test_new' } }, signerOf(operator))
+    writeFileSync(join(root, 'vault', 'entries', `${old.envelope.id}.json`), JSON.stringify(old.envelope))
+    expect((await vault.find(stripe.name))?.payload.fields).toEqual({ key: 'sk_test_new' })
+  })
+
+  it('ignores a planted, malformed key wrap instead of failing every scan', async () => {
+    const vault = await open([operator])
+    await vault.put(stripe, signerOf(operator))
+    const gen = vault.state.groups['member']?.gen ?? 0
+    const wrap = join(root, 'vault', 'groups', 'member', String(gen), 'operator.age')
+    writeFileSync(wrap, await seal([vault.state.operator.recipient], utf8('tvk1:bm90IGpzb24')))
+    const viaTrusted = await open([await keyOf('trusted')])
+    expect((await viaTrusted.find(stripe.name))?.payload.fields).toEqual({ key: 'sk_test_123' })
+    await expect((await open([operator])).scan()).resolves.toBeDefined()
+  })
+
+  it('refuses a committed symlink inside the vault tree', async () => {
+    const vault = await open([operator])
+    const groups = join(root, 'vault', 'groups')
+    renameSync(groups, join(root, 'groups-real'))
+    symlinkSync(join(root, 'groups-real'), groups)
+    await expect(admin.addGroup('extra')).rejects.toMatchObject({ code: 'tampered' })
+    expect(vault).toBeDefined()
   })
 
   it('rejects a manifest rolled back to an older signed copy', async () => {

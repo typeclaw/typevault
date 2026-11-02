@@ -31,6 +31,12 @@ export class RevisionMarks {
     return true
   }
 
+  /** Marks `id` deleted: any file carrying it again (say, restored from git history) is refused here. */
+  tombstone(id: string): void {
+    this.#marks[id] = Number.MAX_SAFE_INTEGER
+    this.#dirty = true
+  }
+
   save(): void {
     if (this.#dirty) atomicWrite(this.#path, JSON.stringify(this.#marks), 0o600)
     this.#dirty = false
