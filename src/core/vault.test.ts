@@ -54,7 +54,7 @@ describe('group access', () => {
   it('refuses a write signed by a group key that does not reach the target group', async () => {
     const guestKey = await keyOf('guest')
     const guest = await open([guestKey])
-    expect(guest.put(stripe, signerOf(guestKey))).rejects.toThrow(TypeVaultError)
+    await expect(guest.put(stripe, signerOf(guestKey))).rejects.toThrow(TypeVaultError)
   })
 
   it('accepts a write signed by an including group key', async () => {
@@ -86,7 +86,7 @@ describe('integrity', () => {
 
   it('refuses to store a field the entry type does not have', async () => {
     const vault = await open([operator])
-    expect(
+    await expect(
       vault.put({ ...stripe, fields: { key: 'x', external_diff: 'sh' } }, signerOf(operator)),
     ).rejects.toMatchObject({ code: 'invalid' })
   })
@@ -97,7 +97,7 @@ describe('integrity', () => {
     const guestKey = await keyOf('guest')
     const guest = await open([guestKey])
     await guest.put({ ...stripe, group: 'guest', fields: { key: 'ATTACKER' } }, signerOf(guestKey))
-    expect((await open([await keyOf('trusted')])).find(stripe.name)).resolves.toMatchObject({
+    await expect((await open([await keyOf('trusted')])).find(stripe.name)).resolves.toMatchObject({
       payload: { fields: { key: 'sk_test_123' } },
     })
   })
@@ -122,20 +122,20 @@ describe('integrity', () => {
     await admin.removeSigner('ci')
     await open([operator])
     writeFileSync(file, before)
-    expect(open([operator])).rejects.toMatchObject({ code: 'tampered' })
+    await expect(open([operator])).rejects.toMatchObject({ code: 'tampered' })
   })
 
   it('rejects a vault whose operator key changed after it was first trusted', async () => {
     const file = join(root, 'vault', 'operator.json')
     const doc = JSON.parse(readFileSync(file, 'utf8'))
     writeFileSync(file, JSON.stringify({ ...doc, signPublic: 'AAAA' }))
-    expect(open([operator])).rejects.toMatchObject({ code: 'tampered' })
+    await expect(open([operator])).rejects.toMatchObject({ code: 'tampered' })
   })
 
   it('rejects a stale revision on compare-and-swap', async () => {
     const vault = await open([operator])
     await vault.put(stripe, signerOf(operator))
-    expect(vault.put(stripe, signerOf(operator), { ifRev: 0 })).rejects.toMatchObject({ code: 'conflict' })
+    await expect(vault.put(stripe, signerOf(operator), { ifRev: 0 })).rejects.toMatchObject({ code: 'conflict' })
     expect((await vault.put(stripe, signerOf(operator), { ifRev: 1 })).envelope.rev).toBe(2)
   })
 
@@ -173,7 +173,7 @@ describe('rotation', () => {
   })
 
   it('refuses an include that would form a cycle', async () => {
-    expect(admin.include('guest', 'trusted')).rejects.toMatchObject({ code: 'invalid' })
+    await expect(admin.include('guest', 'trusted')).rejects.toMatchObject({ code: 'invalid' })
   })
 
   it('leaves no staged transaction behind', async () => {

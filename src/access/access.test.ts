@@ -75,7 +75,7 @@ describe('ScopedVault', () => {
   })
 
   it('refuses to overwrite a name held in a group the scope cannot reach', async () => {
-    expect(member().set({ name: n('stripe'), type: 'api_key', fields: { key: 'x' } })).rejects.toMatchObject({
+    await expect(member().set({ name: n('stripe'), type: 'api_key', fields: { key: 'x' } })).rejects.toMatchObject({
       code: 'denied',
     })
   })
@@ -93,7 +93,7 @@ describe('ScopedVault', () => {
   })
 
   it('refuses to store a reserved env override', async () => {
-    expect(
+    await expect(
       member().set({ name: n('evil'), type: 'api_key', fields: { key: 'x' }, env: 'NODE_OPTIONS' }),
     ).rejects.toMatchObject({ code: 'invalid' })
   })
@@ -134,14 +134,14 @@ describe('sealed grants', () => {
 
   it('cannot write outside its groups', async () => {
     const access = new SealedAccess(await readSealedGrant(await issue()), root, {})
-    expect(
+    await expect(
       access.set({ name: n('github/x'), type: 'note', fields: { text: 'x' }, group: 'trusted' }),
     ).rejects.toMatchObject({ code: 'denied' })
   })
 
   it('refuses to work once expired', async () => {
     const access = new SealedAccess(await readSealedGrant(await issue(-1)), root, {})
-    expect(access.list()).rejects.toMatchObject({ code: 'expired' })
+    await expect(access.list()).rejects.toMatchObject({ code: 'expired' })
   })
 
   const certSigner = async (ttlMs: number) => {
@@ -161,7 +161,7 @@ describe('sealed grants', () => {
   })
 
   it('stops honoring a certificate once the reader clock passes its expiry', async () => {
-    expect(
+    await expect(
       vault.put({ name: n('github/x'), type: 'note', fields: { text: 'late' }, group: 'member' }, await certSigner(-1)),
     ).rejects.toMatchObject({ code: 'denied' })
   })
