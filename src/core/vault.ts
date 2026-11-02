@@ -18,6 +18,16 @@ export type StoredEntry = { readonly envelope: Envelope; readonly payload: Entry
 export type ScanProblem = { readonly file: string; readonly reason: string }
 export type Scan = { readonly entries: readonly StoredEntry[]; readonly problems: readonly ScanProblem[] }
 
+/** What a writer that can't read the current entry (a sealed grant) knows about it. */
+export type EntryBase = {
+  readonly id: string
+  readonly rev: number
+  readonly created: string
+  readonly rotated: string
+}
+
+export type PutOptions = { readonly ifRev?: number; readonly base?: EntryBase }
+
 export type EntryInput = {
   readonly name: EntryName
   readonly type: EntryType
@@ -120,33 +130,38 @@ export class Vault {
       )
   }
 
-  /** Creates or replaces an entry. `ifRev` makes it a compare-and-swap against the current revision. */
-  put(input: EntryInput, signer: SignerContext, ifRev?: number): Promise<StoredEntry> {
+  /**
+   * Creates or replaces an entry. `ifRev` makes it a compare-and-swap against the current revision;
+   * `base` stands in for the current entry when this process can't read it.
+   */
+  put(input: EntryInput, signer: SignerContext, options: PutOptions = {}): Promise<StoredEntry> {
     return withLock(this.layout.lockFile, 'exclusive', async () => {
-      const existing = await this.find(input.name)
-      if (ifRev !== undefined && (existing?.envelope.rev ?? 0) !== ifRev) {
-        throw new TypeVaultError(
-          'conflict',
-          `${input.name} is at revision ${existing?.envelope.rev ?? 0}, not ${ifRev}`,
-        )
+      const found = await this.find(input.name)
+      const prior = found === undefined ? options.base : { ...found.envelope, ...found.payload }
+      const currentRev = prior?.rev ?? 0
+      if (options.ifRev !== undefined && currentRev !== options.ifRev) {
+        throw new TypeVaultError('conflict', `${input.name} is at revision ${currentRev}, not ${options.ifRev}`)
       }
       const now = new Date().toISOString()
-      const changed = existing === undefined || !sameFields(existing.payload.fields, input.fields)
+      const changed = found === undefined || !sameFields(found.payload.fields, input.fields)
       const payload: EntryPayload = {
         v: 1,
         name: input.name,
         type: input.type,
         fields: input.fields,
-        tags: input.tags ?? existing?.payload.tags ?? [],
-        created: existing?.payload.created ?? now,
-        rotated: changed ? now : (existing?.payload.rotated ?? now),
+        tags: input.tags ?? found?.payload.tags ?? [],
+        created: prior?.created ?? now,
+        rotated: changed ? now : (prior?.rotated ?? now),
         ...(input.env === undefined ? {} : { env: input.env }),
         ...(input.origin === undefined ? {} : { origin: input.origin }),
-        ...(changed || existing?.payload.needsRotation !== true ? {} : { needsRotation: true }),
+        ...(changed || found?.payload.needsRotation !== true ? {} : { needsRotation: true }),
       }
-      const id = existing?.envelope.id ?? randomHex(16)
-      const rev = (existing?.envelope.rev ?? 0) + 1
-      const envelope = await sealEntry({ id, group: input.group, rev, at: now, payload }, this.#state, signer)
+      const id = prior?.id ?? randomHex(16)
+      const envelope = await sealEntry(
+        { id, group: input.group, rev: currentRev + 1, at: now, payload },
+        this.#state,
+        signer,
+      )
       atomicWrite(join(this.layout.entries, `${id}.json`), `${JSON.stringify(envelope, null, 2)}\n`)
       return { envelope, payload }
     })
@@ -159,6 +174,17 @@ export class Vault {
       rmSync(join(this.layout.entries, `${existing.envelope.id}.json`))
       fsyncDir(this.layout.entries)
       return existing
+    })
+  }
+
+  /** Deletes an entry file by id, for writers that can't read the entry (sealed grants). */
+  removeById(id: string): Promise<void> {
+    return withLock(this.layout.lockFile, 'exclusive', async () => {
+      if (!/^[0-9a-f]{32}$/.test(id)) throw new TypeVaultError('invalid', 'invalid entry id')
+      const path = join(this.layout.entries, `${id}.json`)
+      if (!existsSync(path)) throw new TypeVaultError('not_found', 'entry is already gone')
+      rmSync(path)
+      fsyncDir(this.layout.entries)
     })
   }
 

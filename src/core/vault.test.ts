@@ -85,8 +85,8 @@ describe('integrity', () => {
   it('rejects a stale revision on compare-and-swap', async () => {
     const vault = await open([operator])
     await vault.put(stripe, signerOf(operator))
-    expect(vault.put(stripe, signerOf(operator), 0)).rejects.toMatchObject({ code: 'conflict' })
-    expect((await vault.put(stripe, signerOf(operator), 1)).envelope.rev).toBe(2)
+    expect(vault.put(stripe, signerOf(operator), { ifRev: 0 })).rejects.toMatchObject({ code: 'conflict' })
+    expect((await vault.put(stripe, signerOf(operator), { ifRev: 1 })).envelope.rev).toBe(2)
   })
 
   it('serializes concurrent writes from one process', async () => {
