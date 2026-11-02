@@ -1,5 +1,7 @@
+import { TypeVaultError } from '../core/errors'
 import type { EntryName, EntryType } from '../core/naming'
 import type { EntryPayload } from '../core/payload'
+import { isReservedEnvName } from './env'
 
 export type EntrySummary = {
   readonly name: EntryName
@@ -31,15 +33,20 @@ export type SetInput = {
 }
 
 /** The vault-level input for a write, without the optional keys a parsed request leaves undefined. */
-export const entryInputOf = (input: SetInput, group: string) => ({
-  name: input.name,
-  type: input.type,
-  fields: input.fields,
-  group,
-  ...(input.env === undefined ? {} : { env: input.env }),
-  ...(input.origin === undefined ? {} : { origin: input.origin }),
-  ...(input.tags === undefined ? {} : { tags: input.tags }),
-})
+export function entryInputOf(input: SetInput, group: string) {
+  if (input.env !== undefined && isReservedEnvName(input.env)) {
+    throw new TypeVaultError('invalid', `${input.env} is reserved: run never sets it from the vault`)
+  }
+  return {
+    name: input.name,
+    type: input.type,
+    fields: input.fields,
+    group,
+    ...(input.env === undefined ? {} : { env: input.env }),
+    ...(input.origin === undefined ? {} : { origin: input.origin }),
+    ...(input.tags === undefined ? {} : { tags: input.tags }),
+  }
+}
 
 /** What a CLI command can do with secrets, whether the values come from a daemon, a sealed grant or a local key. */
 export interface Access {

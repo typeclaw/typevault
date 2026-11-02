@@ -79,6 +79,24 @@ describe('ScopedVault', () => {
     })
   })
 
+  it('never lets an entry set a loader variable such as PATH or LD_PRELOAD', async () => {
+    const base = await member().get(n('github/bot'))
+    const env = envFor(
+      [
+        { ...base, env: 'PATH', fields: { password: '/tmp/evil' } },
+        { ...base, name: n('ld-preload'), type: 'note', fields: { text: 'x.so' } },
+      ],
+      new Date(0),
+    )
+    expect(env).toEqual({})
+  })
+
+  it('refuses to store a reserved env override', async () => {
+    expect(
+      member().set({ name: n('evil'), type: 'api_key', fields: { key: 'x' }, env: 'NODE_OPTIONS' }),
+    ).rejects.toMatchObject({ code: 'invalid' })
+  })
+
   it('derives env names and loads TOTP codes instead of seeds', async () => {
     const env = envFor(
       [
