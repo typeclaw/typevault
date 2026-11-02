@@ -146,10 +146,13 @@ export class ScopedVault implements Access {
     return toSummary(valueOf(stored))
   }
 
-  async remove(name: EntryName): Promise<void> {
-    await this.#find(name)
-    await this.#vault.remove(name)
-    await this.#audit({ action: 'remove', entries: [name] })
+  async remove(name: EntryName, group?: string): Promise<void> {
+    if (group === undefined) await this.#find(name)
+    else if (!allowsEntry(this.#chain, this.#vault.state, group, name)) {
+      throw new TypeVaultError('not_found', `no entry named ${name}`)
+    }
+    await this.#vault.remove(name, group)
+    await this.#audit({ action: 'remove', entries: [name], ...(group === undefined ? {} : { groups: [group] }) })
   }
 
   async move(from: EntryName, to: EntryName): Promise<void> {

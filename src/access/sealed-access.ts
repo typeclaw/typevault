@@ -98,7 +98,7 @@ export class SealedAccess implements Access {
     }
   }
 
-  async remove(name: EntryName): Promise<void> {
+  async remove(name: EntryName, _group?: string): Promise<void> {
     const entry = this.#entry(name)
     await (await this.#vault()).removeById(entry.id)
     await this.#audit({ action: 'remove', entries: [name] })

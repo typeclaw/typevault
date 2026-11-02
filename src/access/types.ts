@@ -53,7 +53,8 @@ export interface Access {
   get(name: EntryName, reason?: string): Promise<EntryValue>
   values(only: readonly string[], reason?: string): Promise<readonly EntryValue[]>
   set(input: SetInput): Promise<EntrySummary>
-  remove(name: EntryName): Promise<void>
+  /** `group` picks one copy when a name exists in unrelated groups. */
+  remove(name: EntryName, group?: string): Promise<void>
   move(from: EntryName, to: EntryName): Promise<void>
   /** The groups this caller holds directly (not through includes): what `run` loads in bulk. */
   ownGroups(): Promise<readonly string[]>
