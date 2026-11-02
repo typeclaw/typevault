@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 import { fromUtf8, utf8 } from './encoding'
 import { TypeVaultError } from './errors'
-import { type EntryName, type EntryType, isEntryType, parseEntryName } from './naming'
+import { type EntryName, type EntryType, fieldsOf, isEntryType, isUsableEnvName, parseEntryName } from './naming'
 
 /** The plaintext sealed inside an entry file: everything except the group is secret. */
 export type EntryPayload = {
@@ -34,11 +34,38 @@ const PayloadSchema = z.object({
   needsRotation: z.boolean().optional(),
 })
 
-export const encodePayload = (payload: EntryPayload): Uint8Array => utf8(JSON.stringify(payload))
+/** Why a payload can't be stored, or undefined when it can. */
+function payloadProblem(value: unknown): string | undefined {
+  const parsed = PayloadSchema.safeParse(value)
+  if (!parsed.success) return parsed.error.issues[0]?.message ?? 'malformed'
+  const { type, fields, env } = parsed.data
+  if (!isEntryType(type)) return `unknown type "${type}"`
+  const allowed = fieldsOf(type)
+  const stray = Object.keys(fields).find((field) => !allowed.includes(field))
+  if (stray !== undefined) return `${type} entries have no field "${stray}"`
+  if (env !== undefined && !isUsableEnvName(env)) return `${env} is not a usable env name`
+  return undefined
+}
+
+export function encodePayload(payload: EntryPayload): Uint8Array {
+  const problem = payloadProblem(payload)
+  if (problem !== undefined) throw new TypeVaultError('invalid', problem)
+  return utf8(JSON.stringify(payload))
+}
 
 export function decodePayload(bytes: Uint8Array): EntryPayload {
-  const parsed = PayloadSchema.safeParse(JSON.parse(fromUtf8(bytes)))
-  if (!parsed.success) throw new TypeVaultError('tampered', `malformed entry payload: ${parsed.error.message}`)
+  let value: unknown
+  try {
+    value = JSON.parse(fromUtf8(bytes))
+  } catch (error) {
+    if (error instanceof SyntaxError || error instanceof TypeError)
+      throw new TypeVaultError('tampered', 'entry payload is not JSON')
+    throw error
+  }
+  const problem = payloadProblem(value)
+  const parsed = PayloadSchema.safeParse(value)
+  if (problem !== undefined || !parsed.success)
+    throw new TypeVaultError('tampered', `malformed entry payload: ${problem ?? 'invalid'}`)
   const { name, type, env, origin, needsRotation, ...rest } = parsed.data
   if (!isEntryType(type)) throw new TypeVaultError('tampered', `unknown entry type "${type}"`)
   return {
