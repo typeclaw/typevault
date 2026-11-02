@@ -48,6 +48,10 @@ export class LiveAccess implements Access {
     await this.call('/v1/move', { from, to }, Ok)
   }
 
+  async ownGroups(): Promise<readonly string[]> {
+    return (await this.call('/v1/whoami', {}, z.object({ groups: z.array(z.string()) }))).groups
+  }
+
   async readValues(): Promise<readonly string[]> {
     return this.call('/v1/read-values', {}, z.array(z.string()))
   }

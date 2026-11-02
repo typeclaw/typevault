@@ -31,6 +31,7 @@ function session(context: DaemonContext, request: Request): { grant: ResolvedGra
     mode: 'live',
     grant: record.id,
     label: record.label,
+    ownGroups: record.groups,
     ...(record.groups[0] === undefined ? {} : { defaultGroup: record.groups[0] }),
   })
   context.sessions.set(record.id, access)
