@@ -1,0 +1,28 @@
+import { expect, test } from 'bun:test'
+
+import { TypeVaultError } from '../core/errors'
+import { parseDotenv } from './dotenv'
+
+test('dotenv retains variable names and parses quoted multiline secrets without expansion', () => {
+  const result = parseDotenv(
+    "# comment\r\nexport OPENAI_API_KEY=hunter2 # hidden\r\nLITERAL='$HOME\\n#literal'\n" +
+      'MULTI="first\\nsecond\nthird \\"quoted\\""\nEMPTY=\nOPENAI_API_KEY=other\n',
+  )
+  expect(result.entries.map((entry) => [entry.name, entry.type, entry.fields, entry.env])).toEqual([
+    ['openai-api-key', 'api_key', { key: 'hunter2' }, 'OPENAI_API_KEY'],
+    ['literal', 'api_key', { key: '$HOME\\n#literal' }, 'LITERAL'],
+    ['multi', 'api_key', { key: 'first\nsecond\nthird "quoted"' }, 'MULTI'],
+    ['empty', 'api_key', {}, 'EMPTY'],
+    ['openai-api-key-2', 'api_key', { key: 'other' }, 'OPENAI_API_KEY'],
+  ])
+  expect(result.warnings).toHaveLength(1)
+  expect(result.warnings[0]).toContain('openai-api-key-2')
+  expect(result.warnings.join()).not.toContain('hunter2')
+})
+
+test.each(['broken', 'KEY="unclosed', "KEY='unclosed", 'KEY="value"junk', '2KEY=value'])(
+  'dotenv rejects malformed assignments without exposing values: %p',
+  (text) => {
+    expect(() => parseDotenv(text)).toThrow(TypeVaultError)
+  },
+)
