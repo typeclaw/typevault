@@ -28,8 +28,10 @@ export const run = defineCommand({
     const values = await (await resolveAccess(process.env)).access.values(csv(args.only), args.reason)
     const env = envFor(values, new Date())
     const redactor = createRedactor([...secretValues(values), ...Object.values(env)])
+    // The child gets its secrets, never the key that opens the vault.
+    const { TYPEVAULT_KEY: _key, ...inherited } = process.env
     const child = Bun.spawn(command, {
-      env: { ...process.env, ...env },
+      env: { ...inherited, ...env },
       stdin: 'inherit',
       stdout: 'pipe',
       stderr: 'pipe',
