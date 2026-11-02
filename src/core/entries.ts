@@ -134,11 +134,14 @@ export function signCiphertext(
   return { ...envelope, sig: sign(signer.signSecret, envelopeBytes(envelope)) }
 }
 
+const CLOCK_SKEW_MS = 5 * 60_000
+
 /** Why an envelope can't be trusted, or undefined when it can. */
 export function verifyEnvelope(envelope: Envelope, state: VaultState): string | undefined {
   const group = state.groups[envelope.group]
   if (group === undefined) return `unknown group "${envelope.group}"`
   if (group.gen !== envelope.gen) return `stale generation ${envelope.gen} (current ${group.gen})`
+  if (Date.parse(envelope.at) > Date.now() + CLOCK_SKEW_MS) return 'timestamp is in the future'
   const signPublic = signerAuthority(envelope.signer, envelope.group, state, envelope.at)
   if (signPublic === undefined) return 'signer is not allowed to write this group'
   return verifySignature(signPublic, envelopeBytes(envelope), envelope.sig) ? undefined : 'bad signature'
