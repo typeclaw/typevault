@@ -40,6 +40,7 @@ it('resolves a git merge conflict by keeping the highest valid revision', async 
 })
 
 it('removes the older copy when two files hold the same name', async () => {
+  await vault.put({ name, type: 'api_key', fields: { key: 'zero' }, group: 'team' }, signerOf(operator))
   const kept = await vault.put({ name, type: 'api_key', fields: { key: 'one' }, group: 'team' }, signerOf(operator))
   const payload = { ...kept.payload, fields: { key: 'stale' } }
   const stale = await sealEntry(
@@ -51,6 +52,24 @@ it('removes the older copy when two files hold the same name', async () => {
 
   const report = await doctor(vault, true)
 
-  expect(report.duplicatesRemoved).toEqual([`openai (${stale.id})`])
+  expect(report.duplicatesRemoved).toEqual([`openai (team, ${stale.id})`])
   expect((await vault.scan()).entries).toHaveLength(1)
+})
+
+it('never deletes a copy that lives in another group', async () => {
+  await new Admin(vault).addGroup('other')
+  const kept = await vault.put({ name, type: 'api_key', fields: { key: 'one' }, group: 'team' }, signerOf(operator))
+  const payload = { ...kept.payload, fields: { key: 'planted' } }
+  const planted = await sealEntry(
+    { id: 'e'.repeat(32), group: 'other', rev: 99, at: kept.envelope.at, payload },
+    vault.state,
+    signerOf(operator),
+  )
+  writeFileSync(join(root, 'vault', 'entries', `${planted.id}.json`), JSON.stringify(planted))
+
+  const report = await doctor(vault, true)
+
+  expect(report.duplicatesRemoved).toEqual([])
+  expect(report.duplicatesKept).toEqual(['openai (in other, team)'])
+  expect((await vault.scan()).entries).toHaveLength(2)
 })

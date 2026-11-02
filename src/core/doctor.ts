@@ -4,12 +4,14 @@ import { join } from 'node:path'
 import { type Envelope, EnvelopeSchema, verifyEnvelope } from './entries'
 import { atomicWrite } from './fsx'
 import { withLock } from './lock'
-import type { ScanProblem, Vault } from './vault'
+import { resolveName, type ScanProblem, type Vault } from './vault'
 
 export type DoctorReport = {
   readonly problems: readonly ScanProblem[]
   readonly mergesResolved: readonly string[]
   readonly duplicatesRemoved: readonly string[]
+  /** Same name in several groups: reported for the operator, never deleted automatically. */
+  readonly duplicatesKept: readonly string[]
   readonly needsRotation: readonly string[]
 }
 
@@ -55,20 +57,25 @@ export function doctor(vault: Vault, fix: boolean): Promise<DoctorReport> {
     const { entries, problems } = await vault.scan()
     const byName = Map.groupBy(entries, (entry) => entry.payload.name)
     const duplicatesRemoved: string[] = []
+    const duplicatesKept: string[] = []
     for (const [name, copies] of byName) {
       if (copies.length < 2) continue
-      const [keep, ...drop] = copies.toSorted(
-        (a, b) => b.envelope.rev - a.envelope.rev || b.envelope.at.localeCompare(a.envelope.at),
-      )
-      if (keep === undefined) continue
-      for (const copy of drop) {
-        if (fix) rmSync(join(vault.layout.entries, `${copy.envelope.id}.json`))
-        duplicatesRemoved.push(`${name} (${copy.envelope.id})`)
+      // Only same-group copies are removed: across groups the higher group already wins reads, and
+      // the operator decides what to delete.
+      for (const [group, inGroup] of Map.groupBy(copies, (entry) => entry.envelope.group)) {
+        const keep = resolveName(vault.state.groups, inGroup)
+        for (const copy of inGroup) {
+          if (copy === keep) continue
+          if (fix) rmSync(join(vault.layout.entries, `${copy.envelope.id}.json`))
+          duplicatesRemoved.push(`${name} (${group}, ${copy.envelope.id})`)
+        }
       }
+      const groups = new Set(copies.map((entry) => entry.envelope.group))
+      if (groups.size > 1) duplicatesKept.push(`${name} (in ${[...groups].sort().join(', ')})`)
     }
     const needsRotation = entries
       .filter((entry) => entry.payload.needsRotation === true)
       .map((entry) => entry.payload.name)
-    return { problems, mergesResolved, duplicatesRemoved, needsRotation }
+    return { problems, mergesResolved, duplicatesRemoved, duplicatesKept, needsRotation }
   })
 }
