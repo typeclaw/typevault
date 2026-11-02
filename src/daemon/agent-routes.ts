@@ -58,7 +58,8 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
     },
     '/v1/set': async (request) => json(await session(context, request).access.set(await parseBody(request, SetBody))),
     '/v1/remove': async (request) => {
-      await session(context, request).access.remove((await parseBody(request, NameBody)).name)
+      const { name, group } = await parseBody(request, NameBody)
+      await session(context, request).access.remove(name, group)
       return json({ ok: true })
     },
     '/v1/move': async (request) => {

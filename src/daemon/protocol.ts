@@ -6,7 +6,7 @@ const name = z.string().transform((value) => parseEntryName(value))
 const type = z.string().refine(isEntryType, 'unknown entry type')
 const reason = z.string().max(500).optional()
 
-export const NameBody = z.object({ name, reason })
+export const NameBody = z.object({ name, reason, group: z.string().optional() })
 export const ValuesBody = z.object({ only: z.array(z.string()).default([]), reason })
 export const SetBody = z.object({
   name,

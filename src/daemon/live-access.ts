@@ -40,8 +40,8 @@ export class LiveAccess implements Access {
     return toSummaryValue(await this.call('/v1/set', input, EntrySummarySchema))
   }
 
-  async remove(name: EntryName): Promise<void> {
-    await this.call('/v1/remove', { name }, Ok)
+  async remove(name: EntryName, group?: string): Promise<void> {
+    await this.call('/v1/remove', { name, ...(group === undefined ? {} : { group }) }, Ok)
   }
 
   async move(from: EntryName, to: EntryName): Promise<void> {
