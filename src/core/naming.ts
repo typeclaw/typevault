@@ -78,8 +78,20 @@ export function matchesOnly(name: EntryName, patterns: readonly string[]): boole
  * Variables that change how the child or its interpreter loads code. A lower group can write entries a higher
  * group's `run` loads, so an entry must never set these, whether by --env override or by a derived name.
  */
-const RESERVED_ENV =
-  /^(PATH|HOME|SHELL|USER|LOGNAME|TMPDIR|IFS|ENV|BASH_ENV|PS4|PROMPT_COMMAND|EDITOR|VISUAL|PAGER|BROWSER|NODE_OPTIONS|NODE_PATH|PYTHONPATH|PYTHONHOME|PYTHONSTARTUP|RUBYOPT|RUBYLIB|PERL5OPT|PERL5LIB|JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|SSH_AUTH_SOCK|GIT_SSH|GIT_SSH_COMMAND|GIT_EXEC_PATH|GIT_CONFIG_\w*|LD_\w*|DYLD_\w*|BUN_\w*|NPM_CONFIG_\w*|TYPEVAULT_\w*)$/
+const RESERVED_ENV = new RegExp(
+  `^(${[
+    // the shell and process
+    'PATH|HOME|SHELL|USER|LOGNAME|TMPDIR|IFS|ENV|BASH_ENV|PS4|PROMPT_COMMAND|ZDOTDIR|XDG_\\w*',
+    // programs a tool may launch
+    'EDITOR|VISUAL|PAGER|BROWSER|MANPAGER|LESS\\w*|SSH_ASKPASS\\w*|SSH_AUTH_SOCK|GIT_\\w*',
+    // interpreters and loaders
+    'NODE_OPTIONS|NODE_PATH|NODE_EXTRA_CA_CERTS|PYTHONPATH|PYTHONHOME|PYTHONSTARTUP|RUBYOPT|RUBYLIB|PERL5OPT|PERL5LIB|PERLLIB',
+    'JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|JDK_JAVA_OPTIONS|LD_\\w*|DYLD_\\w*|BUN_\\w*|NPM_CONFIG_\\w*',
+    // where traffic goes and which certificates it trusts
+    'HTTPS?_PROXY|ALL_PROXY|NO_PROXY|SSL_CERT_FILE|SSL_CERT_DIR|REQUESTS_CA_BUNDLE|CURL_CA_BUNDLE',
+    'TYPEVAULT_\\w*',
+  ].join('|')})$`,
+)
 
 export const isReservedEnvName = (name: string): boolean => RESERVED_ENV.test(name)
 
