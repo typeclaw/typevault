@@ -3,7 +3,15 @@ import { join } from 'node:path'
 
 import { randomHex, type SecretKey } from './crypto'
 import { fromUtf8 } from './encoding'
-import { type Envelope, EnvelopeSchema, openEntry, sealEntry, type SignerContext, verifyEnvelope } from './entries'
+import {
+  type Envelope,
+  EnvelopeSchema,
+  openEntry,
+  sealEntry,
+  signCiphertext,
+  type SignerContext,
+  verifyEnvelope,
+} from './entries'
 import { TypeVaultError } from './errors'
 import { atomicWrite, fsyncDir } from './fsx'
 import { Keyring } from './keyring'
@@ -12,7 +20,7 @@ import { withLock } from './lock'
 import type { EntryName, EntryType } from './naming'
 import type { EntryPayload } from './payload'
 import { loadState, type VaultState } from './state'
-import { recoverTxns } from './txn'
+import { commitTxn, recoverTxns, Txn } from './txn'
 
 export type StoredEntry = { readonly envelope: Envelope; readonly payload: EntryPayload }
 export type ScanProblem = { readonly file: string; readonly reason: string }
@@ -130,40 +138,68 @@ export class Vault {
       )
   }
 
+  /** The envelope that writing `input` over `found` (or a blind writer's `base`) produces. */
+  async #draft(
+    input: EntryInput,
+    found: StoredEntry | undefined,
+    options: PutOptions,
+    signer: SignerContext,
+  ): Promise<StoredEntry> {
+    const prior = found === undefined ? options.base : { ...found.envelope, ...found.payload }
+    const currentRev = prior?.rev ?? 0
+    if (options.ifRev !== undefined && currentRev !== options.ifRev) {
+      throw new TypeVaultError('conflict', `${input.name} is at revision ${currentRev}, not ${options.ifRev}`)
+    }
+    const now = new Date().toISOString()
+    const changed = found === undefined || !sameFields(found.payload.fields, input.fields)
+    const payload: EntryPayload = {
+      v: 1,
+      name: input.name,
+      type: input.type,
+      fields: input.fields,
+      tags: input.tags ?? found?.payload.tags ?? [],
+      created: prior?.created ?? now,
+      rotated: changed ? now : (prior?.rotated ?? now),
+      ...(input.env === undefined ? {} : { env: input.env }),
+      ...(input.origin === undefined ? {} : { origin: input.origin }),
+      ...(changed || found?.payload.needsRotation !== true ? {} : { needsRotation: true }),
+    }
+    const draft = { id: prior?.id ?? randomHex(16), group: input.group, rev: currentRev + 1, at: now, payload }
+    return { envelope: await sealEntry(draft, this.#state, signer), payload }
+  }
+
   /**
    * Creates or replaces an entry. `ifRev` makes it a compare-and-swap against the current revision;
    * `base` stands in for the current entry when this process can't read it.
    */
   put(input: EntryInput, signer: SignerContext, options: PutOptions = {}): Promise<StoredEntry> {
     return withLock(this.layout.lockFile, 'exclusive', async () => {
-      const found = await this.find(input.name)
-      const prior = found === undefined ? options.base : { ...found.envelope, ...found.payload }
-      const currentRev = prior?.rev ?? 0
-      if (options.ifRev !== undefined && currentRev !== options.ifRev) {
-        throw new TypeVaultError('conflict', `${input.name} is at revision ${currentRev}, not ${options.ifRev}`)
-      }
-      const now = new Date().toISOString()
-      const changed = found === undefined || !sameFields(found.payload.fields, input.fields)
-      const payload: EntryPayload = {
-        v: 1,
-        name: input.name,
-        type: input.type,
-        fields: input.fields,
-        tags: input.tags ?? found?.payload.tags ?? [],
-        created: prior?.created ?? now,
-        rotated: changed ? now : (prior?.rotated ?? now),
-        ...(input.env === undefined ? {} : { env: input.env }),
-        ...(input.origin === undefined ? {} : { origin: input.origin }),
-        ...(changed || found?.payload.needsRotation !== true ? {} : { needsRotation: true }),
-      }
-      const id = prior?.id ?? randomHex(16)
-      const envelope = await sealEntry(
-        { id, group: input.group, rev: currentRev + 1, at: now, payload },
-        this.#state,
-        signer,
+      const stored = await this.#draft(input, await this.find(input.name), options, signer)
+      atomicWrite(
+        join(this.layout.entries, `${stored.envelope.id}.json`),
+        `${JSON.stringify(stored.envelope, null, 2)}\n`,
       )
-      atomicWrite(join(this.layout.entries, `${id}.json`), `${JSON.stringify(envelope, null, 2)}\n`)
-      return { envelope, payload }
+      return stored
+    })
+  }
+
+  /** Writes many entries as one transaction (an import): all of them land, or none do. */
+  putMany(
+    inputs: readonly EntryInput[],
+    signerFor: (group: string) => Promise<SignerContext>,
+  ): Promise<readonly StoredEntry[]> {
+    return withLock(this.layout.lockFile, 'exclusive', async () => {
+      const { entries } = await this.scan()
+      const txn = new Txn()
+      const stored: StoredEntry[] = []
+      for (const input of inputs) {
+        const found = entries.filter((entry) => entry.payload.name === input.name).at(-1)
+        const entry = await this.#draft(input, found, {}, await signerFor(input.group))
+        txn.put(`entries/${entry.envelope.id}.json`, `${JSON.stringify(entry.envelope, null, 2)}\n`)
+        stored.push(entry)
+      }
+      commitTxn(this.layout, txn)
+      return stored
     })
   }
 
@@ -174,6 +210,17 @@ export class Vault {
       rmSync(join(this.layout.entries, `${existing.envelope.id}.json`))
       fsyncDir(this.layout.entries)
       return existing
+    })
+  }
+
+  /** Stores a payload encrypted elsewhere under `name`, replacing any entry of that name. */
+  putCiphertext(name: EntryName, group: string, ciphertext: Uint8Array, signer: SignerContext): Promise<Envelope> {
+    return withLock(this.layout.lockFile, 'exclusive', async () => {
+      const existing = await this.find(name)
+      const draft = { id: existing?.envelope.id ?? randomHex(16), group, rev: (existing?.envelope.rev ?? 0) + 1 }
+      const envelope = signCiphertext({ ...draft, at: new Date().toISOString() }, ciphertext, this.#state, signer)
+      atomicWrite(join(this.layout.entries, `${envelope.id}.json`), `${JSON.stringify(envelope, null, 2)}\n`)
+      return envelope
     })
   }
 
