@@ -12,7 +12,7 @@ import { reach } from '../core/state'
 import { resolveName, type Vault } from '../core/vault'
 import { EntryValueSchema, toEntryValue } from './schemas'
 import { allowsEntry, type GrantScope } from './scope'
-import { type EntryValue, toValue } from './types'
+import { type EntryValue, toValue, writtenFromAbove } from './types'
 
 const PREFIX = 'tvg1:'
 
@@ -55,7 +55,10 @@ export async function issueSealedGrant(vault: Vault, request: SealedRequest): Pr
   const allowed = entries.filter((entry) => allowsEntry(chain, vault.state, entry.envelope.group, entry.payload.name))
   const granted = [...Map.groupBy(allowed, (entry) => entry.payload.name).values()]
     .flatMap((copies) => resolveName(vault.state.groups, copies) ?? [])
-    .map((entry) => toValue(entry.envelope.group, entry.envelope.id, entry.envelope.rev, entry.payload))
+    .map((entry) => ({
+      ...toValue(entry.envelope.group, entry.envelope.id, entry.envelope.rev, entry.payload),
+      trustedWriter: writtenFromAbove(entry.envelope.signer, vault.state, request.groups),
+    }))
   const id = randomHex(8)
   const exp = new Date(Date.now() + request.ttlMs).toISOString()
   const signing = generateSigningKey()

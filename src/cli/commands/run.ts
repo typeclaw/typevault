@@ -130,7 +130,7 @@ export const importCommand = defineCommand({
     const stored = await vault.putMany(
       result.entries.map((entry) => ({ ...entry, group })),
       async (target) => {
-        const key = (await vault.keyring.unlock(target)) ?? vault.keyring.operator
+        const key = vault.keyring.operator ?? (await vault.keyring.unlock(target))
         if (key === undefined) throw new TypeVaultError('denied', `no key here can write group "${target}"`)
         return signerOf(key)
       },
