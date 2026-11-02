@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { randomHex } from './crypto'
 import { fromUtf8, utf8 } from './encoding'
 import { TypeVaultError } from './errors'
-import { atomicWrite, fsyncDir } from './fsx'
+import { assertNoSymlinks, atomicWrite, fsyncDir } from './fsx'
 import type { Layout } from './layout'
 
 const COMMITTED = 'COMMITTED'
@@ -68,12 +68,14 @@ function applyTxn(layout: Layout, dir: string): void {
   manifest.puts.forEach((rel, index) => {
     const staged = join(dir, 'files', String(index))
     if (!existsSync(staged)) return
+    assertNoSymlinks(layout.vault, checkRel(rel))
     const target = join(layout.vault, checkRel(rel))
     mkdirSync(dirname(target), { recursive: true })
     renameSync(staged, target)
     touched.add(dirname(target))
   })
   for (const rel of manifest.removes) {
+    assertNoSymlinks(layout.vault, checkRel(rel))
     const target = join(layout.vault, checkRel(rel))
     rmSync(target, { force: true, recursive: true })
     touched.add(dirname(target))

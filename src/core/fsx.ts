@@ -1,8 +1,9 @@
-import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, writeSync } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, renameSync, writeSync } from 'node:fs'
+import { basename, dirname, join, sep } from 'node:path'
 
 import { randomHex } from './crypto'
 import { utf8 } from './encoding'
+import { TypeVaultError } from './errors'
 
 export const ensureDir = (path: string, mode = 0o755): void => {
   mkdirSync(path, { recursive: true, mode })
@@ -31,4 +32,17 @@ export function atomicWrite(path: string, data: Uint8Array | string, mode = 0o64
   }
   renameSync(temp, path)
   fsyncDir(dir)
+}
+
+/**
+ * Throws when any existing component of `rel` under `base` is a symlink. Vault directories come from git, and a
+ * committed symlink must never steer a write or delete outside the vault.
+ */
+export function assertNoSymlinks(base: string, rel: string): void {
+  let path = base
+  for (const part of rel.split(sep).filter((segment) => segment !== '')) {
+    path = join(path, part)
+    if (!existsSync(path)) return
+    if (lstatSync(path).isSymbolicLink()) throw new TypeVaultError('tampered', `${path} is a symlink`)
+  }
 }
