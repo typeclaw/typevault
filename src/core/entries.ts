@@ -113,10 +113,22 @@ export type EntryDraft = {
 export async function sealEntry(draft: EntryDraft, state: VaultState, signer: SignerContext): Promise<Envelope> {
   const group = state.groups[draft.group]
   if (group === undefined) throw new TypeVaultError('not_found', `no group "${draft.group}"`)
+  const ciphertext = await seal([group.recipient, state.operator.recipient], encodePayload(draft.payload))
+  return signCiphertext({ id: draft.id, group: draft.group, rev: draft.rev, at: draft.at }, ciphertext, state, signer)
+}
+
+/** Signs an envelope around a payload that was encrypted elsewhere (the secret-prompt page encrypts in the browser). */
+export function signCiphertext(
+  draft: Omit<EntryDraft, 'payload'>,
+  ciphertext: Uint8Array,
+  state: VaultState,
+  signer: SignerContext,
+): Envelope {
+  const group = state.groups[draft.group]
+  if (group === undefined) throw new TypeVaultError('not_found', `no group "${draft.group}"`)
   if (signerAuthority(signer.ref, draft.group, state, draft.at) === undefined) {
     throw new TypeVaultError('denied', `this key cannot sign entries in group "${draft.group}"`)
   }
-  const ciphertext = await seal([group.recipient, state.operator.recipient], encodePayload(draft.payload))
   const unsigned = { v: 1 as const, id: draft.id, group: draft.group, gen: group.gen, rev: draft.rev, at: draft.at }
   const envelope = { ...unsigned, payload: toBase64(ciphertext), signer: signer.ref }
   return { ...envelope, sig: sign(signer.signSecret, envelopeBytes(envelope)) }
