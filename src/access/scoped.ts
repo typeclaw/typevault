@@ -1,0 +1,152 @@
+import { appendAudit, type AuditEvent, type AuditMode } from '../audit/log'
+import { signerOf } from '../core/entries'
+import { TypeVaultError } from '../core/errors'
+import { type EntryName, matchesOnly } from '../core/naming'
+import type { StoredEntry, Vault } from '../core/vault'
+import { needsRefresh, refreshOAuth } from '../oauth/refresh'
+import { allowsEntry, allowsGroup, type ScopeChain } from './scope'
+import { type Access, type EntrySummary, type EntryValue, type SetInput, toSummary, toValue } from './types'
+
+export type ScopedIdentity = {
+  readonly mode: AuditMode
+  readonly grant?: string
+  readonly label?: string
+  /** Group used by `set` when the caller names none. */
+  readonly defaultGroup?: string
+}
+
+const valueOf = (entry: StoredEntry): EntryValue =>
+  toValue(entry.envelope.group, entry.envelope.id, entry.envelope.rev, entry.payload)
+
+/**
+ * Vault access bounded by a scope chain, with every read and write audited. The daemon wraps each live
+ * grant in one; direct mode uses an empty chain. Values it hands out are remembered for redaction.
+ */
+export class ScopedVault implements Access {
+  readonly #vault: Vault
+  readonly #chain: ScopeChain
+  readonly #identity: ScopedIdentity
+  readonly #handedOut = new Set<string>()
+
+  constructor(vault: Vault, chain: ScopeChain, identity: ScopedIdentity) {
+    this.#vault = vault
+    this.#chain = chain
+    this.#identity = identity
+  }
+
+  #audit(event: Omit<AuditEvent, 'mode' | 'grant' | 'label'>): Promise<void> {
+    const { mode, grant, label } = this.#identity
+    return appendAudit(this.#vault.layout, {
+      ...event,
+      mode,
+      ...(grant === undefined ? {} : { grant }),
+      ...(label === undefined ? {} : { label }),
+    })
+  }
+
+  #allows(entry: StoredEntry): boolean {
+    return allowsEntry(this.#chain, this.#vault.state, entry.envelope.group, entry.payload.name)
+  }
+
+  async #visible(): Promise<readonly StoredEntry[]> {
+    const { entries } = await this.#vault.scan()
+    return entries.filter((entry) => this.#allows(entry))
+  }
+
+  async #find(name: EntryName): Promise<StoredEntry> {
+    const entry = await this.#vault.find(name)
+    if (entry === undefined || !this.#allows(entry)) throw new TypeVaultError('not_found', `no entry named ${name}`)
+    return entry
+  }
+
+  async #signerFor(group: string): Promise<ReturnType<typeof signerOf>> {
+    const key = (await this.#vault.keyring.unlock(group)) ?? this.#vault.keyring.operator
+    if (key === undefined) throw new TypeVaultError('denied', `no key here can write group "${group}"`)
+    return signerOf(key)
+  }
+
+  /** OAuth entries past their expiry are refreshed and written back before anyone reads them. */
+  async #fresh(entry: StoredEntry): Promise<StoredEntry> {
+    const now = new Date()
+    if (entry.payload.type !== 'oauth' || !needsRefresh(entry.payload.fields, now)) return entry
+    const fields = await refreshOAuth(entry.payload.fields, now)
+    const { name, type, env, origin, tags } = entry.payload
+    const input = {
+      name,
+      type,
+      fields,
+      group: entry.envelope.group,
+      tags,
+      ...(env === undefined ? {} : { env }),
+      ...(origin === undefined ? {} : { origin }),
+    }
+    const refreshed = await this.#vault.put(input, await this.#signerFor(entry.envelope.group))
+    await this.#audit({ action: 'refresh', entries: [name] })
+    return refreshed
+  }
+
+  #remember(value: EntryValue): EntryValue {
+    for (const field of Object.values(value.fields)) if (field !== '') this.#handedOut.add(field)
+    return value
+  }
+
+  async list(): Promise<readonly EntrySummary[]> {
+    return (await this.#visible()).map((entry) => toSummary(valueOf(entry)))
+  }
+
+  async get(name: EntryName, reason?: string): Promise<EntryValue> {
+    const entry = await this.#fresh(await this.#find(name))
+    await this.#audit({ action: 'read', entries: [name], ...(reason === undefined ? {} : { reason }) })
+    return this.#remember(valueOf(entry))
+  }
+
+  async values(only: readonly string[], reason?: string): Promise<readonly EntryValue[]> {
+    const picked = (await this.#visible()).filter((entry) => only.length === 0 || matchesOnly(entry.payload.name, only))
+    const fresh = await Promise.all(picked.map((entry) => this.#fresh(entry)))
+    const names = fresh.map((entry) => entry.payload.name)
+    await this.#audit({ action: 'read', entries: names, ...(reason === undefined ? {} : { reason }) })
+    return fresh.map((entry) => this.#remember(valueOf(entry)))
+  }
+
+  async set(input: SetInput): Promise<EntrySummary> {
+    const group = input.group ?? this.#identity.defaultGroup
+    if (group === undefined) throw new TypeVaultError('invalid', 'choose a group with --group')
+    if (
+      !allowsGroup(this.#chain, this.#vault.state, group) ||
+      !allowsEntry(this.#chain, this.#vault.state, group, input.name)
+    ) {
+      throw new TypeVaultError('denied', `this grant cannot write ${input.name} in group "${group}"`)
+    }
+    const existing = await this.#vault.find(input.name)
+    if (existing !== undefined && !this.#allows(existing)) {
+      throw new TypeVaultError('denied', `the name ${input.name} is not available to this grant`)
+    }
+    const { ifRev, ...rest } = input
+    const stored = await this.#vault.put(
+      { ...rest, group },
+      await this.#signerFor(group),
+      ifRev === undefined ? {} : { ifRev },
+    )
+    await this.#audit({ action: 'write', entries: [input.name], groups: [group] })
+    return toSummary(valueOf(stored))
+  }
+
+  async remove(name: EntryName): Promise<void> {
+    await this.#find(name)
+    await this.#vault.remove(name)
+    await this.#audit({ action: 'remove', entries: [name] })
+  }
+
+  async move(from: EntryName, to: EntryName): Promise<void> {
+    const entry = await this.#find(from)
+    if (!allowsEntry(this.#chain, this.#vault.state, entry.envelope.group, to)) {
+      throw new TypeVaultError('denied', `this grant cannot use the name ${to}`)
+    }
+    await this.#vault.move(from, to, await this.#signerFor(entry.envelope.group))
+    await this.#audit({ action: 'move', entries: [from, to] })
+  }
+
+  async readValues(): Promise<readonly string[]> {
+    return [...this.#handedOut]
+  }
+}
