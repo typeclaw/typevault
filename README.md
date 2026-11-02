@@ -62,8 +62,8 @@ caller holds directly. An entry from an included group is loaded only when `--on
 change how programs load code or route traffic (`PATH`, `LD_*`, `NODE_OPTIONS`, `GIT_*`, `HTTPS_PROXY`, ...) are never set
 from the vault. The child never receives `TYPEVAULT_*` variables.
 
-An entry from an included group also can't choose its variable name: `--env` overrides apply only to the caller's own
-groups. The operator holds no group directly, so the operator's own `run` loads only what `--only` names.
+An entry from an included group keeps its `--env` override only when the operator, or a key at least as privileged as
+the caller, wrote it; otherwise it gets the derived name. The operator holds no group directly, so the operator's own `run` loads only what `--only` names.
 
 When the same name exists in several groups, the copy in the higher group wins; timestamps never decide. If two
 unrelated groups hold it, reads of that name fail until the operator keeps one: `typevault rm <name> --group <g>`.
