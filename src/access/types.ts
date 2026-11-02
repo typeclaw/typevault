@@ -55,6 +55,8 @@ export interface Access {
   set(input: SetInput): Promise<EntrySummary>
   remove(name: EntryName): Promise<void>
   move(from: EntryName, to: EntryName): Promise<void>
+  /** The groups this caller holds directly (not through includes): what `run` loads in bulk. */
+  ownGroups(): Promise<readonly string[]>
   /** Every secret value this grant has handed out so far, for redaction. */
   readValues(): Promise<readonly string[]>
 }

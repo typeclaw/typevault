@@ -110,6 +110,10 @@ export class SealedAccess implements Access {
     await this.remove(from)
   }
 
+  async ownGroups(): Promise<readonly string[]> {
+    return this.#bundle.scope.groups
+  }
+
   async readValues(): Promise<readonly string[]> {
     return this.#bundle.entries.flatMap((value) => Object.values(value.fields).filter((field) => field !== ''))
   }

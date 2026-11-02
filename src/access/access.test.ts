@@ -37,6 +37,8 @@ beforeEach(async () => {
 })
 afterEach(() => rmSync(root, { recursive: true, force: true }))
 
+const own = { ownGroups: ['member'], explicit: [] }
+
 describe('ScopedVault', () => {
   const member = () =>
     new ScopedVault(vault, [{ groups: ['member'], only: [] }], {
@@ -88,8 +90,27 @@ describe('ScopedVault', () => {
         { ...base, name: n('ld-preload'), type: 'note', fields: { text: 'x.so' } },
       ],
       new Date(0),
+      own,
     )
     expect(env).toEqual({})
+  })
+
+  it('loads entries from included groups only when named exactly', async () => {
+    const base = await member().get(n('github/bot'))
+    const lower = { ...base, name: n('planted'), group: 'guest', fields: { password: 'x' } }
+    expect(envFor([lower], new Date(0), own)).toEqual({})
+    expect(envFor([lower], new Date(0), { ownGroups: ['member'], explicit: ['planted'] })).toEqual({
+      PLANTED_PASSWORD: 'x',
+    })
+  })
+
+  it('refuses two entries that set the same variable', async () => {
+    const base = await member().get(n('github/bot'))
+    const values = [
+      { ...base, env: 'DATABASE_URL', fields: { password: 'a' } },
+      { ...base, name: n('other'), env: 'DATABASE_URL', fields: { password: 'b' } },
+    ]
+    expect(() => envFor(values, new Date(0), own)).toThrow('both set DATABASE_URL')
   })
 
   it('refuses to store a reserved env override', async () => {
@@ -107,6 +128,7 @@ describe('ScopedVault', () => {
         },
       ],
       new Date(59_000),
+      own,
     )
     expect(env).toEqual({ GITHUB_BOT_PASSWORD: 'p4ss', GITHUB_BOT_TOTP: '287082' })
   })

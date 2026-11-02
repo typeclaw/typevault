@@ -19,6 +19,8 @@ export type ScopedIdentity = {
   readonly mode: AuditMode
   readonly grant?: string
   readonly label?: string
+  /** Groups held directly; see `Access.ownGroups`. */
+  readonly ownGroups?: readonly string[]
   /** Group used by `set` when the caller names none. */
   readonly defaultGroup?: string
 }
@@ -152,6 +154,10 @@ export class ScopedVault implements Access {
     }
     await this.#vault.move(from, to, await this.#signerFor(entry.envelope.group))
     await this.#audit({ action: 'move', entries: [from, to] })
+  }
+
+  async ownGroups(): Promise<readonly string[]> {
+    return this.#identity.ownGroups ?? []
   }
 
   async readValues(): Promise<readonly string[]> {
