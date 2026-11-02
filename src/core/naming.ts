@@ -103,6 +103,8 @@ const RESERVED_ENV = new RegExp(
     'JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|JDK_JAVA_OPTIONS|LD_\\w*|DYLD_\\w*|BUN_\\w*|NPM_CONFIG_\\w*',
     // where traffic goes and which certificates it trusts
     'HTTPS?_PROXY|ALL_PROXY|NO_PROXY|SSL_CERT_FILE|SSL_CERT_DIR|REQUESTS_CA_BUNDLE|CURL_CA_BUNDLE',
+    // package managers and toolchains that fetch or run code
+    'PIP_\\w*|UV_\\w*|CARGO_\\w*|RUSTC_WRAPPER|RUSTC|GOFLAGS|GOPROXY|GONOSUMDB|GOPRIVATE|DOCKER_HOST|DOCKER_CONFIG',
     'TYPEVAULT_\\w*',
   ].join('|')})$`,
 )
