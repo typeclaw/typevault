@@ -29,8 +29,11 @@ export function envFor(values: readonly EntryValue[], now: Date, policy: EnvPoli
   for (const value of values.filter((candidate) => envEligible(candidate, policy))) {
     for (const [field, raw] of Object.entries(value.fields)) {
       if (raw === '') continue
-      const name =
-        value.env !== undefined && field === primaryField(value.type) ? value.env : deriveEnvName(value.name, field)
+      // An entry from an included group may not pick its variable name: it gets the one derived from the name the
+      // runner chose, so a lower writer can't aim it at OPENAI_BASE_URL or the like.
+      const ownOverride =
+        value.env !== undefined && field === primaryField(value.type) && policy.ownGroups.includes(value.group)
+      const name = ownOverride && value.env !== undefined ? value.env : deriveEnvName(value.name, field)
       if (isReservedEnvName(name)) continue
       const previous = owner.get(name)
       if (previous !== undefined) throw new TypeVaultError('conflict', `${previous} and ${value.name} both set ${name}`)

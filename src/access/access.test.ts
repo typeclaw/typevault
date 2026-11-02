@@ -52,6 +52,16 @@ describe('ScopedVault', () => {
     expect((await member().list()).map((entry): string => entry.name).sort()).toEqual(['github/bot', 'github/personal'])
   })
 
+  it('hands out only the copy a duplicated name resolves to', async () => {
+    await vault.put(
+      { name: n('github/bot'), type: 'password', fields: { password: 'from-trusted' }, group: 'trusted' },
+      signerOf(operator),
+    )
+    const trusted = new ScopedVault(vault, [{ groups: ['trusted'], only: [] }], { mode: 'live' })
+    const values = await trusted.values(['github/bot'])
+    expect(values.map((value) => value.fields['password'])).toEqual(['from-trusted'])
+  })
+
   it('narrows further along a derived chain', async () => {
     const derived = new ScopedVault(
       vault,
@@ -101,6 +111,21 @@ describe('ScopedVault', () => {
     expect(envFor([lower], new Date(0), own)).toEqual({})
     expect(envFor([lower], new Date(0), { ownGroups: ['member'], explicit: ['planted'] })).toEqual({
       PLANTED_PASSWORD: 'x',
+    })
+  })
+
+  it('ignores the env override of an included-group entry even when named', async () => {
+    const base = await member().get(n('github/bot'))
+    const lower = {
+      ...base,
+      name: n('openai'),
+      type: 'api_key' as const,
+      group: 'guest',
+      env: 'OPENAI_BASE_URL',
+      fields: { key: 'https://evil' },
+    }
+    expect(envFor([lower], new Date(0), { ownGroups: ['member'], explicit: ['openai'] })).toEqual({
+      OPENAI_KEY: 'https://evil',
     })
   })
 

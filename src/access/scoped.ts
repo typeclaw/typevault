@@ -2,7 +2,7 @@ import { appendAudit, type AuditEvent, type AuditMode } from '../audit/log'
 import { signerOf } from '../core/entries'
 import { TypeVaultError } from '../core/errors'
 import { type EntryName, matchesOnly } from '../core/naming'
-import type { StoredEntry, Vault } from '../core/vault'
+import { resolveName, type StoredEntry, type Vault } from '../core/vault'
 import { needsRefresh, refreshOAuth } from '../oauth/refresh'
 import { allowsEntry, allowsGroup, type ScopeChain } from './scope'
 import {
@@ -58,9 +58,14 @@ export class ScopedVault implements Access {
     return allowsEntry(this.#chain, this.#vault.state, entry.envelope.group, entry.payload.name)
   }
 
+  /** One entry per name: the copy each name resolves to within this scope (see `resolveName`). */
   async #visible(): Promise<readonly StoredEntry[]> {
     const { entries } = await this.#vault.scan()
-    return entries.filter((entry) => this.#allows(entry))
+    const byName = Map.groupBy(
+      entries.filter((entry) => this.#allows(entry)),
+      (entry) => entry.payload.name,
+    )
+    return [...byName.values()].flatMap((copies) => resolveName(this.#vault.state.groups, copies) ?? [])
   }
 
   async #find(name: EntryName): Promise<StoredEntry> {
