@@ -141,6 +141,6 @@ describe('rotation', () => {
 
   it('leaves no staged transaction behind', async () => {
     await admin.rotate('trusted')
-    expect(readdirSync(join(root, 'vault', '.txn'))).toEqual([])
+    expect(readdirSync(join(root, 'run', 'txn'))).toEqual([])
   })
 })

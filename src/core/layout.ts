@@ -50,7 +50,8 @@ export function layoutOf(root: string): Layout {
     signersFile: join(vault, 'signers.json'),
     ceilingsFile: join(vault, 'ceilings.json'),
     anchorsFile: join(vault, 'audit-anchors.jsonl'),
-    txnDir: join(vault, '.txn'),
+    // Staging lives in run/, which is never committed: a txn dir from git must not be able to steer deletes.
+    txnDir: join(run, 'txn'),
     keys,
     operatorKey: join(keys, 'operator.key'),
     groupKeys: join(keys, 'groups'),

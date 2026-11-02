@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import { dirname, isAbsolute, join, normalize, sep } from 'node:path'
 
 import { z } from 'zod'
@@ -85,8 +85,11 @@ function applyTxn(layout: Layout, dir: string): void {
 /** Rolls forward transactions that reached their commit marker and discards the rest. Needs the exclusive lock. */
 export function recoverTxns(layout: Layout): void {
   if (!existsSync(layout.txnDir)) return
+  if (!lstatSync(layout.txnDir).isDirectory())
+    throw new TypeVaultError('tampered', `${layout.txnDir} is not a directory`)
   for (const name of readdirSync(layout.txnDir)) {
     const dir = join(layout.txnDir, name)
+    if (!lstatSync(dir).isDirectory()) throw new TypeVaultError('tampered', `${dir} is not a directory`)
     if (existsSync(join(dir, COMMITTED))) applyTxn(layout, dir)
     else rmSync(dir, { recursive: true, force: true })
   }

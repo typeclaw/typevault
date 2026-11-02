@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -48,4 +48,13 @@ it('discards an uncommitted transaction on recovery', () => {
 
 it('refuses paths that escape the vault', () => {
   expect(() => new Txn().put('../escape', 'x')).toThrow('outside the vault')
+})
+
+it('refuses a symlinked staging directory instead of deleting through it', () => {
+  const victim = join(layout.root, 'victim')
+  mkdirSync(join(victim, 'precious'), { recursive: true })
+  mkdirSync(layout.run, { recursive: true })
+  symlinkSync(victim, layout.txnDir)
+  expect(() => recoverTxns(layout)).toThrow('is not a directory')
+  expect(existsSync(join(victim, 'precious'))).toBe(true)
 })
