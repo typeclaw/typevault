@@ -1,7 +1,7 @@
 import { defineCommand } from 'citty'
 import { z } from 'zod'
 
-import { envFor, secretValues } from '../../access/env'
+import { envEligible, envFor, explicitNames, secretValues } from '../../access/env'
 import { appendAudit } from '../../audit/log'
 import { signerOf } from '../../core/entries'
 import { TypeVaultError } from '../../core/errors'
@@ -25,11 +25,16 @@ export const run = defineCommand({
     const command = dash === -1 ? [] : rawArgs.slice(dash + 1)
     if (command.length === 0)
       throw new TypeVaultError('invalid', 'usage: typevault run [--only ...] -- <command> [args...]')
-    const values = await (await resolveAccess(process.env)).access.values(csv(args.only), args.reason)
-    const env = envFor(values, new Date())
+    const access = (await resolveAccess(process.env)).access
+    const only = csv(args.only)
+    const values = await access.values(only, args.reason)
+    const policy = { ownGroups: await access.ownGroups(), explicit: explicitNames(only) }
+    const env = envFor(values, new Date(), policy)
+    const skipped = values.filter((value) => !envEligible(value, policy)).map((value) => value.name)
+    if (skipped.length > 0) note(`not loaded (from included groups; name them in --only): ${skipped.join(', ')}`)
     const redactor = createRedactor([...secretValues(values), ...Object.values(env)])
-    // The child gets its secrets, never the key that opens the vault.
-    const { TYPEVAULT_KEY: _key, ...inherited } = process.env
+    // The child gets its secrets, never the key or grant that opens the vault.
+    const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('TYPEVAULT_')))
     const child = Bun.spawn(command, {
       env: { ...inherited, ...env },
       stdin: 'inherit',
