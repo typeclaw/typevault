@@ -19,6 +19,7 @@ import { type Layout, layoutOf } from './layout'
 import { withLock } from './lock'
 import type { EntryName, EntryType } from './naming'
 import type { EntryPayload } from './payload'
+import { RevisionMarks } from './revisions'
 import { loadState, type VaultState } from './state'
 import { commitTxn, recoverTxns, Txn } from './txn'
 
@@ -109,6 +110,7 @@ export class Vault {
       const entries: StoredEntry[] = []
       const problems: ScanProblem[] = []
       const files = existsSync(this.layout.entries) ? readdirSync(this.layout.entries) : []
+      const marks = new RevisionMarks(this.layout.revisionsFile)
       for (const file of files.filter((name) => name.endsWith('.json'))) {
         const parsed = EnvelopeSchema.safeParse(parseJson(readFileSync(join(this.layout.entries, file))))
         if (!parsed.success) {
@@ -123,9 +125,14 @@ export class Vault {
           problems.push({ file, reason })
           continue
         }
+        if (!marks.accept(parsed.data.id, parsed.data.rev)) {
+          problems.push({ file, reason: `rolled back to revision ${parsed.data.rev} (this machine has seen newer)` })
+          continue
+        }
         const payload = await openEntry(parsed.data, this.#keyring)
         if (payload !== undefined) entries.push({ envelope: parsed.data, payload })
       }
+      marks.save()
       return { entries, problems }
     })
   }

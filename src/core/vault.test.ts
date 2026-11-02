@@ -75,6 +75,19 @@ describe('integrity', () => {
     expect(scan.problems).toEqual([{ file: `${envelope.id}.json`, reason: 'bad signature' }])
   })
 
+  it('reports an entry swapped back to an older signed revision', async () => {
+    const vault = await open([operator])
+    const first = await vault.put(stripe, signerOf(operator))
+    await vault.scan()
+    await vault.put({ ...stripe, fields: { key: 'sk_test_456' } }, signerOf(operator))
+    await vault.scan()
+    const file = join(root, 'vault', 'entries', `${first.envelope.id}.json`)
+    writeFileSync(file, JSON.stringify(first.envelope))
+    const scan = await vault.scan()
+    expect(scan.entries).toHaveLength(0)
+    expect(scan.problems[0]?.reason).toContain('rolled back')
+  })
+
   it('rejects a vault whose operator key changed after it was first trusted', async () => {
     const file = join(root, 'vault', 'operator.json')
     const doc = JSON.parse(readFileSync(file, 'utf8'))
