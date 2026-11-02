@@ -1,11 +1,10 @@
-import { appendFileSync, closeSync, existsSync, fsyncSync, openSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { appendFileSync, closeSync, existsSync, fsyncSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
 
 import { z } from 'zod'
 
 import { sha256Hex } from '../core/crypto'
 import { canonicalJson, type Json, utf8 } from '../core/encoding'
-import { atomicWrite, ensureDir } from '../core/fsx'
+import { ensureDir } from '../core/fsx'
 import type { Layout } from '../core/layout'
 import { withLock } from '../core/lock'
 
@@ -41,14 +40,28 @@ function appendLine(path: string, line: string): void {
   }
 }
 
-const HeadSchema = z.object({ seq: z.number().int(), hash: z.string() })
+const TAIL_BYTES = 64 * 1024
 
-/** The chain head, kept beside the log so an append never re-reads the whole trail. */
-function readHead(layout: Layout): { readonly seq: number; readonly hash: string } | undefined {
-  const path = join(layout.audit, 'head.json')
-  if (existsSync(path)) return HeadSchema.parse(JSON.parse(readFileSync(path, 'utf8')))
-  const last = readAudit(layout).at(-1)
-  return last === undefined ? undefined : { seq: last.seq, hash: last.hash }
+/** The last record, read from the end of the log so an append never re-reads the whole trail. */
+function readLast(layout: Layout): AuditRecord | undefined {
+  if (!existsSync(layout.auditLog)) return undefined
+  const size = statSync(layout.auditLog).size
+  if (size > TAIL_BYTES) {
+    const fd = openSync(layout.auditLog, 'r')
+    try {
+      const buffer = Buffer.alloc(TAIL_BYTES)
+      readSync(fd, buffer, 0, TAIL_BYTES, size - TAIL_BYTES)
+      const lines = buffer
+        .toString('utf8')
+        .split('\n')
+        .filter((line) => line !== '')
+      const last = lines.at(-1)
+      if (lines.length > 1 && last !== undefined) return RecordSchema.parse(JSON.parse(last))
+    } finally {
+      closeSync(fd)
+    }
+  }
+  return readAudit(layout).at(-1)
 }
 
 export function readAudit(layout: Layout): readonly AuditRecord[] {
@@ -68,12 +81,11 @@ function writeAnchor(layout: Layout, last: AuditRecord): void {
 export function appendAudit(layout: Layout, event: AuditEvent): Promise<void> {
   return withLock(layout.auditLock, 'exclusive', async () => {
     ensureDir(layout.audit, 0o700)
-    const last = readHead(layout)
+    const last = readLast(layout)
     const fields = Object.fromEntries(Object.entries(event).filter(([, value]) => value !== undefined))
     const unhashed = { ...fields, seq: (last?.seq ?? 0) + 1, at: new Date().toISOString(), prev: last?.hash ?? GENESIS }
     const record = { ...unhashed, hash: hashOf(unhashed) }
     appendLine(layout.auditLog, JSON.stringify(record))
-    atomicWrite(join(layout.audit, 'head.json'), JSON.stringify({ seq: record.seq, hash: record.hash }), 0o600)
     if (record.seq % ANCHOR_EVERY === 0) writeAnchor(layout, record)
   })
 }
