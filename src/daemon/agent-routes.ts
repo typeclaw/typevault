@@ -75,8 +75,10 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
         groups: body.groups ?? grant.record.groups,
         only: body.only,
         ttlMs: body.ttl === undefined ? remaining : parseTtl(body.ttl),
-        label: body.label ?? `${grant.record.label}/derived`,
+        // Prefixed with the parent's label so a derived grant can't pose as another session.
+        label: `${grant.record.label}/${body.label ?? 'derived'}`,
         parent: grant.record.id,
+        ceiling: grant.record.ceiling,
       })
       const { record } = issued
       await appendAudit(context.vault.layout, {
