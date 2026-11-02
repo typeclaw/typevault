@@ -1,6 +1,8 @@
+import type { SignerRef } from '../core/entries'
 import { TypeVaultError } from '../core/errors'
 import { type EntryName, type EntryType, isReservedEnvName } from '../core/naming'
 import type { EntryPayload } from '../core/payload'
+import { reachesGroup, type VaultState } from '../core/state'
 
 export type EntrySummary = {
   readonly name: EntryName
@@ -18,6 +20,8 @@ export type EntryValue = EntrySummary & {
   readonly fields: Readonly<Record<string, string>>
   readonly env?: string
   readonly origin?: string
+  /** Written by the operator or by a key that reaches all of the reader's own groups: its `--env` override counts. */
+  readonly trustedWriter?: boolean
 }
 
 export type SetInput = {
@@ -88,3 +92,15 @@ export const toSummary = (value: EntryValue): EntrySummary => ({
   rotated: value.rotated,
   needsRotation: value.needsRotation,
 })
+
+/** Whether `signer` is at least as privileged as a reader holding `ownGroups`. */
+export function writtenFromAbove(signer: SignerRef, state: VaultState, ownGroups: readonly string[]): boolean {
+  if (signer.kind === 'operator') return true
+  const groups =
+    signer.kind === 'group'
+      ? [signer.group]
+      : signer.kind === 'signer'
+        ? (state.signers[signer.id]?.groups ?? [])
+        : signer.cert.groups
+  return ownGroups.length > 0 && ownGroups.every((own) => reachesGroup(state.groups, groups, own))
+}

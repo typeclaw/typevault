@@ -21,6 +21,7 @@ export const EntryValueSchema = z.object({
   fields: z.record(z.string(), z.string()),
   env: z.string().optional(),
   origin: z.string().optional(),
+  trustedWriter: z.boolean().optional(),
 })
 
 const entryType = (type: string): EntryType => {
@@ -33,11 +34,12 @@ export function toSummaryValue(parsed: z.infer<typeof EntrySummarySchema>): Entr
 }
 
 export function toEntryValue(parsed: z.infer<typeof EntryValueSchema>): EntryValue {
-  const { env, origin, type, ...rest } = parsed
+  const { env, origin, type, trustedWriter, ...rest } = parsed
   return {
     ...rest,
     type: entryType(type),
     ...(env === undefined ? {} : { env }),
     ...(origin === undefined ? {} : { origin }),
+    ...(trustedWriter === undefined ? {} : { trustedWriter }),
   }
 }
