@@ -11,9 +11,13 @@ import type { Vault } from './vault'
  * certificate: readers stop accepting a certificate once their own clock passes its expiry. Run by the daemon
  * periodically and by `doctor --fix`. Returns the adopted names.
  */
-export function adoptCertWrites(vault: Vault): Promise<readonly string[]> {
+export function adoptCertWrites(
+  vault: Vault,
+  options: { readonly expired?: boolean } = {},
+): Promise<readonly string[]> {
   return withLock(vault.layout.lockFile, 'exclusive', async () => {
-    const { entries } = await vault.scan()
+    // `expired` is the operator's explicit call to keep writes nobody adopted before their certificate ran out.
+    const { entries } = await vault.scan({ acceptExpiredCerts: options.expired === true })
     const adopted: string[] = []
     for (const { envelope, payload } of entries) {
       if (envelope.signer.kind !== 'cert') continue

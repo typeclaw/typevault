@@ -143,10 +143,18 @@ export const signer = defineCommand({
 
 export const doctor = defineCommand({
   meta: { name: 'doctor', description: 'Verify entries and the audit trail; --fix resolves merges and duplicates' },
-  args: { fix: { type: 'boolean' } },
+  args: {
+    fix: { type: 'boolean' },
+    'adopt-expired': {
+      type: 'boolean',
+      description: 'Also keep sealed-grant writes whose certificate expired before adoption',
+    },
+  },
   async run({ args }) {
     const vault = await openDirect(process.env)
-    if (args.fix === true) for (const name of await adoptCertWrites(vault)) print(`adopted sealed write: ${name}`)
+    if (args.fix === true)
+      for (const name of await adoptCertWrites(vault, { expired: args['adopt-expired'] === true }))
+        print(`adopted sealed write: ${name}`)
     const report = await runDoctor(vault, args.fix === true)
     for (const problem of report.problems) print(`problem: ${problem.file}: ${problem.reason}`)
     for (const file of report.mergesResolved) print(`merged: ${file}`)

@@ -96,7 +96,14 @@ const envelopeBytes = (envelope: Omit<Envelope, 'sig'>): Uint8Array => {
 }
 
 /** Whether `signer` may sign entries of `group`, judged only from operator-signed state. */
-export function signerAuthority(signer: SignerRef, group: string, state: VaultState, at: string): string | undefined {
+/** `now` is the reader's clock for certificate expiry; `null` skips that one check (explicit operator adoption). */
+export function signerAuthority(
+  signer: SignerRef,
+  group: string,
+  state: VaultState,
+  at: string,
+  now: number | null = Date.now(),
+): string | undefined {
   if (signer.kind !== 'cert') {
     const authority = authorityOf(signer, state)
     return authority !== undefined && reachesGroup(state.groups, authority.groups, group)
@@ -109,7 +116,11 @@ export function signerAuthority(signer: SignerRef, group: string, state: VaultSt
   if (!cert.groups.every((g) => reachesGroup(state.groups, issuer.groups, g))) return undefined
   // Expiry is judged by the reader's clock: `at` is chosen by the holder, so it can't be trusted to bound it.
   const exp = Date.parse(cert.exp)
-  if (!cert.groups.some((g) => reach(state.groups, g).has(group)) || Date.parse(at) > exp || Date.now() > exp) {
+  if (
+    !cert.groups.some((g) => reach(state.groups, g).has(group)) ||
+    Date.parse(at) > exp ||
+    (now !== null && now > exp)
+  ) {
     return undefined
   }
   return cert.signPublic
@@ -150,12 +161,20 @@ export function signCiphertext(
 const CLOCK_SKEW_MS = 5 * 60_000
 
 /** Why an envelope can't be trusted, or undefined when it can. */
-export function verifyEnvelope(envelope: Envelope, state: VaultState): string | undefined {
+export type VerifyOptions = { readonly acceptExpiredCerts?: boolean }
+
+export function verifyEnvelope(envelope: Envelope, state: VaultState, options: VerifyOptions = {}): string | undefined {
   const group = state.groups[envelope.group]
   if (group === undefined) return `unknown group "${envelope.group}"`
   if (group.gen !== envelope.gen) return `stale generation ${envelope.gen} (current ${group.gen})`
   if (Date.parse(envelope.at) > Date.now() + CLOCK_SKEW_MS) return 'timestamp is in the future'
-  const signPublic = signerAuthority(envelope.signer, envelope.group, state, envelope.at)
+  const signPublic = signerAuthority(
+    envelope.signer,
+    envelope.group,
+    state,
+    envelope.at,
+    options.acceptExpiredCerts === true ? null : Date.now(),
+  )
   if (signPublic === undefined) return 'signer is not allowed to write this group'
   return verifySignature(signPublic, envelopeBytes(envelope), envelope.sig) ? undefined : 'bad signature'
 }

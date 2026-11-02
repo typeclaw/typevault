@@ -7,7 +7,7 @@ import { readAudit } from '../audit/log'
 import { Admin } from '../core/admin'
 import { adoptCertWrites } from '../core/adopt'
 import type { SecretKey } from '../core/crypto'
-import { signerOf } from '../core/entries'
+import { signerAuthority, signerOf } from '../core/entries'
 import { initVault } from '../core/init'
 import { parseEntryName } from '../core/naming'
 import { Vault } from '../core/vault'
@@ -211,6 +211,13 @@ describe('sealed grants', () => {
     await expect(
       vault.put({ name: n('github/x'), type: 'note', fields: { text: 'late' }, group: 'member' }, await certSigner(-1)),
     ).rejects.toMatchObject({ code: 'denied' })
+  })
+
+  it('honors an expired certificate only when the operator explicitly adopts', async () => {
+    const { ref } = await certSigner(-1)
+    const at = new Date(Date.parse(ref.cert.exp) - 1_000).toISOString()
+    expect(signerAuthority(ref, 'member', vault.state, at)).toBeUndefined()
+    expect(signerAuthority(ref, 'member', vault.state, at, null)).toBe(ref.cert.signPublic)
   })
 
   it('adopts certificate writes so they outlive the certificate', async () => {
