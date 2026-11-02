@@ -91,6 +91,17 @@ describe('integrity', () => {
     ).rejects.toMatchObject({ code: 'invalid' })
   })
 
+  it('never lets a lower group shadow a name held by a higher group', async () => {
+    const vault = await open([operator])
+    await vault.put({ ...stripe, group: 'trusted' }, signerOf(operator))
+    const guestKey = await keyOf('guest')
+    const guest = await open([guestKey])
+    await guest.put({ ...stripe, group: 'guest', fields: { key: 'ATTACKER' } }, signerOf(guestKey))
+    expect((await open([await keyOf('trusted')])).find(stripe.name)).resolves.toMatchObject({
+      payload: { fields: { key: 'sk_test_123' } },
+    })
+  })
+
   it('reports an entry swapped back to an older signed revision', async () => {
     const vault = await open([operator])
     const first = await vault.put(stripe, signerOf(operator))

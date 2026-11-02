@@ -20,7 +20,7 @@ import { withLock } from './lock'
 import type { EntryName, EntryType } from './naming'
 import type { EntryPayload } from './payload'
 import { RevisionMarks } from './revisions'
-import { loadState, type VaultState } from './state'
+import { type Groups, loadState, reach, type VaultState } from './state'
 import { commitTxn, recoverTxns, Txn } from './txn'
 
 export type StoredEntry = { readonly envelope: Envelope; readonly payload: EntryPayload }
@@ -60,6 +60,25 @@ function parseJson(bytes: Uint8Array): unknown {
 
 const sameFields = (a: Readonly<Record<string, string>>, b: Readonly<Record<string, string>>): boolean =>
   JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort())
+
+/**
+ * The entry a name means when several files carry it. A copy in a group that reaches the other's group wins, so a
+ * lower group can never shadow a higher one (timestamps are writer-chosen and never decide). Within one group the
+ * higher revision wins. Copies in groups neither reaches are a conflict for `doctor`.
+ */
+export function resolveName(groups: Groups, copies: readonly StoredEntry[]): StoredEntry | undefined {
+  return copies.reduce<StoredEntry | undefined>((best, entry) => {
+    if (best === undefined) return entry
+    const [a, b] = [best.envelope, entry.envelope]
+    if (a.group === b.group) return b.rev > a.rev || (b.rev === a.rev && b.id > a.id) ? entry : best
+    if (reach(groups, a.group).has(b.group)) return best
+    if (reach(groups, b.group).has(a.group)) return entry
+    throw new TypeVaultError(
+      'conflict',
+      `${entry.payload.name} exists in unrelated groups "${a.group}" and "${b.group}" (run typevault doctor)`,
+    )
+  }, undefined)
+}
 
 /** An opened vault directory plus the keys this process holds. All reads and writes go through the vault lock. */
 export class Vault {
@@ -147,15 +166,13 @@ export class Vault {
     })
   }
 
-  /** The newest readable entry named `name`. */
+  /** The entry `name` resolves to among the readable ones (see `resolveName`). */
   async find(name: EntryName): Promise<StoredEntry | undefined> {
     const { entries } = await this.scan()
-    return entries
-      .filter((entry) => entry.payload.name === name)
-      .reduce<StoredEntry | undefined>(
-        (best, entry) => (best === undefined || entry.envelope.at > best.envelope.at ? entry : best),
-        undefined,
-      )
+    return resolveName(
+      this.#state.groups,
+      entries.filter((entry) => entry.payload.name === name),
+    )
   }
 
   /** The envelope that writing `input` over `found` (or a blind writer's `base`) produces. */
@@ -213,7 +230,10 @@ export class Vault {
       const txn = new Txn()
       const stored: StoredEntry[] = []
       for (const input of inputs) {
-        const found = entries.filter((entry) => entry.payload.name === input.name).at(-1)
+        const found = resolveName(
+          this.#state.groups,
+          entries.filter((entry) => entry.payload.name === input.name),
+        )
         const entry = await this.#draft(input, found, {}, await signerFor(input.group))
         txn.put(`entries/${entry.envelope.id}.json`, `${JSON.stringify(entry.envelope, null, 2)}\n`)
         stored.push(entry)
