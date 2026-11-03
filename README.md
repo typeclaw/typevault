@@ -1,12 +1,11 @@
-<h3 align="center">typevault: secrets for agents, not for transcripts</h3>
-<p align="center">A CLI-first vault that hands each agent session exactly the secrets its grant allows.<br />Every read leaves a trail, and values stay out of model context. <code>.env</code> exposes too much; password managers are too heavy.</p>
+<h3 align="center">TypeVault: secrets for agents, not for transcripts</h3>
+<p align="center">A CLI-first vault that hands each agent session exactly the secrets its grant allows.<br />Every read leaves a trail, and values stay out of model context.</p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/typevault"><img src="https://img.shields.io/npm/v/typevault?color=cb3837&logo=npm" alt="npm version" /></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license" /></a>
 </p>
 
-<br />
 <br />
 
 ## Grants, not keys: agents never hold the vault
@@ -58,7 +57,7 @@
 - **Three entry points**: `typevault` for clients, `typevault/admin` for launchers that mint grants, and `typevault/redact` for scrubbing output
 - **Agent skill included**: [`skills/typevault`](./skills/typevault) teaches coding agents to use grants, `run` and references correctly
 
-typevault is general-purpose: any agent runtime can use it. [TypeClaw](https://github.com/typeclaw/typeclaw) is its first consumer, sandboxing each session and mounting only the agent socket.
+TypeVault is general-purpose: any agent runtime can use it. [TypeClaw](https://github.com/typeclaw/typeclaw) is its first consumer, sandboxing each session and mounting only the agent socket.
 
 ## Install
 
