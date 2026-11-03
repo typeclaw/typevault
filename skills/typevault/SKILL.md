@@ -106,7 +106,7 @@ Run these only when the user asks; they write with local keys, not a grant.
 
 ```sh
 typevault import 1password --account Acme --group default             # straight from the 1Password app; the user approves in 1Password
-typevault import 1password --via op --vault Work --tag agents --group default
+typevault import 1password --via op --vault Work --tag agents --group default   # items tagged agents/<field> import only that field
 typevault import dotenv .env --group default                           # also: typeclaw, 1password (.1pux), bitwarden, lastpass, keepass, csv
 ```
 
