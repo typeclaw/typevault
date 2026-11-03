@@ -40,7 +40,7 @@
 ## Asking a human: one link, no plaintext on the wire
 
 - **`request`**: an agent asks for a missing secret and gets a one-time URL plus a match code to hand to a human
-- **Encrypted in the browser**: the page encrypts the value to the group before submitting, so the plaintext never reaches the server, logs or the model
+- **Encrypted in the browser**: the page encrypts the value to the group before submitting, so tunnels and proxies carry only ciphertext; the daemon decrypts it to check it matches the request, then stores it, and the model never sees the value
 
 ## Audit: every read leaves a trail
 
@@ -201,7 +201,9 @@ typevault request resend --type api_key --reason "send the weekly digest"
 
 It prints a one-time URL and a match code to give the human, then waits until they submit. The daemon serves the page
 (`TYPEVAULT_PROMPT_PORT`, `TYPEVAULT_PUBLIC_URL` for tunnels). The browser encrypts the value to the group before
-submitting, so the plaintext never reaches the server, logs or the model.
+submitting, so anything between the browser and the daemon (tunnels, proxies) sees only ciphertext. The trusted daemon
+decrypts the submission to check that it is exactly the requested entry, then re-encrypts, signs and stores it. The value
+is never written to logs or shown to the model.
 
 ## Redaction
 
