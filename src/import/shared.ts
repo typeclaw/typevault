@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 import { TypeVaultError } from '../core/errors'
-import { ENTRY_TYPES, parseEntryName, slugifySegment, type EntryType } from '../core/naming'
+import { isFieldName, parseEntryName, slugifySegment, type EntryType } from '../core/naming'
 import type { ImportedEntry, ImportResult } from './types'
 
 export type ImportItem = {
@@ -26,12 +26,12 @@ export function collectEntries(items: readonly ImportItem[], warnings: readonly 
     while (used.has(name)) name = `${base}-${suffix++}`
     used.add(name)
     if (name !== base) messages.push(`name collision: "${base}" renamed to "${name}"`)
-    const allowed: readonly string[] = ENTRY_TYPES[item.type].fields
-    const fields = Object.fromEntries(
-      Object.entries(item.fields).filter(
-        (pair): pair is [string, string] => allowed.includes(pair[0]) && pair[1] !== undefined && pair[1] !== '',
-      ),
-    )
+    const fields: Record<string, string> = {}
+    for (const [field, value] of Object.entries(item.fields)) {
+      if (value === undefined || value === '') continue
+      if (isFieldName(field)) fields[field] = value
+      else messages.push(`${name}: skipped a field with an unusable name`)
+    }
     const url = item.url === undefined ? null : URL.parse(item.url)
     const origin = url && (url.protocol === 'http:' || url.protocol === 'https:') ? url.origin : undefined
     entries.push({
