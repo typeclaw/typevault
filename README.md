@@ -190,11 +190,30 @@ typevault key rotate member                      # new generation; lists every s
 typevault group exclude trusted member           # drop an include (rotates member)
 typevault signer add ci-bot <ed25519-public-key> --groups member
 typevault import 1password export.1pux --group member
+typevault import 1password --account Acme --group member   # straight from the 1Password app
 typevault doctor --fix                           # verify signatures, resolve git merges and duplicates
 typevault audit --verify
 ```
 
 Operator key rotation and recovery are manual: back up `keys/operator.key` offline.
+
+### Importing from 1Password
+
+Without a path, `import 1password` reads the app directly; nothing is exported or piped. Access is approved in
+1Password (Touch ID or your password): the SDK asks on every run, while `op` reuses an approval within the same
+terminal session until 10 minutes pass without use.
+
+```sh
+typevault import 1password --account Acme --group member            # 1Password SDK (default); turn on Settings > Developer > Integrate with other apps
+typevault import 1password --via op --vault Work --group member      # the 1Password CLI (`op`), signed in through the app
+typevault import 1password --account Acme --tag myproject-typevault --group member   # only items tagged in 1Password
+```
+
+`--account` is the account name shown in the app's sidebar (or its UUID); `--via op` uses `op`'s default account
+unless you pass one. `--vault` limits the import to one vault and `--tag` to items carrying exactly that tag (not
+nested tags under it), so tagging items in 1Password picks what agents may reach; re-run the import after tagging more.
+Logins, passwords, secure notes, API credentials and SSH keys are imported as `tv://<title>/<vault>`; other categories
+and archived items are skipped.
 
 ## Layout
 
