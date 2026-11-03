@@ -35,9 +35,10 @@ printf '%s' "$STRIPE_KEY" | typevault set tv://stripe --type api_key --group tru
 # Hand an agent a grant instead of a key (the daemon starts automatically)
 export TYPEVAULT_GRANT=$(typevault grant --group default --label session:abc)
 
+typevault whoami                                 # live grant, sealed grant or local keys
 typevault ls
 typevault run -- psql                            # secrets arrive as env vars; output is redacted
-typevault run --only tv://github/bot -- agent-browser fill @e3 "$GITHUB_BOT_PASSWORD"
+typevault run --only tv://github/bot -- sh -c 'agent-browser fill @e3 "$GITHUB_BOT_PASSWORD"'
 ```
 
 ## Project and global vaults
@@ -74,7 +75,8 @@ No environments, no domains, no group in the name. Fields come from the type:
 | `note`     | text                                                                         |
 
 Env names are derived: `tv://github/bot#password` becomes `GITHUB_BOT_PASSWORD`. Override the main field's name with `--env`.
-In `run`, TOTP fields carry the current code, never the seed. Secret fields are never accepted as `--field` arguments
+In `run`, TOTP fields carry the current code, never the seed; `typevault otp <name>` prints it for an entry with a
+seed (a `totp` entry, or a `password` entry whose `totp` field is set). Secret fields are never accepted as `--field` arguments
 (they would land in `ps` and shell history): pass them with `--stdin` or `--stdin-json`.
 
 ### What `run` loads
@@ -123,7 +125,7 @@ typevault grant revoke --label ci:deploy         # also revokes grants derived f
 TYPEVAULT_GRANT=@/run/agent/grant typevault get tv://github/bot
 ```
 
-`TYPEVAULT_GRANT` takes a live grant (`tvl1.…`), a sealed one (`tvg1:…`) or `@path` to a file holding either.
+`TYPEVAULT_GRANT` takes a live grant (`tvl1.…`), a sealed one (`tvg1:…`) or `@path` to a file holding a sealed one.
 Without it, the CLI uses local keys (direct mode: the operator, or a launcher with `TYPEVAULT_KEY`).
 
 ### Ceilings
@@ -146,8 +148,9 @@ Processes under one OS user that can reach the same socket share its ceiling; pe
 typevault request resend --type api_key --reason "send the weekly digest"
 ```
 
-The daemon serves a one-time page (`TYPEVAULT_PROMPT_PORT`, `TYPEVAULT_PUBLIC_URL` for tunnels). The browser encrypts the
-value to the group before submitting, so the plaintext never reaches the server, logs or the model.
+It prints a one-time URL and a match code to give the human, then waits until they submit. The daemon serves the page
+(`TYPEVAULT_PROMPT_PORT`, `TYPEVAULT_PUBLIC_URL` for tunnels). The browser encrypts the value to the group before
+submitting, so the plaintext never reaches the server, logs or the model.
 
 ## Redaction
 
@@ -193,7 +196,11 @@ typevault import 1password export.1pux --group member
 typevault import 1password --account Acme --group member   # straight from the 1Password app
 typevault doctor --fix                           # verify signatures, resolve git merges and duplicates
 typevault audit --verify
+typevault audit --label ci:deploy --follow       # stream one grant's reads
+typevault daemon status                          # also: daemon start | stop | run (foreground)
 ```
+
+`group`, `ceiling` and `signer` each also have `ls` and `rm`.
 
 Operator key rotation and recovery are manual: back up `keys/operator.key` offline.
 
@@ -214,6 +221,33 @@ unless you pass one. `--vault` limits the import to one vault and `--tag` to ite
 nested tags under it), so tagging items in 1Password picks what agents may reach; re-run the import after tagging more.
 Logins, passwords, secure notes, API credentials and SSH keys are imported as `tv://<title>/<vault>`; other categories
 and archived items are skipped.
+
+### Importing from files
+
+Every import runs as one transaction into one group:
+
+```sh
+typevault import dotenv .env --group member
+typevault import typeclaw ./agent --group member            # the .env inside a typeclaw directory
+typevault import 1password export.1pux --group member
+typevault import bitwarden export.json --group member
+typevault import lastpass export.csv --group member
+typevault import keepass vault.kdbx --password-stdin --group member < kdbx-password.txt
+typevault import csv secrets.csv --group member
+```
+
+## Environment
+
+| Variable                                        | Effect                                                                                                         |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `TYPEVAULT_GRANT`                               | The grant this process uses; unset means direct mode                                                           |
+| `TYPEVAULT_GLOBAL`                              | Same as `-g`                                                                                                   |
+| `TYPEVAULT_DIR`                                 | Use the vault kept whole at this path; the global one is `$XDG_CONFIG_HOME/typevault` or `~/.config/typevault` |
+| `TYPEVAULT_KEY`                                 | Use only this key instead of the local key directory (`key export`)                                            |
+| `TYPEVAULT_GROUP`                               | Default group for `set` in direct mode                                                                         |
+| `TYPEVAULT_CEILING`                             | Admin socket to grant through (default `default`)                                                              |
+| `TYPEVAULT_OPERATOR`                            | Pin the operator key instead of trusting it on first use                                                       |
+| `TYPEVAULT_PROMPT_PORT`, `TYPEVAULT_PUBLIC_URL` | Where the daemon serves `request` pages                                                                        |
 
 ## Layout
 
