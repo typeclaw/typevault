@@ -32,7 +32,8 @@ typevault ls                     # entries your grant reaches
 typevault ls --json
 ```
 
-Names are `<service>[/<account>]#<field>`: `openai`, `github/bot#password`. Without `#field`, the type's main field
+Entries are named `tv://<service>[/<account>][#<field>]`: `tv://openai`, `tv://github/bot#password` (`github/bot`
+works too). Without `#field`, the type's main field
 is used.
 
 | Type       | Fields (main first)                                                          |
@@ -48,11 +49,11 @@ is used.
 
 ```sh
 typevault run --reason "run migrations" -- psql
-typevault run --only github/bot --reason "log in to GitHub" -- sh -c 'agent-browser fill @e3 "$GITHUB_BOT_PASSWORD"'
-typevault run --only 'openai,stripe' -- bun run deploy
+typevault run --only tv://github/bot --reason "log in to GitHub" -- sh -c 'agent-browser fill @e3 "$GITHUB_BOT_PASSWORD"'
+typevault run --only 'tv://openai,tv://stripe' -- bun run deploy
 ```
 
-- Env names are derived from the name: `github/bot#password` -> `GITHUB_BOT_PASSWORD`, `openai` -> `OPENAI_KEY`,
+- Env names are derived from the name: `tv://github/bot#password` -> `GITHUB_BOT_PASSWORD`, `tv://openai` -> `OPENAI_KEY`,
   unless the entry sets `--env`.
 - Write `$VAR` references in single quotes or as arguments the child expands, so your shell doesn't expand them
   first: `typevault run -- sh -c 'curl -H "Authorization: Bearer $OPENAI_KEY" ...'`.
@@ -75,11 +76,11 @@ Redaction is best effort: values under 4 characters, hex or composed encodings (
 ## Store secrets
 
 ```sh
-printf '%s' "$VALUE" | typevault set openai --type api_key --stdin
-typevault set github/bot --type password --field username=bot --stdin < password.txt
-typevault set google --type oauth --stdin-json < oauth.json   # a file the human wrote; don't read it
-typevault mv github/bot github/ci
-typevault rm github/ci
+printf '%s' "$VALUE" | typevault set tv://openai --type api_key --stdin
+typevault set tv://github/bot --type password --field username=bot --stdin < password.txt
+typevault set tv://google --type oauth --stdin-json < oauth.json   # a file the human wrote; don't read it
+typevault mv tv://github/bot tv://github/ci
+typevault rm tv://github/ci
 ```
 
 Never type a secret value into a command, even piped: the command text lands in your transcript. Read it from an
@@ -105,7 +106,7 @@ be revoked. Never let it reach output; capture it into a variable, or a sealed o
 ```sh
 typevault init                                         # new project vault with a `default` group
 export TYPEVAULT_GRANT=$(typevault grant --group default --ttl 1h --label session:abc)
-DEPLOY_GRANT=$(typevault grant --group member --only 'github/*' --ttl 30m --label ci:deploy)
+DEPLOY_GRANT=$(typevault grant --group member --only 'tv://github/*' --ttl 30m --label ci:deploy)
 (umask 077; typevault grant --group member --sealed --label ci:build > build.grant)   # offline, for CI; no revocation
 TYPEVAULT_GRANT=@build.grant typevault ls
 typevault grant ls                                     # metadata only, no tokens
