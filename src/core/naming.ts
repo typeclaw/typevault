@@ -77,7 +77,7 @@ export function parseEntryRef(input: string): EntryRef {
 }
 
 /** The stored key `field` refers to: an exact match, else the only one equal ignoring case. */
-export function findField(fields: Readonly<Record<string, string>>, field: string): string | undefined {
+export function findField(fields: Readonly<Record<string, unknown>>, field: string): string | undefined {
   if (Object.hasOwn(fields, field)) return field
   const matches = Object.keys(fields).filter((key) => key.toLowerCase() === field.toLowerCase())
   return matches.length === 1 ? matches[0] : undefined
