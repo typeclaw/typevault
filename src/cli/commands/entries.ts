@@ -41,20 +41,42 @@ export const ls = defineCommand({
 })
 
 export const get = defineCommand({
-  meta: { name: 'get', description: 'Print a secret (it lands in your transcript: prefer `typevault run`)' },
+  meta: {
+    name: 'get',
+    description: 'Print a field. Secret fields need --reveal (they land in your transcript: prefer `typevault run`)',
+  },
   args: {
     ref: { type: 'positional', description: ENTRY_REF_SYNTAX, required: true },
     reason: { type: 'string', description: 'Why you need it (audited)' },
-    json: { type: 'boolean', description: 'Print every field as JSON' },
+    json: { type: 'boolean', description: 'Print every field as JSON (secret fields redacted unless --reveal)' },
+    reveal: { type: 'boolean', description: 'Print secret fields in plaintext' },
   },
   async run({ args }) {
     const ref = parseEntryRef(args.ref)
     const value = await (await accessOf(process.env)).get(ref.name, args.reason)
-    if (args.json) return print(JSON.stringify(value.fields, null, 2))
+    if (args.json) {
+      const fields = Object.fromEntries(
+        Object.entries(value.fields).map(([field, secret]) => [
+          field,
+          args.reveal || !isSecretField(field) ? secret : '<redacted>',
+        ]),
+      )
+      if (!args.reveal) note('secret fields are redacted; pass --reveal to print them')
+      return print(JSON.stringify(fields, null, 2))
+    }
     const wanted = ref.field ?? primaryField(value.type)
     const field = findField(value.fields, wanted)
     const secret = field === undefined ? undefined : value.fields[field]
-    if (secret === undefined) throw new TypeVaultError('not_found', `${value.name} has no field "${wanted}"`)
+    if (field === undefined || secret === undefined) {
+      throw new TypeVaultError('not_found', `${value.name} has no field "${wanted}"`)
+    }
+    if (!args.reveal && isSecretField(field)) {
+      throw new TypeVaultError(
+        'denied',
+        `${value.name}#${field} is secret. Use \`typevault run\` to pass it to a command, ` +
+          'or --reveal to print it (it lands in logs and transcripts)',
+      )
+    }
     print(secret)
   },
 })
