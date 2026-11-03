@@ -16,8 +16,8 @@ Install: `bun add -g typevault`
 
 - **Never print a secret.** Use `typevault run` so values go into the child's env and its output is redacted. `get`
   and `otp` put the value in your transcript; use them only when nothing else works.
-- **Never put a secret on the command line.** Pass it on stdin (`--stdin`, `--stdin-json`); `--field` is for
-  non-secret fields only.
+- **Never put a secret on the command line.** Pass it on stdin (`--stdin`, `--stdin-json`); `--field` takes only
+  `username`, `url`, `token_url`, `client_id`, `expires_at` and `public_key`.
 - **Need a secret you don't have? Ask the human through `typevault request`**, not in chat. The value never reaches
   the model.
 - **Always give a `--reason`.** It is written to the audit trail.
@@ -34,7 +34,8 @@ typevault ls --json
 
 Entries are named `tv://<service>[/<account>][#<field>]`: `tv://openai`, `tv://github/bot#password` (`github/bot`
 works too). Without `#field`, the type's main field
-is used.
+is used. The type suggests fields, and an entry may hold any other (`tv://stripe#Webhook Secret`; quote it in the
+shell). Field names keep their case; a ref matches exactly, else the one field equal ignoring case.
 
 | Type       | Fields (main first)                                                          |
 | ---------- | ---------------------------------------------------------------------------- |
@@ -54,7 +55,7 @@ typevault run --only 'tv://openai,tv://stripe' -- bun run deploy
 ```
 
 - Env names are derived from the name: `tv://github/bot#password` -> `GITHUB_BOT_PASSWORD`, `tv://openai` -> `OPENAI_KEY`,
-  unless the entry sets `--env`. To pick the name yourself, set the variable to a reference:
+  `tv://stripe#Webhook Secret` -> `STRIPE_WEBHOOK_SECRET`, unless the entry sets `--env`. To pick the name yourself, set the variable to a reference:
   `DATABASE_URL=tv://postgres/prod#url typevault run -- ...` (the scheme is required here).
 - Write `$VAR` references in single quotes or as arguments the child expands, so your shell doesn't expand them
   first: `typevault run -- sh -c 'curl -H "Authorization: Bearer $OPENAI_KEY" ...'`.
@@ -80,6 +81,7 @@ Redaction is best effort: values under 4 characters, hex or composed encodings (
 printf '%s' "$VALUE" | typevault set tv://openai --type api_key --stdin
 typevault set tv://github/bot --type password --field username=bot --stdin < password.txt
 typevault set tv://google --type oauth --stdin-json < oauth.json   # a file the human wrote; don't read it
+# custom fields go in the same JSON: {"key":"...","Webhook Secret":"..."}
 typevault mv tv://github/bot tv://github/ci
 typevault rm tv://github/ci
 ```
