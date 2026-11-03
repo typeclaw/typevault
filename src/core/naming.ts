@@ -27,14 +27,27 @@ export type EntryName = string & { readonly __brand: 'EntryName' }
 const SEGMENT = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const MAX_SEGMENTS = 2
 
-/** Parses `<service>[/<account>]`. Names are case-insensitive and stored lowercase. */
+/**
+ * The one way to point at an entry: `tv://<service>[/<account>][#<field>]`. `typevault://` is an alias, and the
+ * scheme may be left out (`github/bot#password`) as shorthand. Every name, `--only` pattern and env reference goes
+ * through the parsers below.
+ */
+export const ENTRY_NAME_SYNTAX = 'tv://<service>[/<account>]'
+export const ENTRY_REF_SYNTAX = `${ENTRY_NAME_SYNTAX}[#<field>]`
+
+const REF_SCHEME = /^(?:tv|typevault):\/\//i
+
+/** An `--only` pattern (a name or a glob) in the form names are stored in: no scheme, lowercase. */
+export const entryPattern = (input: string): string => input.trim().replace(REF_SCHEME, '').toLowerCase()
+
+/** Parses `[tv://]<service>[/<account>]`. Names are case-insensitive and stored lowercase, without the scheme. */
 export function parseEntryName(input: string): EntryName {
-  const name = input.trim().toLowerCase()
+  const name = entryPattern(input)
   const segments = name.split('/')
   if (segments.length > MAX_SEGMENTS || !segments.every((segment) => SEGMENT.test(segment))) {
     throw new TypeVaultError(
       'invalid',
-      `invalid entry name "${input}" (expected <service>[/<account>], segments [a-z0-9-])`,
+      `invalid entry name "${input}" (expected ${ENTRY_NAME_SYNTAX}, segments [a-z0-9-])`,
     )
   }
   return name as EntryName
@@ -42,7 +55,7 @@ export function parseEntryName(input: string): EntryName {
 
 export type EntryRef = { readonly name: EntryName; readonly field: string | undefined }
 
-/** Parses `<service>[/<account>][#<field>]`. */
+/** Parses `[tv://]<service>[/<account>][#<field>]`. */
 export function parseEntryRef(input: string): EntryRef {
   const hash = input.indexOf('#')
   if (hash === -1) return { name: parseEntryName(input), field: undefined }
@@ -85,7 +98,7 @@ export function slugifySegment(raw: string): string {
 
 /** True when `name` matches any `--only` pattern (exact names or globs such as `github/*`). */
 export function matchesOnly(name: EntryName, patterns: readonly string[]): boolean {
-  return patterns.some((pattern) => new Bun.Glob(pattern.toLowerCase()).match(name))
+  return patterns.some((pattern) => new Bun.Glob(entryPattern(pattern)).match(name))
 }
 
 /**

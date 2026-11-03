@@ -8,6 +8,8 @@ describe('parseEntryName', () => {
     ['openai', 'openai'],
     ['GitHub/Bot', 'github/bot'],
     ['google-workspace/team-1', 'google-workspace/team-1'],
+    ['tv://github/bot', 'github/bot'],
+    ['typevault://GitHub/Bot', 'github/bot'],
   ])('accepts %p as %p', (input, expected) => {
     expect<string>(parseEntryName(input)).toBe(expected)
   })
@@ -20,6 +22,17 @@ describe('parseEntryName', () => {
 describe('parseEntryRef', () => {
   it('splits the field selector off the name', () => {
     expect(parseEntryRef('github/bot#Password')).toEqual({ name: parseEntryName('github/bot'), field: 'password' })
+  })
+
+  it.each(['tv://github/bot#password', 'typevault://github/bot#password', 'TV://GitHub/Bot#password'])(
+    'accepts the %p scheme form',
+    (input) => {
+      expect(parseEntryRef(input)).toEqual({ name: parseEntryName('github/bot'), field: 'password' })
+    },
+  )
+
+  it.each(['op://github/bot#password', 'tv:github/bot', 'tv:///github/bot'])('rejects %p', (input) => {
+    expect(() => parseEntryRef(input)).toThrow(TypeVaultError)
   })
 
   it('leaves the field undefined when no selector is given', () => {
@@ -52,6 +65,8 @@ describe('matchesOnly', () => {
 
   it.each([
     [['github/*'], true],
+    [['tv://github/*'], true],
+    [['TV://GitHub/Bot'], true],
     [['github/bot'], true],
     [['openai', 'github/personal'], false],
     [['*'], false],
