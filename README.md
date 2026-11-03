@@ -249,6 +249,8 @@ the global vault, like `-g`.
 
 ```sh
 typevault key export member                      # TYPEVAULT_KEY for a CI issuer or remote daemon
+typevault key export member --to 1password --vault Infra   # store it as an API Credential instead
+typevault key export --owner --to 1password --vault Backup # owner key recovery backup
 typevault key rotate member                      # new generation; lists every secret to rotate at its source
 typevault tier exclude trusted member           # drop an include (rotates member)
 typevault signer add ci-bot <ed25519-public-key> --tiers member
@@ -262,7 +264,12 @@ typevault daemon status                          # also: daemon start | stop | r
 
 `tier`, `ceiling` and `signer` each also have `ls` and `rm`.
 
-Owner key rotation and recovery are manual: back up `keys/owner.key` offline.
+Owner key rotation and recovery are manual: back up `keys/owner.key` offline, or with `key export --owner --to 1password`.
+
+`key export --to 1password` uses the `op` CLI when installed, else the 1Password app (`--via sdk|op` to choose; `--account` is required for
+the app or when several `op` accounts are signed in). The key goes in the item's `credential` field, so an issuer can run with
+`TYPEVAULT_KEY="op://Infra/TypeVault member <id>/credential"` under `op run`. An existing item with the same title is refused unless
+`--replace`, which archives it after storing the new one; re-export after `key rotate`.
 
 ### Importing from 1Password
 
