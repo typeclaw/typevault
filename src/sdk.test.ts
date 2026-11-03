@@ -83,6 +83,9 @@ describe('sdk', () => {
       signerOf(key),
     )
     const env = { XDG_CONFIG_HOME: config }
+    // This repo dogfoods its own .typevault/, so leave it for a directory with none.
+    const cwd = process.cwd()
+    process.chdir(config)
 
     // then only global: true reads it
     try {
@@ -90,6 +93,7 @@ describe('sdk', () => {
       const client = await createClient({ direct: true, global: true, env })
       expect((await client.get(n('openai'))).fields).toEqual({ key: 'sk-global' })
     } finally {
+      process.chdir(cwd)
       rmSync(config, { recursive: true, force: true })
     }
   })
