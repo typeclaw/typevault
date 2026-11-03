@@ -4,7 +4,8 @@ A CLI-first secrets vault for agents. `.env` exposes too much; password managers
 
 > Each session gets exactly the secrets its grant allows, every read leaves a trail, and secrets stay out of transcripts.
 
-- **Git-friendly:** the vault is a directory of age-encrypted, signed files. Only `vault/` is safe to commit, and it is.
+- **Git-friendly:** the vault is a directory of age-encrypted, signed files. Keep one per project in `.typevault/` and
+  commit it; the keys never live there.
 - **Groups are keys:** each group has a keypair; groups can include others (`trusted` includes `member`). Access is enforced by cryptography, not by checks.
 - **Grants, not keys:** agents hold short-lived grants. A daemon holds the keys, serves values and audits every read.
 - **No human in the loop:** an operator-signed ceiling caps what each admin socket may grant.
@@ -19,7 +20,7 @@ bun add -g typevault
 ## Quick start
 
 ```sh
-typevault init                                   # creates ~/.config/typevault (TYPEVAULT_DIR overrides)
+typevault init                                   # creates .typevault/ here; -g for the global vault
 typevault group add member
 typevault group add trusted
 typevault group include trusted member           # trusted reaches everything member reaches
@@ -35,6 +36,24 @@ typevault ls
 typevault run -- psql                            # secrets arrive as env vars; output is redacted
 typevault run --only github/bot -- agent-browser fill @e3 "$GITHUB_BOT_PASSWORD"
 ```
+
+## Project and global vaults
+
+Like `bun` and `npm`, every command works on the project unless you pass `-g`:
+
+```sh
+typevault ls                                     # the nearest .typevault/ up from the working directory
+typevault -g ls                                  # the global vault in ~/.config/typevault
+```
+
+Without `-g`, a command run outside any project fails instead of falling back to the global vault, so a secret never
+lands in the wrong one. `-g` goes before `--` in `run`; `TYPEVAULT_GLOBAL=1` does the same, and an explicit
+`TYPEVAULT_DIR` always selects the vault kept whole at that path.
+
+A project vault holds only ciphertext and signed manifests, so commit `.typevault/` as is. Its keys live under
+`~/.config/typevault/vaults/<id>/`, where `<id>` comes from the vault's operator key, so every clone of the project
+finds them. Each checkout keeps its own trust pin, audit log and daemon under `~/.config/typevault/checkouts/<id>/`. A collaborator gets access with `TYPEVAULT_KEY` (`typevault key export`) or a
+grant, as with the global vault.
 
 ## Naming
 
@@ -141,7 +160,8 @@ const { fields } = await vault.get(parseEntryName('openai'), 'send the weekly di
 const redactor = createRedactor(await vault.readValues())
 ```
 
-`createClient` takes `grant` (default `TYPEVAULT_GRANT`), `dir` (default `TYPEVAULT_DIR`) and `env`. Without a grant it
+`createClient` takes `grant` (default `TYPEVAULT_GRANT`), `dir` and `env`; `dir` (default `TYPEVAULT_DIR`) selects a
+global-style vault, and without it the vault is chosen like the CLI's. Without a grant it
 refuses unless you pass `direct: true`, which loads this machine's keys into your process; keep that to launchers.
 `createAdmin` takes `dir`, `ceiling` and `env`, and offers `grant`, `list` and `revoke`.
 
@@ -167,10 +187,15 @@ $TYPEVAULT_DIR/
     entries/        # one signed file per entry, opaque names
     groups/         # wrapped group keys
     groups.json signers.json ceilings.json   # operator-signed
-    operator.json audit-anchors.jsonl
+    operator.json
+    audit-anchors/  # one file per checkout's audit chain
   keys/             # private keys (0600), never commit
   audit/            # full local audit log
   run/              # sockets, lock, grants, staged transactions, revision high-water marks
+  vaults/<id>/keys/ # keys of each project vault, shared by its checkouts
+  checkouts/<id>/   # trust.json audit/ run/ of each project checkout
+
+<project>/.typevault/   # a project vault: the same files as vault/, all safe to commit
 ```
 
 ## Git history

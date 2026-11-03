@@ -27,7 +27,7 @@ export type GrantRequest = {
 }
 
 export type AdminOptions = {
-  /** The typevault root. Defaults to `TYPEVAULT_DIR`, else `$XDG_CONFIG_HOME/typevault` or `~/.config/typevault`. */
+  /** A global-style typevault root. Defaults to `TYPEVAULT_DIR`; without one the vault is chosen like the CLI's. */
   readonly dir?: string
   /** Which admin socket to use (`run/admin-<ceiling>.sock`). Defaults to `TYPEVAULT_CEILING`, else `default`. */
   readonly ceiling?: string

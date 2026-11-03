@@ -18,7 +18,7 @@ export {
 export type ClientOptions = {
   /** A live (`tvl1.…`), sealed (`tvg1:…`) or `@path` grant. Defaults to `TYPEVAULT_GRANT`. */
   readonly grant?: string
-  /** The typevault root. Defaults to `TYPEVAULT_DIR`, else `$XDG_CONFIG_HOME/typevault` or `~/.config/typevault`. */
+  /** A global-style typevault root. Defaults to `TYPEVAULT_DIR`; without one the vault is chosen like the CLI's. */
   readonly dir?: string
   /** Without a grant, open the vault with this machine's own keys (operator, launchers). Off by default. */
   readonly direct?: boolean
