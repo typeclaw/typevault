@@ -1,12 +1,16 @@
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { defineCommand } from 'citty'
 
 import { verifyAudit } from '../../audit/log'
+import { Admin } from '../../core/admin'
 import { adoptCertWrites } from '../../core/adopt'
+import { decodeSecretKey } from '../../core/crypto'
 import { doctor as runDoctor } from '../../core/doctor'
 import { initLocalVault, initVault } from '../../core/init'
 import { LOCAL_VAULT_DIR, layoutOf, resolveRoot } from '../../core/layout'
+import { Vault } from '../../core/vault'
 import { openAdmin, openDirect, wantsGlobal } from '../context'
 import { csv, note, print, table } from '../output'
 
@@ -16,15 +20,22 @@ export const init = defineCommand({
     const env = process.env
     const global = wantsGlobal(env)
     const layout = global ? layoutOf(resolveRoot(env)) : await initLocalVault(join(process.cwd(), LOCAL_VAULT_DIR), env)
-    if (global) await initVault(layout.root)
-    print(`vault created at ${global ? layout.root : layout.vault}`)
+    // The new vault's own operator key, never an inherited TYPEVAULT_KEY that belongs to some other vault.
+    const operatorKey = global
+      ? await initVault(layout.root)
+      : decodeSecretKey(readFileSync(layout.operatorKey, 'utf8'))
+    await new Admin(await Vault.open(layout, [operatorKey], env)).addGroup(STARTER_GROUP)
+    print(`vault created at ${global ? layout.root : layout.vault} with group "${STARTER_GROUP}"`)
     const commit = global
       ? 'Only vault/ is safe to commit.'
       : `Commit ${LOCAL_VAULT_DIR}/; its keys stay in ${layout.keys}.`
     note(`operator key: ${layout.operatorKey}\nBack it up offline: it is the only recovery path. ${commit}`)
-    note('next: typevault group add <name>, then typevault set <name> --type ... --group <name> --stdin')
+    note('next: typevault set <name> --type ... --stdin (more groups: typevault group add <name>)')
   },
 })
+
+/** Created by `init` so `set` and `grant` work before any group design; as the only group, `set` picks it. */
+const STARTER_GROUP = 'default'
 
 const named = { name: { type: 'positional', required: true } } as const
 const pair = {
