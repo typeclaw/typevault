@@ -125,7 +125,7 @@ A field name is anything up to 64 characters without `=`, control characters or 
 
 ```sh
 echo '{"key":"…","Webhook Secret":"…"}' | typevault set tv://stripe --type api_key --stdin-json
-typevault get 'tv://stripe#Webhook Secret'       # an exact match, else the one field equal ignoring case
+typevault get 'tv://stripe#Webhook Secret' --reveal   # an exact match, else the one field equal ignoring case
 ```
 
 Env names are derived: `tv://github/bot#password` becomes `GITHUB_BOT_PASSWORD` and `tv://stripe#Webhook Secret`
@@ -179,7 +179,7 @@ before expiry stop being trusted; the operator can still keep them with `typevau
 typevault grant --group member --only 'tv://github/*' --ttl 30m --label ci:deploy
 typevault grant ls
 typevault grant revoke --label ci:deploy         # also revokes grants derived from it
-TYPEVAULT_GRANT=@/run/agent/grant typevault get tv://github/bot
+TYPEVAULT_GRANT=@/run/agent/grant typevault run -- ./deploy.sh
 ```
 
 `TYPEVAULT_GRANT` takes a live grant (`tvl1.…`), a sealed one (`tvg1:…`) or `@path` to a file holding a sealed one.
@@ -216,7 +216,8 @@ is never written to logs or shown to the model.
 - `typevault run` redacts its child's stdout and stderr by default.
 - `cmd | typevault redact` scrubs anything your grant has read.
 - `typevault scrub <files>` rewrites transcripts in place.
-- `typevault get` prints the value on purpose; prefer `run`.
+- `typevault get` prints plain fields (`username`, `url`, ...) but refuses a secret field without `--reveal`;
+  `--json` shows secret fields as `<redacted>`. Prefer `run`.
 
 ## SDK
 
