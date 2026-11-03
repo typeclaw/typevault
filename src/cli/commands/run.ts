@@ -1,7 +1,7 @@
 import { defineCommand } from 'citty'
 import { z } from 'zod'
 
-import { envEligible, envFor, explicitNames, secretValues } from '../../access/env'
+import { envEligible, envFor, explicitNames, resolveEnvRefs, secretValues } from '../../access/env'
 import { appendAudit } from '../../audit/log'
 import { signerOf } from '../../core/entries'
 import { TypeVaultError } from '../../core/errors'
@@ -31,13 +31,24 @@ export const run = defineCommand({
     const values = await access.values(only, args.reason)
     const policy = { ownGroups: await access.ownGroups(), explicit: explicitNames(only) }
     const env = envFor(values, new Date(), policy)
-    const skipped = values.filter((value) => !envEligible(value, policy)).map((value) => value.name)
-    if (skipped.length > 0) note(`not loaded (from included groups; name them in --only): ${skipped.join(', ')}`)
-    const redactor = createRedactor([...secretValues(values), ...Object.values(env)])
     // The child gets its secrets, never the key or grant that opens the vault.
     const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('TYPEVAULT_')))
+    const refs = await resolveEnvRefs(inherited, (name) => access.get(name, args.reason), new Date())
+    const referenced = new Set(refs.values.map((value) => value.name))
+    const skipped = values
+      .filter((value) => !envEligible(value, policy) && !referenced.has(value.name))
+      .map((value) => value.name)
+    if (skipped.length > 0) note(`not loaded (from included groups; name them in --only): ${skipped.join(', ')}`)
+    const clash = Object.keys(refs.env).find((name) => Object.hasOwn(env, name))
+    if (clash !== undefined)
+      throw new TypeVaultError('conflict', `${clash} is both a tv:// reference and an entry's variable`)
+    const redactor = createRedactor([
+      ...secretValues([...values, ...refs.values]),
+      ...Object.values(env),
+      ...Object.values(refs.env),
+    ])
     const child = Bun.spawn(command, {
-      env: { ...inherited, ...env },
+      env: { ...inherited, ...env, ...refs.env },
       stdin: 'inherit',
       stdout: 'pipe',
       stderr: 'pipe',
