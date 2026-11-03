@@ -12,7 +12,7 @@ import { initVault } from '../core/init'
 import { layoutOf } from '../core/layout'
 import { parseEntryName } from '../core/naming'
 import { Vault } from '../core/vault'
-import { envFor } from './env'
+import { envFor, explicitNames } from './env'
 import { ScopedVault } from './scoped'
 import { issueSealedGrant, readSealedGrant, sealedSigningSecret } from './sealed'
 import { SealedAccess } from './sealed-access'
@@ -165,6 +165,9 @@ describe('ScopedVault', () => {
     const lower = { ...base, name: n('planted'), group: 'guest', fields: { password: 'x' } }
     expect(envFor([lower], new Date(0), own)).toEqual({})
     expect(envFor([lower], new Date(0), { ownGroups: ['member'], explicit: ['planted'] })).toEqual({
+      PLANTED_PASSWORD: 'x',
+    })
+    expect(envFor([lower], new Date(0), { ownGroups: ['member'], explicit: explicitNames(['tv://Planted']) })).toEqual({
       PLANTED_PASSWORD: 'x',
     })
   })
