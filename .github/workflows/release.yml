@@ -1,0 +1,263 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (x.y.z)'
+        required: true
+
+# Serialize ALL releases of this package, not just identical versions: two
+# versions publishing at once could both reach npm before one branch push is
+# rejected, and could leave npm's `latest` dist-tag on the lower version.
+# `cancel-in-progress: false`: a release in flight must NEVER be cancelled
+# mid-publish. A queued dispatch waits, and the release job's "Resolve release
+# state" step rejects it if the branch moved while it waited.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+# Job-default permissions are read-only; the publish job widens only what it
+# needs (contents: write + id-token: write). Keeping the workflow-level grant
+# minimal means the checks job — which runs test code — can't push.
+permissions:
+  contents: read
+
+jobs:
+  # ─────────────────────────── checks ───────────────────────────
+  # Validates the version and runs the full release gate
+  # (typecheck/lint/format/test) before anything is published.
+  checks:
+    name: Validate and test
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # Pinned (not `latest`): `latest` makes setup-bun call
+          # api.github.com to resolve the version, which intermittently 401s
+          # under GHA token contention; a pinned version skips that lookup.
+          bun-version: 1.4.0
+
+      - name: Validate version
+        # Reject anything that isn't a strict x.y.z before mutating npm/git.
+        # `npm version` below interpolates the value into a shell command, so
+        # the validated value is re-exported as a job output and downstream
+        # steps consume `needs.checks.outputs.version` instead of the raw input.
+        id: version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version: '$VERSION' (expected strict x.y.z)"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Format check
+        run: bun run format:check
+
+      - name: Test
+        run: bun test
+
+  # ─────────────────────────── release ───────────────────────────
+  # The irreversible publish path: npm first, then the git commit + tag, then
+  # the GitHub Release. Every step is idempotent at the same version so a
+  # re-run repairs whatever a previous run left unfinished.
+  release:
+    name: Publish npm, tag, and release
+    needs: checks
+    runs-on: ubuntu-latest
+    # id-token: write is required for `npm publish --provenance` (OIDC
+    # trusted publishing) — and ONLY this job needs it. contents: write is
+    # for the git push of the version bump + tag.
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+        # If `main` is protected by a ruleset, the default GITHUB_TOKEN cannot
+        # push the version bump to it, and GitHub Actions cannot be added to
+        # `bypass_actors`. A write-enabled SSH deploy key in the ruleset's
+        # bypass list (`actor_type: DeployKey`) can. When the `DEPLOY_KEY`
+        # secret is unset this expression is empty and checkout falls back to
+        # GITHUB_TOKEN, which works while `main` is unprotected.
+        #
+        # `persist-credentials: true` (the default) is required — turning it
+        # off strips the auth and the pushes below fail. `fetch-depth: 0`
+        # brings in tags and parents for "Resolve release state".
+        with:
+          ssh-key: ${{ secrets.DEPLOY_KEY }}
+          fetch-depth: 0
+
+      - name: Resolve release state
+        # Decides what this run may do BEFORE anything irreversible happens.
+        # Re-runs keep the original GITHUB_SHA, so the state is read from the
+        # remote, never assumed:
+        #   tagged — the version tag already exists. Tags are immutable: npm
+        #            was published before the tag was pushed, so only the
+        #            GitHub release can be missing. No bump, publish, or ref
+        #            change.
+        #   pushed — the branch tip is this run's release commit (parent is
+        #            GITHUB_SHA, subject is the version, only package.json
+        #            differs): a previous attempt pushed it, then failed. Reuse
+        #            it instead of recreating a commit that can't fast-forward.
+        #   fresh  — the branch tip is GITHUB_SHA: a normal release.
+        # Anything else means the branch moved since this run was dispatched
+        # (e.g. while it queued behind another release), so fail before
+        # publishing untested or stale content.
+        id: state
+        env:
+          VERSION: ${{ needs.checks.outputs.version }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git fetch --force origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+          pkg_version() { git show "$1:package.json" | jq -r .version; }
+
+          if tagged=$(git rev-parse -q --verify "refs/tags/$VERSION^{commit}"); then
+            if [ "$(pkg_version "$tagged")" != "$VERSION" ]; then
+              echo "::error::Tag $VERSION points at $tagged, whose package.json is not $VERSION"
+              exit 1
+            fi
+            echo "Tag $VERSION already exists at $tagged; leaving refs and npm untouched"
+            echo "mode=tagged" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          tip=$(git rev-parse "origin/$BRANCH")
+          if [ "$tip" = "$GITHUB_SHA" ]; then
+            current=$(pkg_version "$GITHUB_SHA")
+            if [ "$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V | head -n1)" != "$current" ]; then
+              echo "::error::$VERSION is lower than the current version $current"
+              exit 1
+            fi
+            echo "mode=fresh" >> "$GITHUB_OUTPUT"
+          elif [ "$(git rev-parse -q --verify "$tip^" || true)" = "$GITHUB_SHA" ] \
+            && [ "$(git log -1 --format=%s "$tip")" = "$VERSION" ] \
+            && [ "$(pkg_version "$tip")" = "$VERSION" ] \
+            && git diff --quiet "$GITHUB_SHA" "$tip" -- . ':!package.json'; then
+            echo "Branch tip $tip is this run's release commit; reusing it"
+            echo "mode=pushed" >> "$GITHUB_OUTPUT"
+            echo "commit=$tip" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::$BRANCH moved to $tip since this run was dispatched at $GITHUB_SHA; dispatch a new release from the current tip"
+            exit 1
+          fi
+
+      - uses: oven-sh/setup-bun@v2
+        if: steps.state.outputs.mode != 'tagged'
+        with:
+          bun-version: 1.4.0
+
+      - uses: actions/setup-node@v4
+        if: steps.state.outputs.mode != 'tagged'
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        if: steps.state.outputs.mode != 'tagged'
+        run: bun install --frozen-lockfile
+
+      - name: Ensure npm CLI supports OIDC trusted publishing
+        # npm trusted publishing requires npm ≥ 11.5.1; Node 24.0.x ships
+        # npm 11.3.0, so upgrade explicitly. Pinned to 11.18.0, NOT
+        # npm@latest: the npm 12.0.0 global install strips the `sigstore`
+        # package that `npm publish --provenance` requires.
+        if: steps.state.outputs.mode != 'tagged'
+        run: npm install -g npm@11.18.0 && npm --version
+
+      - name: Bump version
+        # package.json is the only place a version lives. Mutates package.json
+        # in the runner only. In `pushed` mode this reproduces the already
+        # pushed release commit's content (only package.json differs from
+        # GITHUB_SHA), so a publish below would ship the same bytes.
+        if: steps.state.outputs.mode != 'tagged'
+        run: npm version ${{ needs.checks.outputs.version }} --no-git-tag-version --allow-same-version
+
+      - name: Publish to npm
+        # Cardinal irreversible step. npm enforces version immutability —
+        # once typevault@X.Y.Z is on the registry, that name is burned forever.
+        #
+        # If a previous attempt already published this version, skip — but
+        # only when it was published from this run's source (npm records the
+        # git HEAD as `gitHead`). A version published from other source fails
+        # here instead of being tagged onto code it doesn't contain.
+        if: steps.state.outputs.mode != 'tagged'
+        env:
+          VERSION: ${{ needs.checks.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "$(npm view "typevault@$VERSION" version 2>/dev/null || true)" ]; then
+            published_head=$(npm view "typevault@$VERSION" gitHead 2>/dev/null || true)
+            if [ "$published_head" != "$GITHUB_SHA" ]; then
+              echo "::error::typevault@$VERSION is already published from '${published_head:-unknown}', not $GITHUB_SHA"
+              exit 1
+            fi
+            echo "typevault@$VERSION already published from $GITHUB_SHA, skipping npm publish"
+          else
+            npm publish --provenance --access public
+          fi
+
+      - name: Commit and tag
+        # Runs after the npm publish so a transient publish failure does not
+        # leave a git tag pointing at an unreleased version. Nothing is
+        # force-pushed: the branch push is a fast-forward from GITHUB_SHA
+        # (`fresh`), skipped when package.json already holds the version, or
+        # skipped because the commit is already there (`pushed`), and the tag
+        # is created once and never moved.
+        if: steps.state.outputs.mode != 'tagged'
+        env:
+          VERSION: ${{ needs.checks.outputs.version }}
+          BRANCH: ${{ github.ref_name }}
+          MODE: ${{ steps.state.outputs.mode }}
+          PUSHED_COMMIT: ${{ steps.state.outputs.commit }}
+        run: |
+          set -euo pipefail
+          if [ "$MODE" = fresh ]; then
+            git add package.json
+            if git diff --staged --quiet; then
+              # package.json already holds $VERSION (e.g. the first release):
+              # the dispatch commit itself is the release commit.
+              release_commit=$GITHUB_SHA
+            else
+              git config user.name "Typeey"
+              git config user.email "typeeybird@gmail.com"
+              git commit -m "$VERSION"
+              git push origin "HEAD:refs/heads/$BRANCH"
+              release_commit=$(git rev-parse HEAD)
+            fi
+          else
+            release_commit=$PUSHED_COMMIT
+          fi
+          git tag "$VERSION" "$release_commit"
+          git push origin "refs/tags/$VERSION"
+
+      - name: Create GitHub Release
+        # Idempotency guard: skip if the release for this tag already exists.
+        # `--verify-tag` refuses to create a missing tag from the default
+        # branch, so the release always points at the published commit.
+        env:
+          VERSION: ${{ needs.checks.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "Release $VERSION already exists, skipping"
+          else
+            gh release create "$VERSION" --verify-tag --generate-notes
+          fi
