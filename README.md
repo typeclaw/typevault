@@ -11,52 +11,52 @@
 
 ## Grants, not keys: agents never hold the vault
 
-- 🎟️ **Short-lived grants**: an agent gets a grant scoped to groups, entry patterns and a TTL; a daemon holds the keys, serves values and audits every read
-- ⚡ **Instant revocation**: live grants die the moment you revoke them, along with every grant derived from them
-- 📦 **Sealed grants for CI**: self-contained grants work with no daemon for one-shot containers and pipelines
-- 🧱 **Ceilings without a human in the loop**: an operator-signed ceiling caps what each admin socket may grant, so a launcher can mint grants unattended but never above its cap
+- **Short-lived grants**: an agent gets a grant scoped to groups, entry patterns and a TTL; a daemon holds the keys, serves values and audits every read
+- **Instant revocation**: live grants die the moment you revoke them, along with every grant derived from them
+- **Sealed grants for CI**: self-contained grants work with no daemon for one-shot containers and pipelines
+- **Ceilings without a human in the loop**: an operator-signed ceiling caps what each admin socket may grant, so a launcher can mint grants unattended but never above its cap
 
 ## Groups are keys: access enforced by cryptography
 
-- 🔐 **One keypair per group**: a secret is encrypted to its group, so reach comes from holding a key, not from a permission check
-- 🪜 **Inclusion**: groups can include others (`trusted` reaches everything `member` does), and the higher group's copy wins on name clashes
-- 🔄 **Rotation that tells you what to rotate**: `key rotate` starts a new generation and lists every secret to rotate at its source
-- 👁️ **Reading = using**: if a grant can use a secret it can read it, so put a secret in a group only if that group may see it
+- **One keypair per group**: a secret is encrypted to its group, so reach comes from holding a key, not from a permission check
+- **Inclusion**: groups can include others (`trusted` reaches everything `member` does), and the higher group's copy wins on name clashes
+- **Rotation that tells you what to rotate**: `key rotate` starts a new generation and lists every secret to rotate at its source
+- **Reading = using**: if a grant can use a secret it can read it, so put a secret in a group only if that group may see it
 
 ## Git-friendly: commit the vault, never the keys
 
-- 🗂️ **A directory of files**: one age-encrypted, signed file per entry, with opaque names; commit `.typevault/` with your project
-- 🧭 **Project and global vaults**: like `bun` and `npm`, commands target the nearest project vault, and `-g` selects the global one
-- ⏪ **Rollback protection**: each checkout remembers the newest revision it has seen, so old ciphertext restored from history is refused
-- 🩹 **Merge repair**: `doctor --fix` verifies signatures and resolves git merges and duplicate entries
+- **A directory of files**: one age-encrypted, signed file per entry, with opaque names; commit `.typevault/` with your project
+- **Project and global vaults**: like `bun` and `npm`, commands target the nearest project vault, and `-g` selects the global one
+- **Rollback protection**: each checkout remembers the newest revision it has seen, so old ciphertext restored from history is refused
+- **Merge repair**: `doctor --fix` verifies signatures and resolves git merges and duplicate entries
 
 ## Out of transcripts: values reach programs, not the model
 
-- 🏃 **`run` injects env vars**: secrets arrive as environment variables, loader variables like `PATH` and `NODE_OPTIONS` are never set from the vault, and the child's output is redacted
-- 🔗 **`tv://` references**: set `DATABASE_URL=tv://postgres/prod#url` and `run` swaps in the value, so you choose the variable name
-- 🧽 **Redaction everywhere**: pipe through `typevault redact` or rewrite saved transcripts in place with `typevault scrub`
-- 🔢 **TOTP done right**: `run` passes the current code, never the seed
+- **`run` injects env vars**: secrets arrive as environment variables, loader variables like `PATH` and `NODE_OPTIONS` are never set from the vault, and the child's output is redacted
+- **`tv://` references**: set `DATABASE_URL=tv://postgres/prod#url` and `run` swaps in the value, so you choose the variable name
+- **Redaction everywhere**: pipe through `typevault redact` or rewrite saved transcripts in place with `typevault scrub`
+- **TOTP done right**: `run` passes the current code, never the seed
 
 ## Asking a human: one link, no plaintext on the wire
 
-- 🙋 **`request`**: an agent asks for a missing secret and gets a one-time URL plus a match code to hand to a human
-- 🛡️ **Encrypted in the browser**: the page encrypts the value to the group before submitting, so the plaintext never reaches the server, logs or the model
+- **`request`**: an agent asks for a missing secret and gets a one-time URL plus a match code to hand to a human
+- **Encrypted in the browser**: the page encrypts the value to the group before submitting, so the plaintext never reaches the server, logs or the model
 
 ## Audit: every read leaves a trail
 
-- 📜 **Per-read records**: live grants log every read with its label and stated reason
-- 📡 **Follow a session**: `audit --label ci:deploy --follow` streams one grant's reads as they happen
-- ⛓️ **Verifiable chain**: `audit --verify` checks the hash chain against anchors committed with the vault
+- **Per-read records**: live grants log every read with its label and stated reason
+- **Follow a session**: `audit --label ci:deploy --follow` streams one grant's reads as they happen
+- **Verifiable chain**: `audit --verify` checks the hash chain against anchors committed with the vault
 
 ## Imports: bring your existing secrets
 
-- 🔑 **1Password, directly**: import from the 1Password app through its SDK or `op`, with no export file; narrow by vault or tag
-- 📥 **Everything else**: `.env` files, TypeClaw agent folders, 1Password `.1pux`, Bitwarden, LastPass, KeePass and CSV, each as one transaction into one group
+- **1Password, directly**: import from the 1Password app through its SDK or `op`, with no export file; narrow by vault or tag
+- **Everything else**: `.env` files, TypeClaw agent folders, 1Password `.1pux`, Bitwarden, LastPass, KeePass and CSV, each as one transaction into one group
 
 ## SDK: the same access in-process
 
-- 🧩 **Three entry points**: `typevault` for clients, `typevault/admin` for launchers that mint grants, and `typevault/redact` for scrubbing output
-- 🤖 **Agent skill included**: [`skills/typevault`](./skills/typevault) teaches coding agents to use grants, `run` and references correctly
+- **Three entry points**: `typevault` for clients, `typevault/admin` for launchers that mint grants, and `typevault/redact` for scrubbing output
+- **Agent skill included**: [`skills/typevault`](./skills/typevault) teaches coding agents to use grants, `run` and references correctly
 
 typevault is general-purpose: any agent runtime can use it. [TypeClaw](https://github.com/typeclaw/typeclaw) is its first consumer, sandboxing each session and mounting only the agent socket.
 
