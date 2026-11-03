@@ -23,21 +23,21 @@ bun add -g typevault
 typevault init                                   # creates .typevault/ here with a `default` group; -g for global
 
 # With one group, set needs no --group
-printf '%s' "$OPENAI_KEY" | typevault set openai --type api_key --stdin
-typevault set github/bot --type password --field username=bot --stdin < password.txt
-echo '{"access_token":"…","refresh_token":"…"}' | typevault set google --type oauth --stdin-json
+printf '%s' "$OPENAI_KEY" | typevault set tv://openai --type api_key --stdin
+typevault set tv://github/bot --type password --field username=bot --stdin < password.txt
+echo '{"access_token":"…","refresh_token":"…"}' | typevault set tv://google --type oauth --stdin-json
 
 # Split reach once agents need different access
 typevault group add trusted
 typevault group include trusted default          # trusted reaches everything default reaches
-printf '%s' "$STRIPE_KEY" | typevault set stripe --type api_key --group trusted --stdin
+printf '%s' "$STRIPE_KEY" | typevault set tv://stripe --type api_key --group trusted --stdin
 
 # Hand an agent a grant instead of a key (the daemon starts automatically)
 export TYPEVAULT_GRANT=$(typevault grant --group default --label session:abc)
 
 typevault ls
 typevault run -- psql                            # secrets arrive as env vars; output is redacted
-typevault run --only github/bot -- agent-browser fill @e3 "$GITHUB_BOT_PASSWORD"
+typevault run --only tv://github/bot -- agent-browser fill @e3 "$GITHUB_BOT_PASSWORD"
 ```
 
 ## Project and global vaults
@@ -60,7 +60,8 @@ grant, as with the global vault.
 
 ## Naming
 
-`<service>[/<account>]#<field>`: `openai`, `github/bot#password`, `github/personal#totp`.
+`tv://<service>[/<account>][#<field>]`: `tv://openai`, `tv://github/bot#password`, `tv://github/personal#totp`.
+That is the canonical form. For convenience, `typevault://github/bot` and the bare `github/bot` work everywhere too.
 No environments, no domains, no group in the name. Fields come from the type:
 
 | Type       | Fields (default first)                                                       |
@@ -72,7 +73,7 @@ No environments, no domains, no group in the name. Fields come from the type:
 | `totp`     | seed                                                                         |
 | `note`     | text                                                                         |
 
-Env names are derived: `github/bot#password` becomes `GITHUB_BOT_PASSWORD`. Override the main field's name with `--env`.
+Env names are derived: `tv://github/bot#password` becomes `GITHUB_BOT_PASSWORD`. Override the main field's name with `--env`.
 In `run`, TOTP fields carry the current code, never the seed. Secret fields are never accepted as `--field` arguments
 (they would land in `ps` and shell history): pass them with `--stdin` or `--stdin-json`.
 
@@ -80,7 +81,7 @@ In `run`, TOTP fields carry the current code, never the seed. Secret fields are 
 
 A lower group can write entries a higher group reads, so `run` only loads, in bulk, entries from the groups the
 caller holds directly. An entry from an included group is loaded only when `--only` names it exactly
-(`--only github/bot`, not `--only 'github/*'`). Two entries setting the same variable is an error, and variables that
+(`--only tv://github/bot`, not `--only 'tv://github/*'`). Two entries setting the same variable is an error, and variables that
 change how programs load code or route traffic (`PATH`, `LD_*`, `NODE_OPTIONS`, `GIT_*`, `HTTPS_PROXY`, ...) are never set
 from the vault. The child never receives `TYPEVAULT_*` variables.
 
@@ -104,10 +105,10 @@ A daemon (every minute) or `typevault doctor --fix` adopts those writes by re-si
 before expiry stop being trusted; the operator can still keep them with `typevault doctor --fix --adopt-expired`.
 
 ```sh
-typevault grant --group member --only 'github/*' --ttl 30m --label ci:deploy
+typevault grant --group member --only 'tv://github/*' --ttl 30m --label ci:deploy
 typevault grant ls
 typevault grant revoke --label ci:deploy         # also revokes grants derived from it
-TYPEVAULT_GRANT=@/run/agent/grant typevault get github/bot
+TYPEVAULT_GRANT=@/run/agent/grant typevault get tv://github/bot
 ```
 
 `TYPEVAULT_GRANT` takes a live grant (`tvl1.…`), a sealed one (`tvg1:…`) or `@path` to a file holding either.
@@ -157,7 +158,7 @@ const grant = await createAdmin({ ceiling: 'bot' }).grant({ groups: ['member'], 
 
 // ...and the agent side reads through it (live via the daemon, or sealed in-process).
 const vault = await createClient({ grant })
-const { fields } = await vault.get(parseEntryName('openai'), 'send the weekly digest')
+const { fields } = await vault.get(parseEntryName('tv://openai'), 'send the weekly digest')
 
 // Nothing is redacted for you: scrub anything that can reach output.
 const redactor = createRedactor(await vault.readValues())
