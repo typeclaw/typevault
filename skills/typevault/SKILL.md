@@ -54,7 +54,8 @@ typevault run --only 'tv://openai,tv://stripe' -- bun run deploy
 ```
 
 - Env names are derived from the name: `tv://github/bot#password` -> `GITHUB_BOT_PASSWORD`, `tv://openai` -> `OPENAI_KEY`,
-  unless the entry sets `--env`.
+  unless the entry sets `--env`. To pick the name yourself, set the variable to a reference:
+  `DATABASE_URL=tv://postgres/prod#url typevault run -- ...` (the scheme is required here).
 - Write `$VAR` references in single quotes or as arguments the child expands, so your shell doesn't expand them
   first: `typevault run -- sh -c 'curl -H "Authorization: Bearer $OPENAI_KEY" ...'`.
 - TOTP fields hold the current code, never the seed.
