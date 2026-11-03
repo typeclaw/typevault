@@ -113,7 +113,7 @@ grant, as with the global vault.
 
 `tv://<service>[/<account>][#<field>]`: `tv://openai`, `tv://github/bot#password`, `tv://github/personal#totp`.
 That is the canonical form. For convenience, `typevault://github/bot` and the bare `github/bot` work everywhere too.
-No environments, no domains, no group in the name. Fields come from the type:
+No environments, no domains, no group in the name. Each type suggests fields, and an entry may add any other:
 
 | Type       | Fields (default first)                                                       |
 | ---------- | ---------------------------------------------------------------------------- |
@@ -124,10 +124,20 @@ No environments, no domains, no group in the name. Fields come from the type:
 | `totp`     | seed                                                                         |
 | `note`     | text                                                                         |
 
-Env names are derived: `tv://github/bot#password` becomes `GITHUB_BOT_PASSWORD`. Override the main field's name with `--env`.
+A field name is anything up to 64 characters without `=`, control characters or surrounding spaces, kept as written:
+
+```sh
+echo '{"key":"…","Webhook Secret":"…"}' | typevault set tv://stripe --type api_key --stdin-json
+typevault get 'tv://stripe#Webhook Secret'       # an exact match, else the one field equal ignoring case
+```
+
+Env names are derived: `tv://github/bot#password` becomes `GITHUB_BOT_PASSWORD` and `tv://stripe#Webhook Secret`
+becomes `STRIPE_WEBHOOK_SECRET`. A field with no Latin letter or digit gets no variable; reach it with a reference.
+Override the main field's name with `--env`.
 In `run`, TOTP fields carry the current code, never the seed; `typevault otp <name>` prints it for an entry with a
-seed (a `totp` entry, or a `password` entry whose `totp` field is set). Secret fields are never accepted as `--field` arguments
-(they would land in `ps` and shell history): pass them with `--stdin` or `--stdin-json`.
+seed (a `totp` entry, or a `password` entry whose `totp` field is set). Only `username`, `url`, `token_url`,
+`client_id`, `expires_at` and `public_key` are accepted as `--field` arguments; every other field, custom ones
+included, would land in `ps` and shell history, so pass it with `--stdin` or `--stdin-json`.
 
 ### What `run` loads
 
