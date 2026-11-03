@@ -20,7 +20,9 @@
   ],
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./admin": "./src/admin.ts",
+    "./redact": "./src/redact/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

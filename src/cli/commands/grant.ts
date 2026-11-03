@@ -6,21 +6,13 @@ import { z } from 'zod'
 import { loadLocalKeys } from '../../access/keys'
 import { parseTtl } from '../../access/scope'
 import { issueSealedGrant } from '../../access/sealed'
+import { GrantInfoSchema, IssuedSchema } from '../../admin'
 import { readAudit, verifyAudit } from '../../audit/log'
 import { TypeVaultError } from '../../core/errors'
 import { adminCall, layoutFrom, openDirect } from '../context'
 import { csv, print, table } from '../output'
 
-const Issued = z.object({ token: z.string() })
-const GrantList = z.array(
-  z.object({
-    id: z.string(),
-    label: z.string(),
-    groups: z.array(z.string()),
-    only: z.array(z.string()),
-    exp: z.string(),
-  }),
-)
+const GrantList = z.array(GrantInfoSchema)
 
 export const grant = defineCommand({
   meta: {
@@ -70,7 +62,7 @@ export const grant = defineCommand({
       const vault = await openDirect(env)
       return print(await issueSealedGrant(vault, { ...request, ttlMs: parseTtl(args.ttl) }))
     }
-    print((await adminCall(env, '/v1/grant', { ...request, sealed: args.sealed === true }, Issued)).token)
+    print((await adminCall(env, '/v1/grant', { ...request, sealed: args.sealed === true }, IssuedSchema)).token)
   },
 })
 
