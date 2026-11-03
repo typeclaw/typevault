@@ -20,17 +20,20 @@ bun add -g typevault
 ## Quick start
 
 ```sh
-typevault init                                   # creates .typevault/ here; -g for the global vault
-typevault group add member
-typevault group add trusted
-typevault group include trusted member           # trusted reaches everything member reaches
+typevault init                                   # creates .typevault/ here with a `default` group; -g for global
 
-printf '%s' "$OPENAI_KEY" | typevault set openai --type api_key --group member --stdin
-typevault set github/bot --type password --group member --field username=bot --stdin < password.txt
-echo '{"access_token":"…","refresh_token":"…"}' | typevault set google --type oauth --group member --stdin-json
+# With one group, set needs no --group
+printf '%s' "$OPENAI_KEY" | typevault set openai --type api_key --stdin
+typevault set github/bot --type password --field username=bot --stdin < password.txt
+echo '{"access_token":"…","refresh_token":"…"}' | typevault set google --type oauth --stdin-json
+
+# Split reach once agents need different access
+typevault group add trusted
+typevault group include trusted default          # trusted reaches everything default reaches
+printf '%s' "$STRIPE_KEY" | typevault set stripe --type api_key --group trusted --stdin
 
 # Hand an agent a grant instead of a key (the daemon starts automatically)
-export TYPEVAULT_GRANT=$(typevault grant --group member --label session:abc)
+export TYPEVAULT_GRANT=$(typevault grant --group default --label session:abc)
 
 typevault ls
 typevault run -- psql                            # secrets arrive as env vars; output is redacted
