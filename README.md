@@ -121,6 +121,30 @@ value to the group before submitting, so the plaintext never reaches the server,
 - `typevault scrub <files>` rewrites transcripts in place.
 - `typevault get` prints the value on purpose; prefer `run`.
 
+## SDK
+
+The same access, in-process (Bun only):
+
+```ts
+import { createClient, parseEntryName } from 'typevault'
+import { createAdmin } from 'typevault/admin'
+import { createRedactor } from 'typevault/redact'
+
+// A launcher issues a grant within its socket's ceiling...
+const grant = await createAdmin({ ceiling: 'bot' }).grant({ groups: ['member'], ttl: '30m', label: 'session:abc' })
+
+// ...and the agent side reads through it (live via the daemon, or sealed in-process).
+const vault = await createClient({ grant })
+const { fields } = await vault.get(parseEntryName('openai'), 'send the weekly digest')
+
+// Nothing is redacted for you: scrub anything that can reach output.
+const redactor = createRedactor(await vault.readValues())
+```
+
+`createClient` takes `grant` (default `TYPEVAULT_GRANT`), `dir` (default `TYPEVAULT_DIR`) and `env`. Without a grant it
+refuses unless you pass `direct: true`, which loads this machine's keys into your process; keep that to launchers.
+`createAdmin` takes `dir`, `ceiling` and `env`, and offers `grant`, `list` and `revoke`.
+
 ## Operator tasks
 
 ```sh
