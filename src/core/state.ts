@@ -85,7 +85,7 @@ function checkTrust(layout: Layout, operator: PublicKey, env: Readonly<Record<st
 
 export function loadState(layout: Layout, env: Readonly<Record<string, string | undefined>> = process.env): VaultState {
   if (!existsSync(layout.operatorFile))
-    throw new TypeVaultError('not_found', `no vault at ${layout.root} (run typevault init)`)
+    throw new TypeVaultError('not_found', `no vault at ${layout.vault} (run typevault init)`)
   const operator = PublicKeySchema.parse(JSON.parse(fromUtf8(readFileSync(layout.operatorFile))))
   checkTrust(layout, operator, env)
   const groups = readSigned(layout.groupsFile, GroupsBody, operator)

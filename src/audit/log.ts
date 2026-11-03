@@ -1,4 +1,5 @@
 import { appendFileSync, closeSync, existsSync, fsyncSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
+import { dirname } from 'node:path'
 
 import { z } from 'zod'
 
@@ -73,7 +74,7 @@ export function readAudit(layout: Layout): readonly AuditRecord[] {
 }
 
 function writeAnchor(layout: Layout, last: AuditRecord): void {
-  ensureDir(layout.vault)
+  ensureDir(dirname(layout.anchorsFile))
   appendLine(layout.anchorsFile, JSON.stringify({ seq: last.seq, hash: last.hash, at: last.at }))
 }
 
@@ -116,12 +117,14 @@ export function verifyAudit(layout: Layout): AuditVerdict {
     heads.set(record.seq, hash)
     prev = hash
   }
-  const anchors = existsSync(layout.anchorsFile)
-    ? readFileSync(layout.anchorsFile, 'utf8')
-        .split('\n')
-        .filter((line) => line !== '')
-        .map((line) => AnchorSchema.parse(JSON.parse(line)))
-    : []
+  const anchors = [layout.legacyAnchorsFile, layout.anchorsFile].flatMap((file) =>
+    existsSync(file)
+      ? readFileSync(file, 'utf8')
+          .split('\n')
+          .filter((line) => line !== '')
+          .map((line) => AnchorSchema.parse(JSON.parse(line)))
+      : [],
+  )
   const broken = anchors.find((anchor) => heads.get(anchor.seq) !== anchor.hash)
   if (broken !== undefined)
     return { ok: false, reason: `local log no longer matches the anchor at record ${broken.seq}` }
