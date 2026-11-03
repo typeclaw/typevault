@@ -15,7 +15,8 @@ Install: `bun add -g typevault`
 ## Rules
 
 - **Never print a secret.** Use `typevault run` so values go into the child's env and its output is redacted. `get`
-  and `otp` put the value in your transcript; use them only when nothing else works.
+  refuses secret fields unless you pass `--reveal`. `--reveal` and `otp` put the value in your transcript; use
+  them only when nothing else works.
 - **Never put a secret on the command line.** Pass it on stdin (`--stdin`, `--stdin-json`); `--field` takes only
   `username`, `url`, `token_url`, `client_id`, `expires_at` and `public_key`.
 - **Need a secret you don't have? Ask the human through `typevault request`**, not in chat. The value never reaches
