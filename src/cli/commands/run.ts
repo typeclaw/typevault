@@ -29,7 +29,7 @@ export const run = defineCommand({
     const access = (await resolveAccess(process.env)).access
     const only = csv(args.only)
     const values = await access.values(only, args.reason)
-    const policy = { ownGroups: await access.ownGroups(), explicit: explicitNames(only) }
+    const policy = { ownTiers: await access.ownTiers(), explicit: explicitNames(only) }
     const env = envFor(values, new Date(), policy)
     // The child gets its secrets, never the key or grant that opens the vault.
     const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('TYPEVAULT_')))
@@ -38,7 +38,7 @@ export const run = defineCommand({
     const skipped = values
       .filter((value) => !envEligible(value, policy) && !referenced.has(value.name))
       .map((value) => value.name)
-    if (skipped.length > 0) note(`not loaded (from included groups; name them in --only): ${skipped.join(', ')}`)
+    if (skipped.length > 0) note(`not loaded (from included tiers; name them in --only): ${skipped.join(', ')}`)
     const clash = Object.keys(refs.env).find((name) => Object.hasOwn(env, name))
     if (clash !== undefined)
       throw new TypeVaultError('conflict', `${clash} is both a tv:// reference and an entry's variable`)
@@ -97,7 +97,7 @@ export const request = defineCommand({
   args: {
     name: { type: 'positional', description: ENTRY_NAME_SYNTAX, required: true },
     type: { type: 'string', required: true, description: 'Entry type' },
-    group: { type: 'string', description: "Group (defaults to your grant's group)" },
+    tier: { type: 'string', description: "Tier (defaults to your grant's tier)" },
     reason: { type: 'string', required: true, description: 'Shown to the human' },
   },
   async run({ args }) {
@@ -108,7 +108,7 @@ export const request = defineCommand({
       name: args.name,
       type: args.type,
       reason: args.reason,
-      ...(args.group === undefined ? {} : { group: args.group }),
+      ...(args.tier === undefined ? {} : { tier: args.tier }),
     }
     const opened = await resolved.access.call('/v1/request', body, RequestResponse)
     print(`Send this link to the human: ${opened.url}\nMatch code: ${opened.code} (post it in the chat too)`)
@@ -129,12 +129,12 @@ const isVia = (value: string): value is OnePasswordVia => ONEPASSWORD_VIAS.some(
 export const importCommand = defineCommand({
   meta: {
     name: 'import',
-    description: 'Import a password-manager export, or 1Password directly, into a group (owner, one transaction)',
+    description: 'Import a password-manager export, or 1Password directly, into a tier (owner, one transaction)',
   },
   args: {
     source: { type: 'positional', required: true, description: SOURCES.join(' | ') },
     path: { type: 'positional', required: false, description: 'Export file (omit it to read 1Password directly)' },
-    group: { type: 'string', required: true },
+    tier: { type: 'string', required: true },
     'password-stdin': { type: 'boolean', description: 'Read the KeePass password from stdin' },
     via: { type: 'string', description: `1Password without a path: ${ONEPASSWORD_VIAS.join(' | ')} (default sdk)` },
     account: { type: 'string', description: '1Password account, repeatable (required with --via sdk)' },
@@ -145,7 +145,7 @@ export const importCommand = defineCommand({
     if (!isSource(args.source)) throw new TypeVaultError('invalid', `source must be one of: ${SOURCES.join(', ')}`)
     const live = args.source === '1password' && args.path === undefined
     if (!live && args.path === undefined) {
-      throw new TypeVaultError('invalid', 'usage: typevault import <source> <path> --group <group>')
+      throw new TypeVaultError('invalid', 'usage: typevault import <source> <path> --tier <tier>')
     }
     if (!live && (args.via ?? args.account ?? args.vault ?? args.tag) !== undefined) {
       throw new TypeVaultError('invalid', '--via, --account, --vault and --tag apply only to 1password without a path')
@@ -163,22 +163,22 @@ export const importCommand = defineCommand({
             tags: repeated(rawArgs, '--tag'),
           })
         : await importFrom(args.source, { path: args.path, ...(password === undefined ? {} : { password }) })
-    const group = args.group
+    const tier = args.tier
     const stored = await vault.putMany(
-      result.entries.map((entry) => ({ ...entry, group })),
+      result.entries.map((entry) => ({ ...entry, tier })),
       async (target) => {
         const key = vault.keyring.owner ?? (await vault.keyring.unlock(target))
-        if (key === undefined) throw new TypeVaultError('denied', `no key here can write group "${target}"`)
+        if (key === undefined) throw new TypeVaultError('denied', `no key here can write tier "${target}"`)
         return signerOf(key)
       },
     )
     await appendAudit(vault.layout, {
       action: 'import',
       mode: 'direct',
-      groups: [group],
+      tiers: [tier],
       entries: stored.map((e) => e.payload.name),
     })
     for (const warning of result.warnings) note(`warning: ${warning}`)
-    note(`imported ${stored.length} entries into ${group}`)
+    note(`imported ${stored.length} entries into ${tier}`)
   },
 })

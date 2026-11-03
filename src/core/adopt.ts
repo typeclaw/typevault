@@ -21,9 +21,9 @@ export function adoptCertWrites(
     const adopted: string[] = []
     for (const { envelope, payload } of entries) {
       if (envelope.signer.kind !== 'cert') continue
-      const key = (await vault.keyring.unlock(envelope.group)) ?? vault.keyring.owner
+      const key = (await vault.keyring.unlock(envelope.tier)) ?? vault.keyring.owner
       if (key === undefined) continue
-      const draft = { id: envelope.id, group: envelope.group, rev: envelope.rev + 1, at: new Date().toISOString() }
+      const draft = { id: envelope.id, tier: envelope.tier, rev: envelope.rev + 1, at: new Date().toISOString() }
       const resigned = signCiphertext(draft, fromBase64(envelope.payload), vault.state, signerOf(key))
       atomicWrite(join(vault.layout.entries, `${envelope.id}.json`), `${JSON.stringify(resigned, null, 2)}\n`)
       adopted.push(payload.name)

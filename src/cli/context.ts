@@ -57,10 +57,10 @@ export type ResolvedAccess =
 export async function resolveAccess(env: Env): Promise<ResolvedAccess> {
   const grant = env['TYPEVAULT_GRANT']?.trim()
   if (grant === undefined || grant === '') {
-    const group = env['TYPEVAULT_GROUP']
+    const tier = env['TYPEVAULT_TIER']
     const vault = await openDirect(env)
-    const ownGroups = vault.keys.flatMap((key) => (key.role.kind === 'group' ? [key.role.group] : []))
-    const identity = { mode: 'direct' as const, ownGroups, ...(group === undefined ? {} : { defaultGroup: group }) }
+    const ownTiers = vault.keys.flatMap((key) => (key.role.kind === 'tier' ? [key.role.tier] : []))
+    const identity = { mode: 'direct' as const, ownTiers, ...(tier === undefined ? {} : { defaultTier: tier }) }
     return { kind: 'direct', access: new ScopedVault(vault, [], identity) }
   }
   if (grant.startsWith('tvl1.')) {

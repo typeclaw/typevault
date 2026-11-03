@@ -5,7 +5,7 @@ import { encodeSecretKey, generateSecretKey, type PublicKey, publicKeyOf, type S
 import { TypeVaultError } from './errors'
 import { atomicWrite, ensureDir } from './fsx'
 import { type Layout, layoutOf, localLayout } from './layout'
-import { ceilingsDoc, groupsDoc, signersDoc } from './state'
+import { ceilingsDoc, tiersDoc, signersDoc } from './state'
 
 type Env = Readonly<Record<string, string | undefined>>
 
@@ -44,10 +44,10 @@ function refuseExisting(ownerFile: string, where: string): void {
 }
 
 async function writeVault(layout: Layout, ownerKey: SecretKey, owner: PublicKey): Promise<void> {
-  for (const dir of [layout.keys, layout.groupKeys, layout.audit, layout.run]) ensureDir(dir, 0o700)
+  for (const dir of [layout.keys, layout.tierKeys, layout.audit, layout.run]) ensureDir(dir, 0o700)
   ensureDir(layout.entries)
   atomicWrite(layout.ownerKey, `${encodeSecretKey(ownerKey)}\n`, 0o600)
-  atomicWrite(layout.groupsFile, groupsDoc({}, ownerKey, 1))
+  atomicWrite(layout.tiersFile, tiersDoc({}, ownerKey, 1))
   atomicWrite(layout.signersFile, signersDoc({}, ownerKey, 1))
   atomicWrite(layout.ceilingsFile, ceilingsDoc({}, ownerKey, 1))
   atomicWrite(layout.trustFile, JSON.stringify({ ownerSignPublic: owner.signPublic }), 0o600)

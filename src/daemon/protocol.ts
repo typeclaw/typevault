@@ -6,13 +6,13 @@ const name = z.string().transform((value) => parseEntryName(value))
 const type = z.string().refine(isEntryType, 'unknown entry type')
 const reason = z.string().max(500).optional()
 
-export const NameBody = z.object({ name, reason, group: z.string().optional() })
+export const NameBody = z.object({ name, reason, tier: z.string().optional() })
 export const ValuesBody = z.object({ only: z.array(z.string()).default([]), reason })
 export const SetBody = z.object({
   name,
   type,
   fields: z.record(z.string(), z.string()),
-  group: z.string().optional(),
+  tier: z.string().optional(),
   env: z
     .string()
     .regex(/^[A-Z_][A-Z0-9_]*$/)
@@ -23,15 +23,15 @@ export const SetBody = z.object({
 })
 export const MoveBody = z.object({ from: name, to: name })
 export const DeriveBody = z.object({
-  groups: z.array(z.string()).optional(),
+  tiers: z.array(z.string()).optional(),
   only: z.array(z.string()).default([]),
   ttl: z.string().optional(),
   label: z.string().max(200).optional(),
 })
-export const RequestBody = z.object({ name, type, group: z.string().optional(), reason: z.string().min(1).max(500) })
+export const RequestBody = z.object({ name, type, tier: z.string().optional(), reason: z.string().min(1).max(500) })
 export const WaitBody = z.object({ id: z.string() })
 export const GrantBody = z.object({
-  groups: z.array(z.string()).min(1),
+  tiers: z.array(z.string()).min(1),
   only: z.array(z.string()).default([]),
   ttl: z.string().default('1h'),
   label: z.string().max(200).default('unlabeled'),

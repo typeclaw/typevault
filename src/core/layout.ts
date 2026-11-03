@@ -15,9 +15,9 @@ export type Layout = {
   /** The committable part: ciphertext and signed manifests only. */
   readonly vault: string
   readonly entries: string
-  readonly groupsDir: string
+  readonly tiersDir: string
   readonly ownerFile: string
-  readonly groupsFile: string
+  readonly tiersFile: string
   readonly signersFile: string
   readonly ceilingsFile: string
   /** This checkout's audit anchors: one committed file per audit chain, so clones never check each other's. */
@@ -27,7 +27,7 @@ export type Layout = {
   readonly txnDir: string
   readonly keys: string
   readonly ownerKey: string
-  readonly groupKeys: string
+  readonly tierKeys: string
   readonly trustFile: string
   readonly audit: string
   readonly auditLog: string
@@ -99,9 +99,9 @@ function build(
     root,
     vault,
     entries: join(vault, 'entries'),
-    groupsDir: join(vault, 'groups'),
+    tiersDir: join(vault, 'tiers'),
     ownerFile: join(vault, 'owner.json'),
-    groupsFile: join(vault, 'groups.json'),
+    tiersFile: join(vault, 'tiers.json'),
     signersFile: join(vault, 'signers.json'),
     ceilingsFile: join(vault, 'ceilings.json'),
     // Named by where the log lives, never by the log itself: a log rewritten from its first record keeps its anchors.
@@ -111,7 +111,7 @@ function build(
     txnDir: join(run, 'txn'),
     keys,
     ownerKey: join(keys, 'owner.key'),
-    groupKeys: join(keys, 'groups'),
+    tierKeys: join(keys, 'tiers'),
     trustFile,
     audit,
     auditLog: join(audit, 'log.jsonl'),

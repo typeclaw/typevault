@@ -9,13 +9,13 @@ import { includersOf, type VaultState } from './state'
 
 export type WrapHolder =
   | { readonly kind: 'owner' }
-  | { readonly kind: 'group'; readonly group: string; readonly gen: number }
+  | { readonly kind: 'tier'; readonly tier: string; readonly gen: number }
 
-/** Vault-relative path of a group key sealed to a holder: the owner, or an including group's key. */
-export const wrapPath = (group: string, gen: number, holder: WrapHolder): string =>
-  join('groups', group, String(gen), holder.kind === 'owner' ? 'owner.age' : `${holder.group}.${holder.gen}.age`)
+/** Vault-relative path of a tier key sealed to a holder: the owner, or an including tier's key. */
+export const wrapPath = (tier: string, gen: number, holder: WrapHolder): string =>
+  join('tiers', tier, String(gen), holder.kind === 'owner' ? 'owner.age' : `${holder.tier}.${holder.gen}.age`)
 
-/** Resolves group keys from the keys this process holds, unwrapping along includes. */
+/** Resolves tier keys from the keys this process holds, unwrapping along includes. */
 export class Keyring {
   readonly #layout: Layout
   readonly #state: VaultState
@@ -32,57 +32,47 @@ export class Keyring {
     return this.#keys.find((key) => key.role.kind === 'owner')
   }
 
-  /** The current-generation key of `group`, or undefined when no held key reaches it. */
-  unlock(group: string): Promise<SecretKey | undefined> {
-    const cached = this.#cache.get(group)
+  /** The current-generation key of `tier`, or undefined when no held key reaches it. */
+  unlock(tier: string): Promise<SecretKey | undefined> {
+    const cached = this.#cache.get(tier)
     if (cached !== undefined) return cached
-    const pending = this.#resolve(group)
-    this.#cache.set(group, pending)
+    const pending = this.#resolve(tier)
+    this.#cache.set(tier, pending)
     return pending
   }
 
-  async reachableGroups(): Promise<ReadonlySet<string>> {
-    const names = Object.keys(this.#state.groups)
+  async reachableTiers(): Promise<ReadonlySet<string>> {
+    const names = Object.keys(this.#state.tiers)
     const unlocked = await Promise.all(
       names.map(async (name) => ((await this.unlock(name)) === undefined ? [] : [name])),
     )
     return new Set(unlocked.flat())
   }
 
-  async #resolve(group: string): Promise<SecretKey | undefined> {
-    const meta = this.#state.groups[group]
+  async #resolve(tier: string): Promise<SecretKey | undefined> {
+    const meta = this.#state.tiers[tier]
     if (meta === undefined) return undefined
     const held = this.#keys.find(
-      (key) => key.role.kind === 'group' && key.role.group === group && key.role.gen === meta.gen,
+      (key) => key.role.kind === 'tier' && key.role.tier === tier && key.role.gen === meta.gen,
     )
     if (held !== undefined) return held
     const owner = this.owner
     if (owner !== undefined) {
-      const key = await this.#openWrap(group, meta.gen, { kind: 'owner' }, owner)
+      const key = await this.#openWrap(tier, meta.gen, { kind: 'owner' }, owner)
       if (key !== undefined) return key
     }
-    for (const includer of includersOf(this.#state.groups, group)) {
-      const includerGen = this.#state.groups[includer]?.gen
+    for (const includer of includersOf(this.#state.tiers, tier)) {
+      const includerGen = this.#state.tiers[includer]?.gen
       const includerKey = await this.unlock(includer)
       if (includerGen === undefined || includerKey === undefined) continue
-      const key = await this.#openWrap(
-        group,
-        meta.gen,
-        { kind: 'group', group: includer, gen: includerGen },
-        includerKey,
-      )
+      const key = await this.#openWrap(tier, meta.gen, { kind: 'tier', tier: includer, gen: includerGen }, includerKey)
       if (key !== undefined) return key
     }
     return undefined
   }
 
-  async #openWrap(
-    group: string,
-    gen: number,
-    holder: WrapHolder,
-    holderKey: SecretKey,
-  ): Promise<SecretKey | undefined> {
-    const rel = wrapPath(group, gen, holder)
+  async #openWrap(tier: string, gen: number, holder: WrapHolder, holderKey: SecretKey): Promise<SecretKey | undefined> {
+    const rel = wrapPath(tier, gen, holder)
     assertNoSymlinks(this.#layout.vault, rel)
     const path = join(this.#layout.vault, rel)
     if (!existsSync(path) || !lstatSync(path).isFile()) return undefined
@@ -95,7 +85,7 @@ export class Keyring {
       })
     if (key === undefined) return undefined
     // A wrap that doesn't match the owner-signed public key is ignored rather than trusted.
-    const expected = this.#state.groups[group]
+    const expected = this.#state.tiers[tier]
     const actual = await publicKeyOf(key)
     return expected !== undefined &&
       actual.recipient === expected.recipient &&

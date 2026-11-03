@@ -6,17 +6,17 @@ import { TypeVaultError } from './errors'
 import type { Keyring } from './keyring'
 import { matchesOnly } from './naming'
 import { decodePayload, encodePayload, type EntryPayload } from './payload'
-import { reach, reachesGroup, type VaultState } from './state'
+import { reach, reachesTier, type VaultState } from './state'
 
 const IssuerSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('owner') }),
-  z.object({ kind: z.literal('group'), group: z.string(), gen: z.number().int().positive() }),
+  z.object({ kind: z.literal('tier'), tier: z.string(), gen: z.number().int().positive() }),
   z.object({ kind: z.literal('signer'), id: z.string() }),
 ])
 export const CertSchema = z.object({
   signPublic: z.string(),
-  groups: z.array(z.string()),
-  /** Name patterns the holder may write; empty means any name in its groups. */
+  tiers: z.array(z.string()),
+  /** Name patterns the holder may write; empty means any name in its tiers. */
   only: z.array(z.string()),
   exp: z.iso.datetime(),
   issuer: IssuerSchema,
@@ -26,7 +26,7 @@ const SignerSchema = z.union([IssuerSchema, z.object({ kind: z.literal('cert'), 
 export const EnvelopeSchema = z.object({
   v: z.literal(1),
   id: z.string().regex(/^[0-9a-f]{32}$/),
-  group: z.string(),
+  tier: z.string(),
   gen: z.number().int().positive(),
   rev: z.number().int().positive(),
   at: z.iso.datetime(),
@@ -44,21 +44,19 @@ export type Envelope = z.infer<typeof EnvelopeSchema>
 export type SignerContext = { readonly ref: SignerRef; readonly signSecret: Uint8Array }
 
 export const signerOf = (key: SecretKey): SignerContext => ({
-  ref: key.role.kind === 'owner' ? { kind: 'owner' } : { kind: 'group', group: key.role.group, gen: key.role.gen },
+  ref: key.role.kind === 'owner' ? { kind: 'owner' } : { kind: 'tier', tier: key.role.tier, gen: key.role.gen },
   signSecret: key.signSecret,
 })
 
-type Authority = { readonly signPublic: string; readonly groups: readonly string[] }
+type Authority = { readonly signPublic: string; readonly tiers: readonly string[] }
 
 function authorityOf(ref: IssuerRef, state: VaultState): Authority | undefined {
   switch (ref.kind) {
     case 'owner':
-      return { signPublic: state.owner.signPublic, groups: ['*'] }
-    case 'group': {
-      const group = state.groups[ref.group]
-      return group === undefined || group.gen !== ref.gen
-        ? undefined
-        : { signPublic: group.signPublic, groups: [ref.group] }
+      return { signPublic: state.owner.signPublic, tiers: ['*'] }
+    case 'tier': {
+      const tier = state.tiers[ref.tier]
+      return tier === undefined || tier.gen !== ref.gen ? undefined : { signPublic: tier.signPublic, tiers: [ref.tier] }
     }
     case 'signer':
       return state.signers[ref.id]
@@ -75,7 +73,7 @@ const certBytes = (cert: Omit<Cert, 'sig'>): Uint8Array =>
   utf8(
     canonicalJson({
       signPublic: cert.signPublic,
-      groups: cert.groups,
+      tiers: cert.tiers,
       only: cert.only,
       exp: cert.exp,
       issuer: cert.issuer,
@@ -89,37 +87,31 @@ export function issueCert(cert: Omit<Cert, 'sig' | 'issuer'>, issuer: SignerCont
 }
 
 const envelopeBytes = (envelope: Omit<Envelope, 'sig'>): Uint8Array => {
-  const { v, id, group, gen, rev, at, payload, signer } = envelope
-  const body: Json = { v, id, group, gen, rev, at, payload, signer }
+  const { v, id, tier, gen, rev, at, payload, signer } = envelope
+  const body: Json = { v, id, tier, gen, rev, at, payload, signer }
   return utf8(canonicalJson(body))
 }
 
-/** Whether `signer` may sign entries of `group`, judged only from owner-signed state. */
+/** Whether `signer` may sign entries of `tier`, judged only from owner-signed state. */
 /** `now` is the reader's clock for certificate expiry; `null` skips that one check (explicit owner adoption). */
 export function signerAuthority(
   signer: SignerRef,
-  group: string,
+  tier: string,
   state: VaultState,
   at: string,
   now: number | null = Date.now(),
 ): string | undefined {
   if (signer.kind !== 'cert') {
     const authority = authorityOf(signer, state)
-    return authority !== undefined && reachesGroup(state.groups, authority.groups, group)
-      ? authority.signPublic
-      : undefined
+    return authority !== undefined && reachesTier(state.tiers, authority.tiers, tier) ? authority.signPublic : undefined
   }
   const { cert } = signer
   const issuer = authorityOf(cert.issuer, state)
   if (issuer === undefined || !verifySignature(issuer.signPublic, certBytes(cert), cert.sig)) return undefined
-  if (!cert.groups.every((g) => reachesGroup(state.groups, issuer.groups, g))) return undefined
+  if (!cert.tiers.every((g) => reachesTier(state.tiers, issuer.tiers, g))) return undefined
   // Expiry is judged by the reader's clock: `at` is chosen by the holder, so it can't be trusted to bound it.
   const exp = Date.parse(cert.exp)
-  if (
-    !cert.groups.some((g) => reach(state.groups, g).has(group)) ||
-    Date.parse(at) > exp ||
-    (now !== null && now > exp)
-  ) {
+  if (!cert.tiers.some((g) => reach(state.tiers, g).has(tier)) || Date.parse(at) > exp || (now !== null && now > exp)) {
     return undefined
   }
   return cert.signPublic
@@ -127,17 +119,17 @@ export function signerAuthority(
 
 export type EntryDraft = {
   readonly id: string
-  readonly group: string
+  readonly tier: string
   readonly rev: number
   readonly at: string
   readonly payload: EntryPayload
 }
 
 export async function sealEntry(draft: EntryDraft, state: VaultState, signer: SignerContext): Promise<Envelope> {
-  const group = state.groups[draft.group]
-  if (group === undefined) throw new TypeVaultError('not_found', `no group "${draft.group}"`)
-  const ciphertext = await seal([group.recipient, state.owner.recipient], encodePayload(draft.payload))
-  return signCiphertext({ id: draft.id, group: draft.group, rev: draft.rev, at: draft.at }, ciphertext, state, signer)
+  const tier = state.tiers[draft.tier]
+  if (tier === undefined) throw new TypeVaultError('not_found', `no tier "${draft.tier}"`)
+  const ciphertext = await seal([tier.recipient, state.owner.recipient], encodePayload(draft.payload))
+  return signCiphertext({ id: draft.id, tier: draft.tier, rev: draft.rev, at: draft.at }, ciphertext, state, signer)
 }
 
 /** Signs an envelope around a payload that was encrypted elsewhere (the secret-prompt page encrypts in the browser). */
@@ -147,12 +139,12 @@ export function signCiphertext(
   state: VaultState,
   signer: SignerContext,
 ): Envelope {
-  const group = state.groups[draft.group]
-  if (group === undefined) throw new TypeVaultError('not_found', `no group "${draft.group}"`)
-  if (signerAuthority(signer.ref, draft.group, state, draft.at) === undefined) {
-    throw new TypeVaultError('denied', `this key cannot sign entries in group "${draft.group}"`)
+  const tier = state.tiers[draft.tier]
+  if (tier === undefined) throw new TypeVaultError('not_found', `no tier "${draft.tier}"`)
+  if (signerAuthority(signer.ref, draft.tier, state, draft.at) === undefined) {
+    throw new TypeVaultError('denied', `this key cannot sign entries in tier "${draft.tier}"`)
   }
-  const unsigned = { v: 1 as const, id: draft.id, group: draft.group, gen: group.gen, rev: draft.rev, at: draft.at }
+  const unsigned = { v: 1 as const, id: draft.id, tier: draft.tier, gen: tier.gen, rev: draft.rev, at: draft.at }
   const envelope = { ...unsigned, payload: toBase64(ciphertext), signer: signer.ref }
   return { ...envelope, sig: sign(signer.signSecret, envelopeBytes(envelope)) }
 }
@@ -163,23 +155,23 @@ const CLOCK_SKEW_MS = 5 * 60_000
 export type VerifyOptions = { readonly acceptExpiredCerts?: boolean }
 
 export function verifyEnvelope(envelope: Envelope, state: VaultState, options: VerifyOptions = {}): string | undefined {
-  const group = state.groups[envelope.group]
-  if (group === undefined) return `unknown group "${envelope.group}"`
-  if (group.gen !== envelope.gen) return `stale generation ${envelope.gen} (current ${group.gen})`
+  const tier = state.tiers[envelope.tier]
+  if (tier === undefined) return `unknown tier "${envelope.tier}"`
+  if (tier.gen !== envelope.gen) return `stale generation ${envelope.gen} (current ${tier.gen})`
   if (Date.parse(envelope.at) > Date.now() + CLOCK_SKEW_MS) return 'timestamp is in the future'
   const signPublic = signerAuthority(
     envelope.signer,
-    envelope.group,
+    envelope.tier,
     state,
     envelope.at,
     options.acceptExpiredCerts === true ? null : Date.now(),
   )
-  if (signPublic === undefined) return 'signer is not allowed to write this group'
+  if (signPublic === undefined) return 'signer is not allowed to write this tier'
   return verifySignature(signPublic, envelopeBytes(envelope), envelope.sig) ? undefined : 'bad signature'
 }
 
 export async function openEntry(envelope: Envelope, keyring: Keyring): Promise<EntryPayload | undefined> {
-  const key = await keyring.unlock(envelope.group)
+  const key = await keyring.unlock(envelope.tier)
   if (key === undefined) return undefined
   const payload = decodePayload(await unseal([key.identity], fromBase64(envelope.payload)))
   const { signer } = envelope

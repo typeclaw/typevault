@@ -28,8 +28,8 @@ it('finds the project vault from a nested directory and reads it with the keys k
   const created = await initLocalVault(join(project, '.typevault'), env)
   const owner = decodeSecretKey(readFileSync(created.ownerKey, 'utf8'))
   const writer = await Vault.open(created, [owner], env)
-  await new Admin(writer).addGroup('member')
-  const input = { name: parseEntryName('openai'), type: 'api_key', fields: { key: 'sk-x' }, group: 'member' } as const
+  await new Admin(writer).addTier('member')
+  const input = { name: parseEntryName('openai'), type: 'api_key', fields: { key: 'sk-x' }, tier: 'member' } as const
   await writer.put(input, signerOf(owner))
 
   // when it is looked up from a nested directory

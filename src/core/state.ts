@@ -9,41 +9,41 @@ import { atomicWrite } from './fsx'
 import type { Layout } from './layout'
 import { RevisionMarks } from './revisions'
 
-export type Group = {
+export type Tier = {
   readonly includes: readonly string[]
   readonly gen: number
   readonly recipient: string
   readonly signPublic: string
 }
-export type Signer = { readonly signPublic: string; readonly groups: readonly string[] }
-export type Groups = Readonly<Record<string, Group>>
+export type Signer = { readonly signPublic: string; readonly tiers: readonly string[] }
+export type Tiers = Readonly<Record<string, Tier>>
 
-/** Everything public about a vault. Groups, signers and ceilings are signed by the owner key. */
-export type ManifestSeqs = { readonly groups: number; readonly signers: number; readonly ceilings: number }
+/** Everything public about a vault. Tiers, signers and ceilings are signed by the owner key. */
+export type ManifestSeqs = { readonly tiers: number; readonly signers: number; readonly ceilings: number }
 
 export type VaultState = {
   readonly owner: PublicKey
   /** Each manifest's sequence number: every signed change bumps it, and a lower one is a rollback. */
   readonly seqs: ManifestSeqs
-  readonly groups: Groups
+  readonly tiers: Tiers
   readonly signers: Readonly<Record<string, Signer>>
   readonly ceilings: Readonly<Record<string, string>>
 }
 
-const GROUP_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
-export function parseGroupName(name: string): string {
-  if (!GROUP_NAME.test(name)) throw new TypeVaultError('invalid', `invalid group name "${name}" (use [a-z0-9-])`)
+const TIER_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+export function parseTierName(name: string): string {
+  if (!TIER_NAME.test(name)) throw new TypeVaultError('invalid', `invalid tier name "${name}" (use [a-z0-9-])`)
   return name
 }
 
 const PublicKeySchema = z.object({ recipient: z.string().startsWith('age1'), signPublic: z.string() })
-const GroupSchema = PublicKeySchema.extend({ includes: z.array(z.string()), gen: z.number().int().positive() })
+const TierSchema = PublicKeySchema.extend({ includes: z.array(z.string()), gen: z.number().int().positive() })
 const seq = z.number().int().positive()
-const GroupsBody = z.object({ v: z.literal(1), seq, groups: z.record(z.string(), GroupSchema) })
+const TiersBody = z.object({ v: z.literal(1), seq, tiers: z.record(z.string(), TierSchema) })
 const SignersBody = z.object({
   v: z.literal(1),
   seq,
-  signers: z.record(z.string(), z.object({ signPublic: z.string(), groups: z.array(z.string()) })),
+  signers: z.record(z.string(), z.object({ signPublic: z.string(), tiers: z.array(z.string()) })),
 })
 const CeilingsBody = z.object({ v: z.literal(1), seq, ceilings: z.record(z.string(), z.string()) })
 const TrustSchema = z.object({ ownerSignPublic: z.string() })
@@ -51,7 +51,7 @@ const TrustSchema = z.object({ ownerSignPublic: z.string() })
 export const signedDoc = (body: Json, key: SecretKey): string =>
   `${JSON.stringify({ body, sig: sign(key.signSecret, utf8(canonicalJson(body))) }, null, 2)}\n`
 
-export const groupsDoc = (groups: Groups, key: SecretKey, seq: number): string => signedDoc({ v: 1, seq, groups }, key)
+export const tiersDoc = (tiers: Tiers, key: SecretKey, seq: number): string => signedDoc({ v: 1, seq, tiers }, key)
 export const signersDoc = (signers: VaultState['signers'], key: SecretKey, seq: number): string =>
   signedDoc({ v: 1, seq, signers }, key)
 export const ceilingsDoc = (ceilings: VaultState['ceilings'], key: SecretKey, seq: number): string =>
@@ -87,13 +87,13 @@ export function loadState(layout: Layout, env: Readonly<Record<string, string | 
     throw new TypeVaultError('not_found', `no vault at ${layout.vault} (run typevault init)`)
   const owner = PublicKeySchema.parse(JSON.parse(fromUtf8(readFileSync(layout.ownerFile))))
   checkTrust(layout, owner, env)
-  const groups = readSigned(layout.groupsFile, GroupsBody, owner)
+  const tiers = readSigned(layout.tiersFile, TiersBody, owner)
   const signers = readSigned(layout.signersFile, SignersBody, owner)
   const ceilings = readSigned(layout.ceilingsFile, CeilingsBody, owner)
   // An older, still validly signed manifest from git history would resurrect removed signers or ceilings.
   const marks = new RevisionMarks(layout.revisionsFile)
   for (const [name, doc] of [
-    ['groups', groups],
+    ['tiers', tiers],
     ['signers', signers],
     ['ceilings', ceilings],
   ] as const) {
@@ -107,29 +107,29 @@ export function loadState(layout: Layout, env: Readonly<Record<string, string | 
   marks.save()
   return {
     owner,
-    seqs: { groups: groups.seq, signers: signers.seq, ceilings: ceilings.seq },
-    groups: groups.groups,
+    seqs: { tiers: tiers.seq, signers: signers.seq, ceilings: ceilings.seq },
+    tiers: tiers.tiers,
     signers: signers.signers,
     ceilings: ceilings.ceilings,
   }
 }
 
-/** Every group `name` reaches through includes, itself included. */
-export function reach(groups: Groups, name: string): ReadonlySet<string> {
+/** Every tier `name` reaches through includes, itself included. */
+export function reach(tiers: Tiers, name: string): ReadonlySet<string> {
   const seen = new Set<string>()
-  const visit = (group: string): void => {
-    if (seen.has(group)) return
-    seen.add(group)
-    for (const included of groups[group]?.includes ?? []) visit(included)
+  const visit = (tier: string): void => {
+    if (seen.has(tier)) return
+    seen.add(tier)
+    for (const included of tiers[tier]?.includes ?? []) visit(included)
   }
   visit(name)
   return seen
 }
 
-export const reachesGroup = (groups: Groups, from: readonly string[], target: string): boolean =>
-  from.some((group) => group === '*' || reach(groups, group).has(target))
+export const reachesTier = (tiers: Tiers, from: readonly string[], target: string): boolean =>
+  from.some((tier) => tier === '*' || reach(tiers, tier).has(target))
 
-export const includersOf = (groups: Groups, name: string): readonly string[] =>
-  Object.entries(groups)
-    .filter(([, group]) => group.includes.includes(name))
+export const includersOf = (tiers: Tiers, name: string): readonly string[] =>
+  Object.entries(tiers)
+    .filter(([, tier]) => tier.includes.includes(name))
     .map(([includer]) => includer)

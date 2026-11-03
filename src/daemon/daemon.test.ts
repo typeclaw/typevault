@@ -32,20 +32,20 @@ beforeEach(async () => {
   owner = await initVault(layout.root)
   const vault = await Vault.open(layout, [owner], {})
   const admin = new Admin(vault)
-  await admin.addGroup('member')
-  await admin.addGroup('trusted')
+  await admin.addTier('member')
+  await admin.addTier('trusted')
   await admin.include('trusted', 'member')
   await admin.setCeiling('bot', 'member')
   await vault.put(
-    { name: n('github/bot'), type: 'password', fields: { password: 'hunter2-bot' }, group: 'member' },
+    { name: n('github/bot'), type: 'password', fields: { password: 'hunter2-bot' }, tier: 'member' },
     signerOf(owner),
   )
   await vault.put(
-    { name: n('openai'), type: 'api_key', fields: { key: 'sk-test-openai' }, group: 'member' },
+    { name: n('openai'), type: 'api_key', fields: { key: 'sk-test-openai' }, tier: 'member' },
     signerOf(owner),
   )
   await vault.put(
-    { name: n('stripe'), type: 'api_key', fields: { key: 'sk_live_x' }, group: 'trusted' },
+    { name: n('stripe'), type: 'api_key', fields: { key: 'sk_live_x' }, tier: 'trusted' },
     signerOf(owner),
   )
   daemon = await startDaemon({ layout, env: { TYPEVAULT_DIR: layout.root } })
@@ -58,7 +58,7 @@ afterEach(async () => {
 
 describe('live grants', () => {
   it('serves values within the grant and audits each read with its label', async () => {
-    const { token } = await grant('default', { groups: ['member'], label: 'session:abc' })
+    const { token } = await grant('default', { tiers: ['member'], label: 'session:abc' })
     const access = new LiveAccess(layout.agentSocket, token)
     expect((await access.list()).map((e): string => e.name).sort()).toEqual(['github/bot', 'openai'])
     expect((await access.get(n('openai'))).fields).toEqual({ key: 'sk-test-openai' })
@@ -71,11 +71,11 @@ describe('live grants', () => {
   })
 
   it('refuses a grant above the socket ceiling', async () => {
-    await expect(grant('bot', { groups: ['trusted'] })).rejects.toMatchObject({ code: 'denied' })
+    await expect(grant('bot', { tiers: ['trusted'] })).rejects.toMatchObject({ code: 'denied' })
   })
 
   it('narrows a derived grant and revokes it with its parent', async () => {
-    const { token } = await grant('default', { groups: ['member'], label: 'agent:a' })
+    const { token } = await grant('default', { tiers: ['member'], label: 'agent:a' })
     const parent = new LiveAccess(layout.agentSocket, token)
     const derived = await parent.call('/v1/derive', { only: ['github/*'] }, Token)
     const child = new LiveAccess(layout.agentSocket, derived.token)
@@ -85,7 +85,7 @@ describe('live grants', () => {
   })
 
   it('keeps a capped socket away from grants it did not issue and from the audit trail', async () => {
-    const { token } = await grant('default', { groups: ['member'], label: 'owner:session' })
+    const { token } = await grant('default', { tiers: ['member'], label: 'owner:session' })
     const bot = layout.adminSocket('bot')
     await callDaemon(bot, '/v1/revoke', { label: 'owner:session' }, z.json())
     expect((await new LiveAccess(layout.agentSocket, token).list()).length).toBe(2)
@@ -98,7 +98,7 @@ describe('live grants', () => {
   })
 
   it('remembers what a grant read, for redaction', async () => {
-    const { token } = await grant('default', { groups: ['member'] })
+    const { token } = await grant('default', { tiers: ['member'] })
     const access = new LiveAccess(layout.agentSocket, token)
     await access.get(n('github/bot'))
     expect(await access.readValues()).toEqual(['hunter2-bot'])
@@ -106,8 +106,8 @@ describe('live grants', () => {
 })
 
 describe('secret prompt', () => {
-  it('stores what the page submits, encrypted to the group, without the daemon seeing plaintext', async () => {
-    const { token } = await grant('default', { groups: ['member'], label: 'session:p' })
+  it('stores what the page submits, encrypted to the tier, without the daemon seeing plaintext', async () => {
+    const { token } = await grant('default', { tiers: ['member'], label: 'session:p' })
     const access = new LiveAccess(layout.agentSocket, token)
     const opened = await access.call(
       '/v1/request',
@@ -115,7 +115,7 @@ describe('secret prompt', () => {
       z.object({ id: z.string(), url: z.string(), code: z.string() }),
     )
     const vault = await Vault.open(layout, [owner], {})
-    const recipients = [vault.state.groups['member']?.recipient ?? '', vault.state.owner.recipient]
+    const recipients = [vault.state.tiers['member']?.recipient ?? '', vault.state.owner.recipient]
     const now = new Date().toISOString()
     const payload = {
       v: 1,
@@ -140,7 +140,7 @@ describe('secret prompt', () => {
 })
 
 it('refuses a prompt submission for a different entry than the one requested', async () => {
-  const { token } = await grant('default', { groups: ['member'], only: ['resend'] })
+  const { token } = await grant('default', { tiers: ['member'], only: ['resend'] })
   const access = new LiveAccess(layout.agentSocket, token)
   const opened = await access.call(
     '/v1/request',
@@ -148,7 +148,7 @@ it('refuses a prompt submission for a different entry than the one requested', a
     z.object({ id: z.string(), url: z.string(), code: z.string() }),
   )
   const vault = await Vault.open(layout, [owner], {})
-  const recipients = [vault.state.groups['member']?.recipient ?? '', vault.state.owner.recipient]
+  const recipients = [vault.state.tiers['member']?.recipient ?? '', vault.state.owner.recipient]
   const now = new Date().toISOString()
   const forged = {
     v: 1,

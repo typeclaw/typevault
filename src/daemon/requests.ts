@@ -25,7 +25,7 @@ export type RequestSession = {
 export type RequestInput = {
   readonly name: EntryName
   readonly type: EntryType
-  readonly group?: string | undefined
+  readonly tier?: string | undefined
   readonly reason: string
 }
 
@@ -55,20 +55,20 @@ export class PromptRequests {
   async open(session: RequestSession, input: RequestInput): Promise<{ id: string; url: string; code: string }> {
     const { chain, grant } = session
     const state = this.#vault.state
-    const group = input.group ?? grant.groups[0]
-    const meta = group === undefined ? undefined : state.groups[group]
-    if (group === undefined || meta === undefined || !allowsEntry(chain, state, group, input.name)) {
-      throw new TypeVaultError('denied', `this grant cannot store ${input.name} in group "${group ?? '?'}"`)
+    const tier = input.tier ?? grant.tiers[0]
+    const meta = tier === undefined ? undefined : state.tiers[tier]
+    if (tier === undefined || meta === undefined || !allowsEntry(chain, state, tier, input.name)) {
+      throw new TypeVaultError('denied', `this grant cannot store ${input.name} in tier "${tier ?? '?'}"`)
     }
     const existing = await this.#vault.find(input.name)
-    if (existing !== undefined && !allowsEntry(chain, state, existing.envelope.group, input.name)) {
+    if (existing !== undefined && !allowsEntry(chain, state, existing.envelope.tier, input.name)) {
       throw new TypeVaultError('denied', `the name ${input.name} is not available to this grant`)
     }
     const code = matchCode()
     const handle = (await this.#prompt()).open({
       name: input.name,
       type: input.type,
-      group,
+      tier,
       reason: input.reason,
       requester: grant.label,
       code,
@@ -78,8 +78,8 @@ export class PromptRequests {
     // Whoever holds the URL can submit, the requesting agent included, so the daemon checks what it got instead
     // of signing it blind: it must be exactly the requested entry, and the grant must still be live.
     const stored = handle.done.then(async (ciphertext) => {
-      const key = (await this.#vault.keyring.unlock(group)) ?? this.#vault.keyring.owner
-      if (key === undefined) throw new TypeVaultError('denied', `no key here can read group "${group}"`)
+      const key = (await this.#vault.keyring.unlock(tier)) ?? this.#vault.keyring.owner
+      if (key === undefined) throw new TypeVaultError('denied', `no key here can read tier "${tier}"`)
       const payload = decodePayload(await unseal([key.identity], ciphertext))
       if (
         payload.name !== input.name ||
@@ -90,7 +90,7 @@ export class PromptRequests {
         throw new TypeVaultError('tampered', 'the submitted secret does not match the request')
       }
       if (!session.isLive()) throw new TypeVaultError('denied', 'the requesting grant is no longer live')
-      await session.access.set({ name: input.name, type: input.type, fields: payload.fields, group })
+      await session.access.set({ name: input.name, type: input.type, fields: payload.fields, tier })
       await appendAudit(this.#vault.layout, {
         action: 'request.stored',
         mode: 'live',
@@ -116,7 +116,7 @@ export class PromptRequests {
       grant: grant.id,
       label: grant.label,
       entries: [input.name],
-      groups: [group],
+      tiers: [tier],
       reason: input.reason,
     })
     return { id: handle.id, url: handle.url, code }

@@ -27,9 +27,9 @@ it('keeps a project vault committable and its keys under the typevault root', as
   expect(readdirSync(layout.vault).sort()).toEqual([
     'ceilings.json',
     'entries',
-    'groups.json',
     'owner.json',
     'signers.json',
+    'tiers.json',
   ])
   expect(readdirSync(layout.keys)).toContain('owner.key')
 })

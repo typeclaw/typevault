@@ -2,7 +2,7 @@
 import { defineCommand, runCommand, runMain } from 'citty'
 
 import { TypeVaultError } from '../core/errors'
-import { ceiling, doctor, group, init, key, signer } from './commands/admin'
+import { ceiling, doctor, tier, init, key, signer } from './commands/admin'
 import { daemon } from './commands/daemon'
 import { get, ls, mv, otp, rm, set, whoami } from './commands/entries'
 import { audit, grant } from './commands/grant'
@@ -15,7 +15,7 @@ const main = defineCommand({
   },
   subCommands: {
     init,
-    group,
+    tier,
     ceiling,
     signer,
     key,

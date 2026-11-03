@@ -6,7 +6,7 @@ import type { EntrySummary, EntryValue } from './types'
 const SummaryShape = {
   name: z.string().transform((name) => parseEntryName(name)),
   type: z.string().refine(isEntryType),
-  group: z.string(),
+  tier: z.string(),
   rev: z.number().int(),
   tags: z.array(z.string()),
   rotated: z.string(),

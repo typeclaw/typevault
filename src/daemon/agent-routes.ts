@@ -31,8 +31,8 @@ function session(context: DaemonContext, request: Request): { grant: ResolvedGra
     mode: 'live',
     grant: record.id,
     label: record.label,
-    ownGroups: record.groups,
-    ...(record.groups[0] === undefined ? {} : { defaultGroup: record.groups[0] }),
+    ownTiers: record.tiers,
+    ...(record.tiers[0] === undefined ? {} : { defaultTier: record.tiers[0] }),
   })
   context.sessions.set(record.id, access)
   return { grant, access }
@@ -58,8 +58,8 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
     },
     '/v1/set': async (request) => json(await session(context, request).access.set(await parseBody(request, SetBody))),
     '/v1/remove': async (request) => {
-      const { name, group } = await parseBody(request, NameBody)
-      await session(context, request).access.remove(name, group)
+      const { name, tier } = await parseBody(request, NameBody)
+      await session(context, request).access.remove(name, tier)
       return json({ ok: true })
     },
     '/v1/move': async (request) => {
@@ -73,7 +73,7 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
       const body = await parseBody(request, DeriveBody)
       const remaining = Date.parse(grant.record.exp) - Date.now()
       const issued = context.grants.issue({
-        groups: body.groups ?? grant.record.groups,
+        tiers: body.tiers ?? grant.record.tiers,
         only: body.only,
         ttlMs: body.ttl === undefined ? remaining : parseTtl(body.ttl),
         // Prefixed with the parent's label so a derived grant can't pose as another session.
@@ -87,7 +87,7 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
         mode: 'live',
         grant: record.id,
         label: record.label,
-        groups: record.groups,
+        tiers: record.tiers,
       })
       return json({ token: issued.token, id: record.id, exp: record.exp })
     },

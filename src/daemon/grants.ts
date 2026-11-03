@@ -13,7 +13,7 @@ const RecordSchema = z.object({
   id: z.string(),
   hash: z.string(),
   label: z.string(),
-  groups: z.array(z.string()),
+  tiers: z.array(z.string()),
   only: z.array(z.string()),
   exp: z.iso.datetime(),
   created: z.iso.datetime(),
@@ -24,7 +24,7 @@ const RecordSchema = z.object({
 })
 export type GrantRecord = z.infer<typeof RecordSchema>
 export type GrantRequest = {
-  readonly groups: readonly string[]
+  readonly tiers: readonly string[]
   readonly only: readonly string[]
   readonly ttlMs: number
   readonly label: string
@@ -63,7 +63,7 @@ export class GrantStore {
       id: randomHex(8),
       hash: sha256Hex(utf8(secret)),
       label: request.label,
-      groups: [...request.groups],
+      tiers: [...request.tiers],
       only: [...request.only],
       exp: new Date(exp).toISOString(),
       created: new Date().toISOString(),
@@ -96,7 +96,7 @@ export class GrantStore {
       link = parentId === undefined ? undefined : this.#records.find((r) => r.id === parentId)
       if (parentId !== undefined && link === undefined) throw new TypeVaultError('denied', 'parent grant is gone')
     }
-    return { record, chain: chain.map(({ groups, only }) => ({ groups, only })) }
+    return { record, chain: chain.map(({ tiers, only }) => ({ tiers, only })) }
   }
 
   /** Whether grant `id` and all its ancestors are still unrevoked and unexpired. */

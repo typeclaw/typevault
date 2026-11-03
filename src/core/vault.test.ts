@@ -19,47 +19,47 @@ let admin: Admin
 
 const env = {}
 const open = (keys: readonly SecretKey[]): Promise<Vault> => Vault.open(layoutOf(root), keys, env)
-const keyOf = async (group: string): Promise<SecretKey> => decodeSecretKey(await admin.exportKey(group))
+const keyOf = async (tier: string): Promise<SecretKey> => decodeSecretKey(await admin.exportKey(tier))
 const stripe = {
   name: parseEntryName('stripe'),
   type: 'api_key',
   fields: { key: 'sk_test_123' },
-  group: 'member',
+  tier: 'member',
 } as const
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'typevault-'))
   owner = await initVault(root)
   admin = new Admin(await open([owner]))
-  await admin.addGroup('guest')
-  await admin.addGroup('member')
-  await admin.addGroup('trusted')
+  await admin.addTier('guest')
+  await admin.addTier('member')
+  await admin.addTier('trusted')
   await admin.include('member', 'guest')
   await admin.include('trusted', 'member')
 })
 
 afterEach(() => rmSync(root, { recursive: true, force: true }))
 
-describe('group access', () => {
-  it('lets a group key read entries of the groups it includes, transitively', async () => {
+describe('tier access', () => {
+  it('lets a tier key read entries of the tiers it includes, transitively', async () => {
     await (await open([owner])).put(stripe, signerOf(owner))
     const trusted = await open([await keyOf('trusted')])
     expect((await trusted.find(stripe.name))?.payload.fields).toEqual({ key: 'sk_test_123' })
   })
 
-  it('hides entries of groups a key does not reach', async () => {
+  it('hides entries of tiers a key does not reach', async () => {
     await (await open([owner])).put(stripe, signerOf(owner))
     const guest = await open([await keyOf('guest')])
     expect(await guest.find(stripe.name)).toBeUndefined()
   })
 
-  it('refuses a write signed by a group key that does not reach the target group', async () => {
+  it('refuses a write signed by a tier key that does not reach the target tier', async () => {
     const guestKey = await keyOf('guest')
     const guest = await open([guestKey])
     await expect(guest.put(stripe, signerOf(guestKey))).rejects.toThrow(TypeVaultError)
   })
 
-  it('accepts a write signed by an including group key', async () => {
+  it('accepts a write signed by an including tier key', async () => {
     const trustedKey = await keyOf('trusted')
     await (await open([trustedKey])).put(stripe, signerOf(trustedKey))
     expect((await (await open([await keyOf('member')])).find(stripe.name))?.envelope.rev).toBe(1)
@@ -104,12 +104,12 @@ describe('integrity', () => {
     },
   )
 
-  it('never lets a lower group shadow a name held by a higher group', async () => {
+  it('never lets a lower tier shadow a name held by a higher tier', async () => {
     const vault = await open([owner])
-    await vault.put({ ...stripe, group: 'trusted' }, signerOf(owner))
+    await vault.put({ ...stripe, tier: 'trusted' }, signerOf(owner))
     const guestKey = await keyOf('guest')
     const guest = await open([guestKey])
-    await guest.put({ ...stripe, group: 'guest', fields: { key: 'ATTACKER' } }, signerOf(guestKey))
+    await guest.put({ ...stripe, tier: 'guest', fields: { key: 'ATTACKER' } }, signerOf(guestKey))
     await expect((await open([await keyOf('trusted')])).find(stripe.name)).resolves.toMatchObject({
       payload: { fields: { key: 'sk_test_123' } },
     })
@@ -128,12 +128,12 @@ describe('integrity', () => {
     expect(scan.problems[0]?.reason).toContain('replaced or deleted')
   })
 
-  it('settles a name held by unrelated groups by removing one copy', async () => {
+  it('settles a name held by unrelated tiers by removing one copy', async () => {
     const vault = await open([owner])
-    await admin.addGroup('ci')
+    await admin.addTier('ci')
     await vault.put(stripe, signerOf(owner))
     const ciKey = await keyOf('ci')
-    await (await open([ciKey])).put({ ...stripe, group: 'ci', fields: { key: 'from-ci' } }, signerOf(ciKey))
+    await (await open([ciKey])).put({ ...stripe, tier: 'ci', fields: { key: 'from-ci' } }, signerOf(ciKey))
     await expect(vault.find(stripe.name)).rejects.toMatchObject({ code: 'conflict' })
     await vault.remove(stripe.name, 'ci')
     expect((await vault.find(stripe.name))?.payload.fields).toEqual({ key: 'sk_test_123' })
@@ -151,8 +151,8 @@ describe('integrity', () => {
   it('ignores a planted, malformed key wrap instead of failing every scan', async () => {
     const vault = await open([owner])
     await vault.put(stripe, signerOf(owner))
-    const gen = vault.state.groups['member']?.gen ?? 0
-    const wrap = join(root, 'vault', 'groups', 'member', String(gen), 'owner.age')
+    const gen = vault.state.tiers['member']?.gen ?? 0
+    const wrap = join(root, 'vault', 'tiers', 'member', String(gen), 'owner.age')
     writeFileSync(wrap, await seal([vault.state.owner.recipient], utf8('tvk1:bm90IGpzb24')))
     const viaTrusted = await open([await keyOf('trusted')])
     expect((await viaTrusted.find(stripe.name))?.payload.fields).toEqual({ key: 'sk_test_123' })
@@ -161,10 +161,10 @@ describe('integrity', () => {
 
   it('refuses a committed symlink inside the vault tree', async () => {
     const vault = await open([owner])
-    const groups = join(root, 'vault', 'groups')
-    renameSync(groups, join(root, 'groups-real'))
-    symlinkSync(join(root, 'groups-real'), groups)
-    await expect(admin.addGroup('extra')).rejects.toMatchObject({ code: 'tampered' })
+    const tiers = join(root, 'vault', 'tiers')
+    renameSync(tiers, join(root, 'tiers-real'))
+    symlinkSync(join(root, 'tiers-real'), tiers)
+    await expect(admin.addTier('extra')).rejects.toMatchObject({ code: 'tampered' })
     expect(vault).toBeDefined()
   })
 
@@ -218,7 +218,7 @@ describe('rotation', () => {
     expect(reset.payload.needsRotation).toBeUndefined()
   })
 
-  it('stops an excluded group from reaching the formerly included one', async () => {
+  it('stops an excluded tier from reaching the formerly included one', async () => {
     await (await open([owner])).put(stripe, signerOf(owner))
     const trustedKey = await keyOf('trusted')
     await admin.exclude('trusted', 'member')

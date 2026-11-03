@@ -4,13 +4,13 @@ import { signerOf } from './entries'
 import { TypeVaultError } from './errors'
 import { wrapPath } from './keyring'
 import { withLock } from './lock'
-import { rotateGroup } from './rotate'
+import { rotateTier } from './rotate'
 import {
   ceilingsDoc,
-  type Group,
-  groupsDoc,
+  type Tier,
+  tiersDoc,
   includersOf,
-  parseGroupName,
+  parseTierName,
   reach,
   signersDoc,
   type VaultState,
@@ -18,7 +18,7 @@ import {
 import { commitTxn, Txn } from './txn'
 import type { Vault } from './vault'
 
-/** Owner-only changes to groups, signers and ceilings. Each one lands as a single transaction. */
+/** Owner-only changes to tiers, signers and ceilings. Each one lands as a single transaction. */
 export class Admin {
   readonly #vault: Vault
   readonly #owner: SecretKey
@@ -40,71 +40,71 @@ export class Admin {
     })
   }
 
-  async #wrapFor(txn: Txn, included: string, state: VaultState, holder: { name: string; group: Group }): Promise<void> {
+  async #wrapFor(txn: Txn, included: string, state: VaultState, holder: { name: string; tier: Tier }): Promise<void> {
     const key = await this.#vault.keyring.unlock(included)
-    const meta = state.groups[included]
+    const meta = state.tiers[included]
     if (key === undefined || meta === undefined)
-      throw new TypeVaultError('not_found', `cannot unlock group "${included}"`)
-    const sealed = await seal([holder.group.recipient], utf8(encodeSecretKey(key)))
-    txn.put(wrapPath(included, meta.gen, { kind: 'group', group: holder.name, gen: holder.group.gen }), sealed)
+      throw new TypeVaultError('not_found', `cannot unlock tier "${included}"`)
+    const sealed = await seal([holder.tier.recipient], utf8(encodeSecretKey(key)))
+    txn.put(wrapPath(included, meta.gen, { kind: 'tier', tier: holder.name, gen: holder.tier.gen }), sealed)
   }
 
-  addGroup(rawName: string): Promise<void> {
-    const name = parseGroupName(rawName)
+  addTier(rawName: string): Promise<void> {
+    const name = parseTierName(rawName)
     return this.#mutate(async (state, txn) => {
-      if (state.groups[name] !== undefined) throw new TypeVaultError('conflict', `group "${name}" already exists`)
-      const key = await generateSecretKey({ kind: 'group', group: name, gen: 1 })
-      const group: Group = { includes: [], gen: 1, ...(await publicKeyOf(key)) }
+      if (state.tiers[name] !== undefined) throw new TypeVaultError('conflict', `tier "${name}" already exists`)
+      const key = await generateSecretKey({ kind: 'tier', tier: name, gen: 1 })
+      const tier: Tier = { includes: [], gen: 1, ...(await publicKeyOf(key)) }
       txn.put(wrapPath(name, 1, { kind: 'owner' }), await seal([state.owner.recipient], utf8(encodeSecretKey(key))))
-      txn.put('groups.json', groupsDoc({ ...state.groups, [name]: group }, this.#owner, state.seqs.groups + 1))
+      txn.put('tiers.json', tiersDoc({ ...state.tiers, [name]: tier }, this.#owner, state.seqs.tiers + 1))
     })
   }
 
-  removeGroup(name: string): Promise<void> {
+  removeTier(name: string): Promise<void> {
     return this.#mutate(async (state, txn) => {
-      if (state.groups[name] === undefined) throw new TypeVaultError('not_found', `no group "${name}"`)
-      if (includersOf(state.groups, name).length > 0)
-        throw new TypeVaultError('conflict', `other groups include "${name}"`)
+      if (state.tiers[name] === undefined) throw new TypeVaultError('not_found', `no tier "${name}"`)
+      if (includersOf(state.tiers, name).length > 0)
+        throw new TypeVaultError('conflict', `other tiers include "${name}"`)
       const { entries } = await this.#vault.scan()
-      if (entries.some((entry) => entry.envelope.group === name)) {
-        throw new TypeVaultError('conflict', `group "${name}" still has entries`)
+      if (entries.some((entry) => entry.envelope.tier === name)) {
+        throw new TypeVaultError('conflict', `tier "${name}" still has entries`)
       }
-      const { [name]: _removed, ...rest } = state.groups
-      for (const included of state.groups[name]?.includes ?? []) {
-        const gen = state.groups[included]?.gen ?? 0
-        txn.remove(wrapPath(included, gen, { kind: 'group', group: name, gen: state.groups[name]?.gen ?? 0 }))
+      const { [name]: _removed, ...rest } = state.tiers
+      for (const included of state.tiers[name]?.includes ?? []) {
+        const gen = state.tiers[included]?.gen ?? 0
+        txn.remove(wrapPath(included, gen, { kind: 'tier', tier: name, gen: state.tiers[name]?.gen ?? 0 }))
       }
-      txn.remove(`groups/${name}`)
-      txn.put('groups.json', groupsDoc(rest, this.#owner, state.seqs.groups + 1))
+      txn.remove(`tiers/${name}`)
+      txn.put('tiers.json', tiersDoc(rest, this.#owner, state.seqs.tiers + 1))
     })
   }
 
-  include(group: string, included: string): Promise<void> {
+  include(tier: string, included: string): Promise<void> {
     return this.#mutate(async (state, txn) => {
-      const holder = state.groups[group]
-      if (holder === undefined || state.groups[included] === undefined)
-        throw new TypeVaultError('not_found', 'no such group')
+      const holder = state.tiers[tier]
+      if (holder === undefined || state.tiers[included] === undefined)
+        throw new TypeVaultError('not_found', 'no such tier')
       if (holder.includes.includes(included)) return
-      if (reach(state.groups, included).has(group)) {
-        throw new TypeVaultError('invalid', `"${included}" already reaches "${group}"; including it would form a cycle`)
+      if (reach(state.tiers, included).has(tier)) {
+        throw new TypeVaultError('invalid', `"${included}" already reaches "${tier}"; including it would form a cycle`)
       }
-      await this.#wrapFor(txn, included, state, { name: group, group: holder })
+      await this.#wrapFor(txn, included, state, { name: tier, tier: holder })
       const updated = { ...holder, includes: [...holder.includes, included] }
-      txn.put('groups.json', groupsDoc({ ...state.groups, [group]: updated }, this.#owner, state.seqs.groups + 1))
+      txn.put('tiers.json', tiersDoc({ ...state.tiers, [tier]: updated }, this.#owner, state.seqs.tiers + 1))
     })
   }
 
-  /** Drops an include, then rotates the included group so the old wrap stops working. */
-  async exclude(group: string, included: string): Promise<readonly string[]> {
+  /** Drops an include, then rotates the included tier so the old wrap stops working. */
+  async exclude(tier: string, included: string): Promise<readonly string[]> {
     await this.#mutate(async (state, txn) => {
-      const holder = state.groups[group]
+      const holder = state.tiers[tier]
       if (holder === undefined || !holder.includes.includes(included)) {
-        throw new TypeVaultError('not_found', `"${group}" does not include "${included}"`)
+        throw new TypeVaultError('not_found', `"${tier}" does not include "${included}"`)
       }
-      const meta = state.groups[included]
-      txn.remove(wrapPath(included, meta?.gen ?? 0, { kind: 'group', group, gen: holder.gen }))
+      const meta = state.tiers[included]
+      txn.remove(wrapPath(included, meta?.gen ?? 0, { kind: 'tier', tier, gen: holder.gen }))
       const updated = { ...holder, includes: holder.includes.filter((name) => name !== included) }
-      txn.put('groups.json', groupsDoc({ ...state.groups, [group]: updated }, this.#owner, state.seqs.groups + 1))
+      txn.put('tiers.json', tiersDoc({ ...state.tiers, [tier]: updated }, this.#owner, state.seqs.tiers + 1))
     })
     return this.rotate(included)
   }
@@ -113,16 +113,16 @@ export class Admin {
   async rotate(name: string): Promise<readonly string[]> {
     let affected: readonly string[] = []
     await this.#mutate(async (state, txn) => {
-      affected = await rotateGroup({ vault: this.#vault, owner: this.#owner, state, txn }, name)
+      affected = await rotateTier({ vault: this.#vault, owner: this.#owner, state, txn }, name)
     })
     return affected
   }
 
-  setSigner(id: string, signPublic: string, groups: readonly string[]): Promise<void> {
+  setSigner(id: string, signPublic: string, tiers: readonly string[]): Promise<void> {
     return this.#mutate(async (state, txn) => {
       txn.put(
         'signers.json',
-        signersDoc({ ...state.signers, [id]: { signPublic, groups } }, this.#owner, state.seqs.signers + 1),
+        signersDoc({ ...state.signers, [id]: { signPublic, tiers } }, this.#owner, state.seqs.signers + 1),
       )
     })
   }
@@ -134,12 +134,12 @@ export class Admin {
     })
   }
 
-  setCeiling(name: string, group: string): Promise<void> {
+  setCeiling(name: string, tier: string): Promise<void> {
     return this.#mutate(async (state, txn) => {
-      if (state.groups[group] === undefined) throw new TypeVaultError('not_found', `no group "${group}"`)
+      if (state.tiers[tier] === undefined) throw new TypeVaultError('not_found', `no tier "${tier}"`)
       txn.put(
         'ceilings.json',
-        ceilingsDoc({ ...state.ceilings, [parseGroupName(name)]: group }, this.#owner, state.seqs.ceilings + 1),
+        ceilingsDoc({ ...state.ceilings, [parseTierName(name)]: tier }, this.#owner, state.seqs.ceilings + 1),
       )
     })
   }
@@ -151,9 +151,9 @@ export class Admin {
     })
   }
 
-  async exportKey(group: string): Promise<string> {
-    const key = await this.#vault.keyring.unlock(group)
-    if (key === undefined) throw new TypeVaultError('not_found', `no group "${group}"`)
+  async exportKey(tier: string): Promise<string> {
+    const key = await this.#vault.keyring.unlock(tier)
+    if (key === undefined) throw new TypeVaultError('not_found', `no tier "${tier}"`)
     return encodeSecretKey(key)
   }
 

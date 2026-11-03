@@ -14,7 +14,7 @@ const ManifestSchema = z.object({ puts: z.array(z.string()), removes: z.array(z.
 
 /**
  * A batch of vault file changes that lands all-or-nothing. Puts apply in insertion order and
- * removes after them, so a caller flips a pointer file (groups.json) by putting it last.
+ * removes after them, so a caller flips a pointer file (tiers.json) by putting it last.
  * Mutable on purpose: it accumulates changes until `commitTxn`.
  */
 export class Txn {

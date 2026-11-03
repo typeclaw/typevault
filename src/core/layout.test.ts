@@ -36,7 +36,7 @@ it('rejects a project vault whose owner was replaced, even with a key from the e
 
   // when the owner and its signed manifests are replaced by another vault's
   const other = await initLocalVault(join(base, 'other', '.typevault'), env)
-  for (const file of ['owner.json', 'groups.json', 'signers.json', 'ceilings.json']) {
+  for (const file of ['owner.json', 'tiers.json', 'signers.json', 'ceilings.json']) {
     copyFileSync(join(other.vault, file), join(project.vault, file))
   }
   const layout = openLocalLayout(project.vault, keyEnv)
@@ -51,7 +51,7 @@ describe('two clones of one project vault', () => {
 
   beforeEach(async () => {
     first = await initLocalVault(join(base, 'a', '.typevault'), env)
-    await new Admin(await Vault.open(first, [ownerOf(first)], env)).addGroup('member')
+    await new Admin(await Vault.open(first, [ownerOf(first)], env)).addTier('member')
     cpSync(first.vault, join(base, 'b', '.typevault'), { recursive: true })
     second = openLocalLayout(join(base, 'b', '.typevault'), env)
   })
@@ -65,7 +65,7 @@ describe('two clones of one project vault', () => {
     ] as const) {
       const vault = await Vault.open(layout, [owner], env)
       await vault.put(
-        { name: parseEntryName(name), type: 'note', fields: { text: name }, group: 'member' },
+        { name: parseEntryName(name), type: 'note', fields: { text: name }, tier: 'member' },
         signerOf(owner),
       )
     }
@@ -76,7 +76,7 @@ describe('two clones of one project vault', () => {
       const names = await Promise.all(
         [first, second].map(async (layout) => {
           const Issued = z.object({ token: z.string() })
-          const { token } = await callDaemon(layout.adminSocket('default'), '/v1/grant', { groups: ['member'] }, Issued)
+          const { token } = await callDaemon(layout.adminSocket('default'), '/v1/grant', { tiers: ['member'] }, Issued)
           return (await new LiveAccess(layout.agentSocket, token).list()).map((entry): string => entry.name)
         }),
       )

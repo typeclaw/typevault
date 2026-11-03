@@ -22,7 +22,7 @@ export const grant = defineCommand({
   args: {
     action: { type: 'positional', required: false, description: 'ls | revoke' },
     id: { type: 'positional', required: false },
-    group: { type: 'string', description: 'Comma-separated groups' },
+    tier: { type: 'string', description: 'Comma-separated tiers' },
     only: { type: 'string', description: 'Comma-separated names or globs' },
     ttl: { type: 'string', default: '1h' },
     label: { type: 'string', description: 'Who this is for, e.g. session:abc or ci:deploy' },
@@ -35,8 +35,8 @@ export const grant = defineCommand({
         const grants = await adminCall(env, '/v1/grants', {}, GrantList)
         return print(
           table([
-            ['ID', 'LABEL', 'GROUPS', 'ONLY', 'EXPIRES'],
-            ...grants.map((g) => [g.id, g.label, g.groups.join(','), g.only.join(','), g.exp]),
+            ['ID', 'LABEL', 'TIERS', 'ONLY', 'EXPIRES'],
+            ...grants.map((g) => [g.id, g.label, g.tiers.join(','), g.only.join(','), g.exp]),
           ]),
         )
       }
@@ -54,9 +54,9 @@ export const grant = defineCommand({
       default:
         throw new TypeVaultError('invalid', `unknown grant action "${args.action}"`)
     }
-    const groups = csv(args.group)
-    if (groups.length === 0) throw new TypeVaultError('invalid', 'grant needs --group')
-    const request = { groups, only: csv(args.only), ttl: args.ttl, label: args.label ?? 'unlabeled' }
+    const tiers = csv(args.tier)
+    if (tiers.length === 0) throw new TypeVaultError('invalid', 'grant needs --tier')
+    const request = { tiers, only: csv(args.only), ttl: args.ttl, label: args.label ?? 'unlabeled' }
     // A launcher holding a key (CI) seals locally; everything else asks the daemon within its ceiling.
     if (args.sealed && loadLocalKeys(layoutFrom(env), env).length > 0) {
       const vault = await openDirect(env)

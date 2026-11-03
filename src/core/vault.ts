@@ -21,7 +21,7 @@ import { withLock } from './lock'
 import type { EntryName, EntryType } from './naming'
 import type { EntryPayload } from './payload'
 import { RevisionMarks } from './revisions'
-import { type Groups, loadState, reach, type VaultState } from './state'
+import { type Tiers, loadState, reach, type VaultState } from './state'
 import { commitTxn, recoverTxns, Txn } from './txn'
 
 export type StoredEntry = { readonly envelope: Envelope; readonly payload: EntryPayload }
@@ -42,7 +42,7 @@ export type EntryInput = {
   readonly name: EntryName
   readonly type: EntryType
   readonly fields: Readonly<Record<string, string>>
-  readonly group: string
+  readonly tier: string
   readonly env?: string
   readonly origin?: string
   readonly tags?: readonly string[]
@@ -63,20 +63,20 @@ const sameFields = (a: Readonly<Record<string, string>>, b: Readonly<Record<stri
   JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort())
 
 /**
- * The entry a name means when several files carry it. A copy in a group that reaches the other's group wins, so a
- * lower group can never shadow a higher one (timestamps are writer-chosen and never decide). Within one group the
- * higher revision wins. Copies in groups neither reaches are a conflict for `doctor`.
+ * The entry a name means when several files carry it. A copy in a tier that reaches the other's tier wins, so a
+ * lower tier can never shadow a higher one (timestamps are writer-chosen and never decide). Within one tier the
+ * higher revision wins. Copies in tiers neither reaches are a conflict for `doctor`.
  */
-export function resolveName(groups: Groups, copies: readonly StoredEntry[]): StoredEntry | undefined {
+export function resolveName(tiers: Tiers, copies: readonly StoredEntry[]): StoredEntry | undefined {
   return copies.reduce<StoredEntry | undefined>((best, entry) => {
     if (best === undefined) return entry
     const [a, b] = [best.envelope, entry.envelope]
-    if (a.group === b.group) return b.rev > a.rev || (b.rev === a.rev && b.id > a.id) ? entry : best
-    if (reach(groups, a.group).has(b.group)) return best
-    if (reach(groups, b.group).has(a.group)) return entry
+    if (a.tier === b.tier) return b.rev > a.rev || (b.rev === a.rev && b.id > a.id) ? entry : best
+    if (reach(tiers, a.tier).has(b.tier)) return best
+    if (reach(tiers, b.tier).has(a.tier)) return entry
     throw new TypeVaultError(
       'conflict',
-      `${entry.payload.name} exists in unrelated groups "${a.group}" and "${b.group}" (run typevault doctor)`,
+      `${entry.payload.name} exists in unrelated tiers "${a.tier}" and "${b.tier}" (run typevault doctor)`,
     )
   }, undefined)
 }
@@ -177,7 +177,7 @@ export class Vault {
   async find(name: EntryName): Promise<StoredEntry | undefined> {
     const { entries } = await this.scan()
     return resolveName(
-      this.#state.groups,
+      this.#state.tiers,
       entries.filter((entry) => entry.payload.name === name),
     )
   }
@@ -208,7 +208,7 @@ export class Vault {
       ...(input.origin === undefined ? {} : { origin: input.origin }),
       ...(changed || found?.payload.needsRotation !== true ? {} : { needsRotation: true }),
     }
-    const draft = { id: prior?.id ?? randomHex(16), group: input.group, rev: currentRev + 1, at: now, payload }
+    const draft = { id: prior?.id ?? randomHex(16), tier: input.tier, rev: currentRev + 1, at: now, payload }
     return { envelope: await sealEntry(draft, this.#state, signer), payload }
   }
 
@@ -230,7 +230,7 @@ export class Vault {
   /** Writes many entries as one transaction (an import): all of them land, or none do. */
   putMany(
     inputs: readonly EntryInput[],
-    signerFor: (group: string) => Promise<SignerContext>,
+    signerFor: (tier: string) => Promise<SignerContext>,
   ): Promise<readonly StoredEntry[]> {
     return withLock(this.layout.lockFile, 'exclusive', async () => {
       const { entries } = await this.scan()
@@ -238,10 +238,10 @@ export class Vault {
       const stored: StoredEntry[] = []
       for (const input of inputs) {
         const found = resolveName(
-          this.#state.groups,
+          this.#state.tiers,
           entries.filter((entry) => entry.payload.name === input.name),
         )
-        const entry = await this.#draft(input, found, {}, await signerFor(input.group))
+        const entry = await this.#draft(input, found, {}, await signerFor(input.tier))
         txn.put(`entries/${entry.envelope.id}.json`, `${JSON.stringify(entry.envelope, null, 2)}\n`)
         stored.push(entry)
       }
@@ -250,13 +250,13 @@ export class Vault {
     })
   }
 
-  /** Removes the entry `name` resolves to, or the copy in `group` (how a cross-group conflict is settled). */
-  remove(name: EntryName, group?: string): Promise<StoredEntry> {
+  /** Removes the entry `name` resolves to, or the copy in `tier` (how a cross-tier conflict is settled). */
+  remove(name: EntryName, tier?: string): Promise<StoredEntry> {
     return withLock(this.layout.lockFile, 'exclusive', async () => {
       const existing =
-        group === undefined
+        tier === undefined
           ? await this.find(name)
-          : (await this.scan()).entries.find((entry) => entry.payload.name === name && entry.envelope.group === group)
+          : (await this.scan()).entries.find((entry) => entry.payload.name === name && entry.envelope.tier === tier)
       if (existing === undefined) throw new TypeVaultError('not_found', `no entry named ${name}`)
       rmSync(join(this.layout.entries, `${existing.envelope.id}.json`))
       fsyncDir(this.layout.entries)
@@ -266,10 +266,10 @@ export class Vault {
   }
 
   /** Stores a payload encrypted elsewhere under `name`, replacing any entry of that name. */
-  putCiphertext(name: EntryName, group: string, ciphertext: Uint8Array, signer: SignerContext): Promise<Envelope> {
+  putCiphertext(name: EntryName, tier: string, ciphertext: Uint8Array, signer: SignerContext): Promise<Envelope> {
     return withLock(this.layout.lockFile, 'exclusive', async () => {
       const existing = await this.find(name)
-      const draft = { id: existing?.envelope.id ?? randomHex(16), group, rev: (existing?.envelope.rev ?? 0) + 1 }
+      const draft = { id: existing?.envelope.id ?? randomHex(16), tier, rev: (existing?.envelope.rev ?? 0) + 1 }
       const envelope = signCiphertext({ ...draft, at: new Date().toISOString() }, ciphertext, this.#state, signer)
       atomicWrite(join(this.layout.entries, `${envelope.id}.json`), `${JSON.stringify(envelope, null, 2)}\n`)
       return envelope
@@ -294,7 +294,7 @@ export class Vault {
       if (existing === undefined) throw new TypeVaultError('not_found', `no entry named ${from}`)
       if ((await this.find(to)) !== undefined) throw new TypeVaultError('conflict', `${to} already exists`)
       const payload = { ...existing.payload, name: to }
-      const draft = { id: existing.envelope.id, group: existing.envelope.group, rev: existing.envelope.rev + 1 }
+      const draft = { id: existing.envelope.id, tier: existing.envelope.tier, rev: existing.envelope.rev + 1 }
       const envelope = await sealEntry({ ...draft, at: new Date().toISOString(), payload }, this.#state, signer)
       atomicWrite(join(this.layout.entries, `${envelope.id}.json`), `${JSON.stringify(envelope, null, 2)}\n`)
       return { envelope, payload }

@@ -3,7 +3,7 @@ import type { EntryType } from '../core/naming'
 export type PromptView = {
   readonly name: string
   readonly type: EntryType
-  readonly group: string
+  readonly tier: string
   readonly reason: string
   readonly requester: string
   readonly code: string
