@@ -58,35 +58,62 @@ export function parseEntryName(input: string): EntryName {
 
 export type EntryRef = { readonly name: EntryName; readonly field: string | undefined }
 
-/** Parses `[tv://]<service>[/<account>][#<field>]`. */
+const MAX_FIELD_LENGTH = 64
+
+/**
+ * A type lists the fields it suggests, but an entry may hold any field: up to 64 characters, no surrounding
+ * whitespace, no control characters and no `=` (which `--field name=value` splits on). Case is kept.
+ */
+export const isFieldName = (field: string): boolean =>
+  field !== '' && field.length <= MAX_FIELD_LENGTH && field.trim() === field && !/[\p{Cc}=]/u.test(field)
+
+/** Parses `[tv://]<service>[/<account>][#<field>]`. The field is everything after the first `#`. */
 export function parseEntryRef(input: string): EntryRef {
   const hash = input.indexOf('#')
   if (hash === -1) return { name: parseEntryName(input), field: undefined }
-  const field = input.slice(hash + 1).toLowerCase()
-  if (!/^[a-z0-9_]+$/.test(field)) throw new TypeVaultError('invalid', `invalid field "${field}"`)
+  const field = input.slice(hash + 1)
+  if (!isFieldName(field)) throw new TypeVaultError('invalid', `invalid field "${field}"`)
   return { name: parseEntryName(input.slice(0, hash)), field }
 }
 
-/** Fields that hold secrets: never accepted on the command line, where `ps` and shell history see them. */
-const SECRET_FIELDS: ReadonlySet<string> = new Set([
-  'password',
-  'totp',
-  'key',
-  'access_token',
-  'refresh_token',
-  'client_secret',
-  'private_key',
-  'seed',
-  'text',
+/** The stored key `field` refers to: an exact match, else the only one equal ignoring case. */
+export function findField(fields: Readonly<Record<string, string>>, field: string): string | undefined {
+  if (Object.hasOwn(fields, field)) return field
+  const matches = Object.keys(fields).filter((key) => key.toLowerCase() === field.toLowerCase())
+  return matches.length === 1 ? matches[0] : undefined
+}
+
+/**
+ * Fields known to hold no secret. Every other field, custom ones included, is never accepted on the command line,
+ * where `ps` and shell history see it.
+ */
+const PLAIN_FIELDS: ReadonlySet<string> = new Set([
+  'username',
+  'url',
+  'token_url',
+  'client_id',
+  'expires_at',
+  'public_key',
 ])
-export const isSecretField = (field: string): boolean => SECRET_FIELDS.has(field)
+export const isSecretField = (field: string): boolean => !PLAIN_FIELDS.has(field)
 
 export const fieldsOf = (type: EntryType): readonly string[] => ENTRY_TYPES[type].fields
 export const primaryField = (type: EntryType): string => ENTRY_TYPES[type].primary
 
-/** `github/bot` + `password` becomes `GITHUB_BOT_PASSWORD`. */
-export const deriveEnvName = (name: EntryName, field: string): string =>
-  `${name}_${field}`.toUpperCase().replace(/[/-]/g, '_')
+/**
+ * `github/bot` + `password` becomes `GITHUB_BOT_PASSWORD`, and `Secret Access Key` becomes `..._SECRET_ACCESS_KEY`.
+ * Undefined when no letter or digit of the field survives (a non-Latin name): such a field is reachable only
+ * through a `tv://` ref.
+ */
+export function deriveEnvName(name: EntryName, field: string): string | undefined {
+  const suffix = field
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  return suffix === '' ? undefined : `${name.toUpperCase().replace(/[/-]/g, '_')}_${suffix}`
+}
 
 /** Turns arbitrary text (an import title, a vault name) into a valid name segment. */
 export function slugifySegment(raw: string): string {

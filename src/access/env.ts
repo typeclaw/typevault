@@ -3,6 +3,7 @@ import {
   deriveEnvName,
   type EntryName,
   entryPattern,
+  findField,
   hasRefScheme,
   isReservedEnvName,
   parseEntryRef,
@@ -44,7 +45,7 @@ export function envFor(values: readonly EntryValue[], now: Date, policy: EnvPoli
         field === primaryField(value.type) &&
         (policy.ownGroups.includes(value.group) || value.trustedWriter === true)
       const name = ownOverride && value.env !== undefined ? value.env : deriveEnvName(value.name, field)
-      if (isReservedEnvName(name)) continue
+      if (name === undefined || isReservedEnvName(name)) continue
       const previous = owner.get(name)
       if (previous !== undefined) throw new TypeVaultError('conflict', `${previous} and ${value.name} both set ${name}`)
       owner.set(name, value.name)
@@ -75,9 +76,11 @@ export async function resolveEnvRefs(
       throw new TypeVaultError('invalid', `${variable} is reserved: run never sets it from the vault`)
     const ref = parseEntryRef(raw)
     const value = await get(ref.name)
-    const field = ref.field ?? primaryField(value.type)
-    const secret = value.fields[field]
-    if (secret === undefined) throw new TypeVaultError('not_found', `${value.name} has no field "${field}"`)
+    const wanted = ref.field ?? primaryField(value.type)
+    const field = findField(value.fields, wanted)
+    const secret = field === undefined ? undefined : value.fields[field]
+    if (field === undefined || secret === undefined)
+      throw new TypeVaultError('not_found', `${value.name} has no field "${wanted}"`)
     resolved[variable] = isTotpField(value, field) ? totpCode(parseTotpSeed(secret), now) : secret
     values.push(value)
   }
