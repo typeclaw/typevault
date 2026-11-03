@@ -46,6 +46,25 @@ export function collectEntries(items: readonly ImportItem[], warnings: readonly 
   return { entries, warnings: messages }
 }
 
+/**
+ * The template fields plus every labeled field the mapper didn't place, kept under its own label. A value already
+ * in a template field is skipped, so an API credential's `credential` doesn't land twice.
+ */
+export function withCustomFields(
+  mapped: Readonly<Record<string, string | undefined>>,
+  labeled: readonly (readonly [label: string, value: string | undefined])[],
+): Record<string, string | undefined> {
+  const used = new Set(Object.values(mapped))
+  const custom: Record<string, string> = {}
+  for (const [label, value] of labeled) {
+    const field = label.trim()
+    if (field === '' || value === undefined || value === '' || used.has(value)) continue
+    if (Object.hasOwn(mapped, field) || Object.hasOwn(custom, field)) continue
+    custom[field] = value
+  }
+  return { ...custom, ...mapped }
+}
+
 export function parseJson<T>(text: string, schema: z.ZodType<T>, format: string): T {
   let value: unknown
   try {
