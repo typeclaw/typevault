@@ -1,0 +1,15 @@
+{
+  "body": {
+    "v": 1,
+    "seq": 2,
+    "tiers": {
+      "default": {
+        "includes": [],
+        "gen": 1,
+        "recipient": "age1hwsztk4vxgqdvnvgeupv03ft9m8szvg5a5dnn0yl67se9s0a53xqyltxyv",
+        "signPublic": "aE5vfwp6sT65442mk3mj0E/HEqH68GgfqYHheaTUcoM="
+      }
+    }
+  },
+  "sig": "BO+JZyQpq3L3eOReWXEPYhibPx2talnQbqORTdz31vOOV57pXWa9ztGO90S3C7bUrzss8EsL7trpmrlvniuEDQ=="
+}
