@@ -10,7 +10,7 @@ export type DoctorReport = {
   readonly problems: readonly ScanProblem[]
   readonly mergesResolved: readonly string[]
   readonly duplicatesRemoved: readonly string[]
-  /** Same name in several groups: reported for the operator, never deleted automatically. */
+  /** Same name in several groups: reported for the owner, never deleted automatically. */
   readonly duplicatesKept: readonly string[]
   readonly needsRotation: readonly string[]
 }
@@ -61,7 +61,7 @@ export function doctor(vault: Vault, fix: boolean): Promise<DoctorReport> {
     for (const [name, copies] of byName) {
       if (copies.length < 2) continue
       // Only same-group copies are removed: across groups the higher group already wins reads, and
-      // the operator decides what to delete.
+      // the owner decides what to delete.
       for (const [group, inGroup] of Map.groupBy(copies, (entry) => entry.envelope.group)) {
         const keep = resolveName(vault.state.groups, inGroup)
         for (const copy of inGroup) {

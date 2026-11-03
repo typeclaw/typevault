@@ -41,7 +41,7 @@ export type SealedRequest = GrantScope & { readonly ttlMs: number; readonly labe
 /** Re-seals every entry the scope allows into a self-contained grant. The issuer's own key never leaves. */
 export async function issueSealedGrant(vault: Vault, request: SealedRequest): Promise<string> {
   const issuer =
-    vault.keyring.operator ??
+    vault.keyring.owner ??
     vault.keys.find((key) => {
       const role = key.role
       return role.kind === 'group' && request.groups.every((group) => reach(vault.state.groups, role.group).has(group))

@@ -8,12 +8,12 @@ import type { Layout } from './layout'
 import { includersOf, type VaultState } from './state'
 
 export type WrapHolder =
-  | { readonly kind: 'operator' }
+  | { readonly kind: 'owner' }
   | { readonly kind: 'group'; readonly group: string; readonly gen: number }
 
-/** Vault-relative path of a group key sealed to a holder: the operator, or an including group's key. */
+/** Vault-relative path of a group key sealed to a holder: the owner, or an including group's key. */
 export const wrapPath = (group: string, gen: number, holder: WrapHolder): string =>
-  join('groups', group, String(gen), holder.kind === 'operator' ? 'operator.age' : `${holder.group}.${holder.gen}.age`)
+  join('groups', group, String(gen), holder.kind === 'owner' ? 'owner.age' : `${holder.group}.${holder.gen}.age`)
 
 /** Resolves group keys from the keys this process holds, unwrapping along includes. */
 export class Keyring {
@@ -28,8 +28,8 @@ export class Keyring {
     this.#keys = keys
   }
 
-  get operator(): SecretKey | undefined {
-    return this.#keys.find((key) => key.role.kind === 'operator')
+  get owner(): SecretKey | undefined {
+    return this.#keys.find((key) => key.role.kind === 'owner')
   }
 
   /** The current-generation key of `group`, or undefined when no held key reaches it. */
@@ -56,9 +56,9 @@ export class Keyring {
       (key) => key.role.kind === 'group' && key.role.group === group && key.role.gen === meta.gen,
     )
     if (held !== undefined) return held
-    const operator = this.operator
-    if (operator !== undefined) {
-      const key = await this.#openWrap(group, meta.gen, { kind: 'operator' }, operator)
+    const owner = this.owner
+    if (owner !== undefined) {
+      const key = await this.#openWrap(group, meta.gen, { kind: 'owner' }, owner)
       if (key !== undefined) return key
     }
     for (const includer of includersOf(this.#state.groups, group)) {
@@ -86,7 +86,7 @@ export class Keyring {
     assertNoSymlinks(this.#layout.vault, rel)
     const path = join(this.#layout.vault, rel)
     if (!existsSync(path) || !lstatSync(path).isFile()) return undefined
-    // Wrap files aren't signed and the operator's recipient is public, so a planted wrap must fail quietly.
+    // Wrap files aren't signed and the owner's recipient is public, so a planted wrap must fail quietly.
     const key = await unseal([holderKey.identity], readFileSync(path))
       .then((bytes) => decodeSecretKey(new TextDecoder().decode(bytes)))
       .catch((error: unknown) => {
@@ -94,7 +94,7 @@ export class Keyring {
         throw error
       })
     if (key === undefined) return undefined
-    // A wrap that doesn't match the operator-signed public key is ignored rather than trusted.
+    // A wrap that doesn't match the owner-signed public key is ignored rather than trusted.
     const expected = this.#state.groups[group]
     const actual = await publicKeyOf(key)
     return expected !== undefined &&

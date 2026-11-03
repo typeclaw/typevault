@@ -13,21 +13,21 @@ import { parseEntryName } from './naming'
 import { Vault } from './vault'
 
 let root: string
-let operator: SecretKey
+let owner: SecretKey
 let vault: Vault
 const name = parseEntryName('openai')
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'typevault-doctor-'))
-  operator = await initVault(root)
-  vault = await Vault.open(layoutOf(root), [operator], {})
+  owner = await initVault(root)
+  vault = await Vault.open(layoutOf(root), [owner], {})
   await new Admin(vault).addGroup('team')
 })
 afterEach(() => rmSync(root, { recursive: true, force: true }))
 
 it('resolves a git merge conflict by keeping the highest valid revision', async () => {
-  const first = await vault.put({ name, type: 'api_key', fields: { key: 'one' }, group: 'team' }, signerOf(operator))
-  const second = await vault.put({ name, type: 'api_key', fields: { key: 'two' }, group: 'team' }, signerOf(operator))
+  const first = await vault.put({ name, type: 'api_key', fields: { key: 'one' }, group: 'team' }, signerOf(owner))
+  const second = await vault.put({ name, type: 'api_key', fields: { key: 'two' }, group: 'team' }, signerOf(owner))
   const file = join(root, 'vault', 'entries', `${second.envelope.id}.json`)
   const ours = JSON.stringify(first.envelope, null, 2)
   const theirs = JSON.stringify(second.envelope, null, 2)
@@ -41,13 +41,13 @@ it('resolves a git merge conflict by keeping the highest valid revision', async 
 })
 
 it('removes the older copy when two files hold the same name', async () => {
-  await vault.put({ name, type: 'api_key', fields: { key: 'zero' }, group: 'team' }, signerOf(operator))
-  const kept = await vault.put({ name, type: 'api_key', fields: { key: 'one' }, group: 'team' }, signerOf(operator))
+  await vault.put({ name, type: 'api_key', fields: { key: 'zero' }, group: 'team' }, signerOf(owner))
+  const kept = await vault.put({ name, type: 'api_key', fields: { key: 'one' }, group: 'team' }, signerOf(owner))
   const payload = { ...kept.payload, fields: { key: 'stale' } }
   const stale = await sealEntry(
     { id: 'f'.repeat(32), group: 'team', rev: 1, at: '2020-01-01T00:00:00.000Z', payload },
     vault.state,
-    signerOf(operator),
+    signerOf(owner),
   )
   writeFileSync(join(root, 'vault', 'entries', `${stale.id}.json`), JSON.stringify(stale))
 
@@ -59,12 +59,12 @@ it('removes the older copy when two files hold the same name', async () => {
 
 it('never deletes a copy that lives in another group', async () => {
   await new Admin(vault).addGroup('other')
-  const kept = await vault.put({ name, type: 'api_key', fields: { key: 'one' }, group: 'team' }, signerOf(operator))
+  const kept = await vault.put({ name, type: 'api_key', fields: { key: 'one' }, group: 'team' }, signerOf(owner))
   const payload = { ...kept.payload, fields: { key: 'planted' } }
   const planted = await sealEntry(
     { id: 'e'.repeat(32), group: 'other', rev: 99, at: kept.envelope.at, payload },
     vault.state,
-    signerOf(operator),
+    signerOf(owner),
   )
   writeFileSync(join(root, 'vault', 'entries', `${planted.id}.json`), JSON.stringify(planted))
 

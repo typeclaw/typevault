@@ -18,16 +18,16 @@ import {
 import { commitTxn, Txn } from './txn'
 import type { Vault } from './vault'
 
-/** Operator-only changes to groups, signers and ceilings. Each one lands as a single transaction. */
+/** Owner-only changes to groups, signers and ceilings. Each one lands as a single transaction. */
 export class Admin {
   readonly #vault: Vault
-  readonly #operator: SecretKey
+  readonly #owner: SecretKey
 
   constructor(vault: Vault) {
-    const operator = vault.keyring.operator
-    if (operator === undefined) throw new TypeVaultError('denied', 'this needs the operator key')
+    const owner = vault.keyring.owner
+    if (owner === undefined) throw new TypeVaultError('denied', 'this needs the owner key')
     this.#vault = vault
-    this.#operator = operator
+    this.#owner = owner
   }
 
   #mutate(build: (state: VaultState, txn: Txn) => Promise<void>): Promise<void> {
@@ -55,11 +55,8 @@ export class Admin {
       if (state.groups[name] !== undefined) throw new TypeVaultError('conflict', `group "${name}" already exists`)
       const key = await generateSecretKey({ kind: 'group', group: name, gen: 1 })
       const group: Group = { includes: [], gen: 1, ...(await publicKeyOf(key)) }
-      txn.put(
-        wrapPath(name, 1, { kind: 'operator' }),
-        await seal([state.operator.recipient], utf8(encodeSecretKey(key))),
-      )
-      txn.put('groups.json', groupsDoc({ ...state.groups, [name]: group }, this.#operator, state.seqs.groups + 1))
+      txn.put(wrapPath(name, 1, { kind: 'owner' }), await seal([state.owner.recipient], utf8(encodeSecretKey(key))))
+      txn.put('groups.json', groupsDoc({ ...state.groups, [name]: group }, this.#owner, state.seqs.groups + 1))
     })
   }
 
@@ -78,7 +75,7 @@ export class Admin {
         txn.remove(wrapPath(included, gen, { kind: 'group', group: name, gen: state.groups[name]?.gen ?? 0 }))
       }
       txn.remove(`groups/${name}`)
-      txn.put('groups.json', groupsDoc(rest, this.#operator, state.seqs.groups + 1))
+      txn.put('groups.json', groupsDoc(rest, this.#owner, state.seqs.groups + 1))
     })
   }
 
@@ -93,7 +90,7 @@ export class Admin {
       }
       await this.#wrapFor(txn, included, state, { name: group, group: holder })
       const updated = { ...holder, includes: [...holder.includes, included] }
-      txn.put('groups.json', groupsDoc({ ...state.groups, [group]: updated }, this.#operator, state.seqs.groups + 1))
+      txn.put('groups.json', groupsDoc({ ...state.groups, [group]: updated }, this.#owner, state.seqs.groups + 1))
     })
   }
 
@@ -107,7 +104,7 @@ export class Admin {
       const meta = state.groups[included]
       txn.remove(wrapPath(included, meta?.gen ?? 0, { kind: 'group', group, gen: holder.gen }))
       const updated = { ...holder, includes: holder.includes.filter((name) => name !== included) }
-      txn.put('groups.json', groupsDoc({ ...state.groups, [group]: updated }, this.#operator, state.seqs.groups + 1))
+      txn.put('groups.json', groupsDoc({ ...state.groups, [group]: updated }, this.#owner, state.seqs.groups + 1))
     })
     return this.rotate(included)
   }
@@ -116,7 +113,7 @@ export class Admin {
   async rotate(name: string): Promise<readonly string[]> {
     let affected: readonly string[] = []
     await this.#mutate(async (state, txn) => {
-      affected = await rotateGroup({ vault: this.#vault, operator: this.#operator, state, txn }, name)
+      affected = await rotateGroup({ vault: this.#vault, owner: this.#owner, state, txn }, name)
     })
     return affected
   }
@@ -125,7 +122,7 @@ export class Admin {
     return this.#mutate(async (state, txn) => {
       txn.put(
         'signers.json',
-        signersDoc({ ...state.signers, [id]: { signPublic, groups } }, this.#operator, state.seqs.signers + 1),
+        signersDoc({ ...state.signers, [id]: { signPublic, groups } }, this.#owner, state.seqs.signers + 1),
       )
     })
   }
@@ -133,7 +130,7 @@ export class Admin {
   removeSigner(id: string): Promise<void> {
     return this.#mutate(async (state, txn) => {
       const { [id]: _removed, ...rest } = state.signers
-      txn.put('signers.json', signersDoc(rest, this.#operator, state.seqs.signers + 1))
+      txn.put('signers.json', signersDoc(rest, this.#owner, state.seqs.signers + 1))
     })
   }
 
@@ -142,7 +139,7 @@ export class Admin {
       if (state.groups[group] === undefined) throw new TypeVaultError('not_found', `no group "${group}"`)
       txn.put(
         'ceilings.json',
-        ceilingsDoc({ ...state.ceilings, [parseGroupName(name)]: group }, this.#operator, state.seqs.ceilings + 1),
+        ceilingsDoc({ ...state.ceilings, [parseGroupName(name)]: group }, this.#owner, state.seqs.ceilings + 1),
       )
     })
   }
@@ -150,7 +147,7 @@ export class Admin {
   removeCeiling(name: string): Promise<void> {
     return this.#mutate(async (state, txn) => {
       const { [name]: _removed, ...rest } = state.ceilings
-      txn.put('ceilings.json', ceilingsDoc(rest, this.#operator, state.seqs.ceilings + 1))
+      txn.put('ceilings.json', ceilingsDoc(rest, this.#owner, state.seqs.ceilings + 1))
     })
   }
 
@@ -161,6 +158,6 @@ export class Admin {
   }
 
   get signer(): ReturnType<typeof signerOf> {
-    return signerOf(this.#operator)
+    return signerOf(this.#owner)
   }
 }

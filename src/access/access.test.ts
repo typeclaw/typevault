@@ -18,20 +18,20 @@ import { issueSealedGrant, readSealedGrant, sealedSigningSecret } from './sealed
 import { SealedAccess } from './sealed-access'
 
 let root: string
-let operator: SecretKey
+let owner: SecretKey
 let vault: Vault
 const n = parseEntryName
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'typevault-access-'))
-  operator = await initVault(root)
-  vault = await Vault.open(layoutOf(root), [operator], {})
+  owner = await initVault(root)
+  vault = await Vault.open(layoutOf(root), [owner], {})
   const admin = new Admin(vault)
   await admin.addGroup('member')
   await admin.addGroup('trusted')
   await admin.include('trusted', 'member')
   const put = (name: string, group: string, fields: Record<string, string>) =>
-    vault.put({ name: n(name), type: 'password', fields, group }, signerOf(operator))
+    vault.put({ name: n(name), type: 'password', fields, group }, signerOf(owner))
   await put('github/bot', 'member', { username: 'bot', password: 'hunter2-bot' })
   await put('github/personal', 'member', { username: 'me', password: 'hunter2-me' })
   await put('stripe', 'trusted', { password: 'sk_live_x' })
@@ -56,7 +56,7 @@ describe('ScopedVault', () => {
   it('hands out only the copy a duplicated name resolves to', async () => {
     await vault.put(
       { name: n('github/bot'), type: 'password', fields: { password: 'from-trusted' }, group: 'trusted' },
-      signerOf(operator),
+      signerOf(owner),
     )
     const trusted = new ScopedVault(vault, [{ groups: ['trusted'], only: [] }], { mode: 'live' })
     const values = await trusted.values(['github/bot'])
@@ -306,7 +306,7 @@ describe('OAuth refresh', () => {
         expires_at: '2000-01-01T00:00:00.000Z',
         token_url: `http://127.0.0.1:${server.port}/token`,
       }
-      await vault.put({ name: n('google'), type: 'oauth', fields, group: 'member' }, signerOf(operator))
+      await vault.put({ name: n('google'), type: 'oauth', fields, group: 'member' }, signerOf(owner))
       const access = new ScopedVault(vault, [{ groups: ['member'], only: [] }], { mode: 'live', label: 's' })
       expect((await access.get(n('google'))).fields['access_token']).toBe('fresh-token')
       expect((await vault.find(n('google')))?.payload.fields['access_token']).toBe('fresh-token')
@@ -332,7 +332,7 @@ describe('sealed grants', () => {
   it('writes entries that readers accept through the certificate', async () => {
     const access = new SealedAccess(await readSealedGrant(await issue()), layoutOf(root), {})
     await access.set({ name: n('github/bot'), type: 'password', fields: { password: 'rotated' } })
-    const stored = await (await Vault.open(layoutOf(root), [operator], {})).find(n('github/bot'))
+    const stored = await (await Vault.open(layoutOf(root), [owner], {})).find(n('github/bot'))
     expect(stored?.payload.fields).toEqual({ password: 'rotated' })
     expect(stored?.envelope.signer.kind).toBe('cert')
   })
@@ -371,7 +371,7 @@ describe('sealed grants', () => {
     ).rejects.toMatchObject({ code: 'denied' })
   })
 
-  it('honors an expired certificate only when the operator explicitly adopts', async () => {
+  it('honors an expired certificate only when the owner explicitly adopts', async () => {
     const { ref } = await certSigner(-1)
     const at = new Date(Date.parse(ref.cert.exp) - 1_000).toISOString()
     expect(signerAuthority(ref, 'member', vault.state, at)).toBeUndefined()

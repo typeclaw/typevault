@@ -14,7 +14,7 @@ import { parseEntryName } from './naming'
 import { Vault } from './vault'
 
 let root: string
-let operator: SecretKey
+let owner: SecretKey
 let admin: Admin
 
 const env = {}
@@ -29,8 +29,8 @@ const stripe = {
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'typevault-'))
-  operator = await initVault(root)
-  admin = new Admin(await open([operator]))
+  owner = await initVault(root)
+  admin = new Admin(await open([owner]))
   await admin.addGroup('guest')
   await admin.addGroup('member')
   await admin.addGroup('trusted')
@@ -42,13 +42,13 @@ afterEach(() => rmSync(root, { recursive: true, force: true }))
 
 describe('group access', () => {
   it('lets a group key read entries of the groups it includes, transitively', async () => {
-    await (await open([operator])).put(stripe, signerOf(operator))
+    await (await open([owner])).put(stripe, signerOf(owner))
     const trusted = await open([await keyOf('trusted')])
     expect((await trusted.find(stripe.name))?.payload.fields).toEqual({ key: 'sk_test_123' })
   })
 
   it('hides entries of groups a key does not reach', async () => {
-    await (await open([operator])).put(stripe, signerOf(operator))
+    await (await open([owner])).put(stripe, signerOf(owner))
     const guest = await open([await keyOf('guest')])
     expect(await guest.find(stripe.name)).toBeUndefined()
   })
@@ -68,8 +68,8 @@ describe('group access', () => {
 
 describe('integrity', () => {
   it('reports a tampered entry instead of returning it', async () => {
-    const vault = await open([operator])
-    const { envelope } = await vault.put(stripe, signerOf(operator))
+    const vault = await open([owner])
+    const { envelope } = await vault.put(stripe, signerOf(owner))
     const file = join(root, 'vault', 'entries', `${envelope.id}.json`)
     writeFileSync(file, readFileSync(file, 'utf8').replace('"rev": 1', '"rev": 7'))
     const scan = await vault.scan()
@@ -78,35 +78,35 @@ describe('integrity', () => {
   })
 
   it('contains a validly signed but undecryptable entry instead of failing every scan', async () => {
-    const vault = await open([operator])
-    await vault.put(stripe, signerOf(operator))
-    await vault.putCiphertext(parseEntryName('junk'), 'member', new Uint8Array([1, 2, 3]), signerOf(operator))
+    const vault = await open([owner])
+    await vault.put(stripe, signerOf(owner))
+    await vault.putCiphertext(parseEntryName('junk'), 'member', new Uint8Array([1, 2, 3]), signerOf(owner))
     const scan = await vault.scan()
     expect(scan.entries.map((entry): string => entry.payload.name)).toEqual(['stripe'])
     expect(scan.problems).toHaveLength(1)
   })
 
   it('stores fields the entry type does not list, keeping their names as written', async () => {
-    const vault = await open([operator])
-    await vault.put({ ...stripe, fields: { key: 'x', 'Webhook Secret': 'whsec' } }, signerOf(operator))
+    const vault = await open([owner])
+    await vault.put({ ...stripe, fields: { key: 'x', 'Webhook Secret': 'whsec' } }, signerOf(owner))
     expect((await vault.find(stripe.name))?.payload.fields).toEqual({ key: 'x', 'Webhook Secret': 'whsec' })
   })
 
   it.each(['', 'a=b', ' padded', 'line\nbreak', 'x'.repeat(65)])(
     'refuses to store the field name %p',
     async (field) => {
-      const vault = await open([operator])
-      await expect(
-        vault.put({ ...stripe, fields: { key: 'x', [field]: 'y' } }, signerOf(operator)),
-      ).rejects.toMatchObject({
-        code: 'invalid',
-      })
+      const vault = await open([owner])
+      await expect(vault.put({ ...stripe, fields: { key: 'x', [field]: 'y' } }, signerOf(owner))).rejects.toMatchObject(
+        {
+          code: 'invalid',
+        },
+      )
     },
   )
 
   it('never lets a lower group shadow a name held by a higher group', async () => {
-    const vault = await open([operator])
-    await vault.put({ ...stripe, group: 'trusted' }, signerOf(operator))
+    const vault = await open([owner])
+    await vault.put({ ...stripe, group: 'trusted' }, signerOf(owner))
     const guestKey = await keyOf('guest')
     const guest = await open([guestKey])
     await guest.put({ ...stripe, group: 'guest', fields: { key: 'ATTACKER' } }, signerOf(guestKey))
@@ -116,10 +116,10 @@ describe('integrity', () => {
   })
 
   it('reports an entry swapped back to an older signed revision', async () => {
-    const vault = await open([operator])
-    const first = await vault.put(stripe, signerOf(operator))
+    const vault = await open([owner])
+    const first = await vault.put(stripe, signerOf(owner))
     await vault.scan()
-    await vault.put({ ...stripe, fields: { key: 'sk_test_456' } }, signerOf(operator))
+    await vault.put({ ...stripe, fields: { key: 'sk_test_456' } }, signerOf(owner))
     await vault.scan()
     const file = join(root, 'vault', 'entries', `${first.envelope.id}.json`)
     writeFileSync(file, JSON.stringify(first.envelope))
@@ -129,9 +129,9 @@ describe('integrity', () => {
   })
 
   it('settles a name held by unrelated groups by removing one copy', async () => {
-    const vault = await open([operator])
+    const vault = await open([owner])
     await admin.addGroup('ci')
-    await vault.put(stripe, signerOf(operator))
+    await vault.put(stripe, signerOf(owner))
     const ciKey = await keyOf('ci')
     await (await open([ciKey])).put({ ...stripe, group: 'ci', fields: { key: 'from-ci' } }, signerOf(ciKey))
     await expect(vault.find(stripe.name)).rejects.toMatchObject({ code: 'conflict' })
@@ -140,27 +140,27 @@ describe('integrity', () => {
   })
 
   it('refuses a deleted entry restored from history', async () => {
-    const vault = await open([operator])
-    const old = await vault.put(stripe, signerOf(operator))
+    const vault = await open([owner])
+    const old = await vault.put(stripe, signerOf(owner))
     await vault.remove(stripe.name)
-    await vault.put({ ...stripe, fields: { key: 'sk_test_new' } }, signerOf(operator))
+    await vault.put({ ...stripe, fields: { key: 'sk_test_new' } }, signerOf(owner))
     writeFileSync(join(root, 'vault', 'entries', `${old.envelope.id}.json`), JSON.stringify(old.envelope))
     expect((await vault.find(stripe.name))?.payload.fields).toEqual({ key: 'sk_test_new' })
   })
 
   it('ignores a planted, malformed key wrap instead of failing every scan', async () => {
-    const vault = await open([operator])
-    await vault.put(stripe, signerOf(operator))
+    const vault = await open([owner])
+    await vault.put(stripe, signerOf(owner))
     const gen = vault.state.groups['member']?.gen ?? 0
-    const wrap = join(root, 'vault', 'groups', 'member', String(gen), 'operator.age')
-    writeFileSync(wrap, await seal([vault.state.operator.recipient], utf8('tvk1:bm90IGpzb24')))
+    const wrap = join(root, 'vault', 'groups', 'member', String(gen), 'owner.age')
+    writeFileSync(wrap, await seal([vault.state.owner.recipient], utf8('tvk1:bm90IGpzb24')))
     const viaTrusted = await open([await keyOf('trusted')])
     expect((await viaTrusted.find(stripe.name))?.payload.fields).toEqual({ key: 'sk_test_123' })
-    await expect((await open([operator])).scan()).resolves.toBeDefined()
+    await expect((await open([owner])).scan()).resolves.toBeDefined()
   })
 
   it('refuses a committed symlink inside the vault tree', async () => {
-    const vault = await open([operator])
+    const vault = await open([owner])
     const groups = join(root, 'vault', 'groups')
     renameSync(groups, join(root, 'groups-real'))
     symlinkSync(join(root, 'groups-real'), groups)
@@ -173,36 +173,36 @@ describe('integrity', () => {
     const before = readFileSync(file, 'utf8')
     await admin.setSigner('ci', 'AAAA', ['member'])
     await admin.removeSigner('ci')
-    await open([operator])
+    await open([owner])
     writeFileSync(file, before)
-    await expect(open([operator])).rejects.toMatchObject({ code: 'tampered' })
+    await expect(open([owner])).rejects.toMatchObject({ code: 'tampered' })
   })
 
-  it('rejects a vault whose operator key changed after it was first trusted', async () => {
-    const file = join(root, 'vault', 'operator.json')
+  it('rejects a vault whose owner key changed after it was first trusted', async () => {
+    const file = join(root, 'vault', 'owner.json')
     const doc = JSON.parse(readFileSync(file, 'utf8'))
     writeFileSync(file, JSON.stringify({ ...doc, signPublic: 'AAAA' }))
-    await expect(open([operator])).rejects.toMatchObject({ code: 'tampered' })
+    await expect(open([owner])).rejects.toMatchObject({ code: 'tampered' })
   })
 
   it('rejects a stale revision on compare-and-swap', async () => {
-    const vault = await open([operator])
-    await vault.put(stripe, signerOf(operator))
-    await expect(vault.put(stripe, signerOf(operator), { ifRev: 0 })).rejects.toMatchObject({ code: 'conflict' })
-    expect((await vault.put(stripe, signerOf(operator), { ifRev: 1 })).envelope.rev).toBe(2)
+    const vault = await open([owner])
+    await vault.put(stripe, signerOf(owner))
+    await expect(vault.put(stripe, signerOf(owner), { ifRev: 0 })).rejects.toMatchObject({ code: 'conflict' })
+    expect((await vault.put(stripe, signerOf(owner), { ifRev: 1 })).envelope.rev).toBe(2)
   })
 
   it('serializes concurrent writes from one process', async () => {
-    const vault = await open([operator])
+    const vault = await open([owner])
     const names = ['a', 'b', 'c', 'd'].map((name) => ({ ...stripe, name: parseEntryName(name) }))
-    await Promise.all(names.map((input) => vault.put(input, signerOf(operator))))
+    await Promise.all(names.map((input) => vault.put(input, signerOf(owner))))
     expect((await vault.scan()).entries.map((entry): string => entry.payload.name).sort()).toEqual(['a', 'b', 'c', 'd'])
   })
 })
 
 describe('rotation', () => {
   it('locks out the old key, keeps includers working and flags reachable entries', async () => {
-    await (await open([operator])).put(stripe, signerOf(operator))
+    await (await open([owner])).put(stripe, signerOf(owner))
     const oldMember = await keyOf('member')
     expect(await admin.rotate('member')).toEqual(['stripe'])
     expect(await (await open([oldMember])).find(stripe.name)).toBeUndefined()
@@ -211,15 +211,15 @@ describe('rotation', () => {
   })
 
   it('clears the rotation flag when the value is re-set', async () => {
-    const vault = await open([operator])
-    await vault.put(stripe, signerOf(operator))
+    const vault = await open([owner])
+    await vault.put(stripe, signerOf(owner))
     await admin.rotate('member')
-    const reset = await vault.put({ ...stripe, fields: { key: 'sk_test_456' } }, signerOf(operator))
+    const reset = await vault.put({ ...stripe, fields: { key: 'sk_test_456' } }, signerOf(owner))
     expect(reset.payload.needsRotation).toBeUndefined()
   })
 
   it('stops an excluded group from reaching the formerly included one', async () => {
-    await (await open([operator])).put(stripe, signerOf(operator))
+    await (await open([owner])).put(stripe, signerOf(owner))
     const trustedKey = await keyOf('trusted')
     await admin.exclude('trusted', 'member')
     expect(await (await open([trustedKey])).find(stripe.name)).toBeUndefined()

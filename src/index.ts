@@ -22,7 +22,7 @@ export type ClientOptions = {
   readonly dir?: string
   /** Use the global vault instead of the project's, like the CLI's `-g`. Defaults to `TYPEVAULT_GLOBAL`. */
   readonly global?: boolean
-  /** Without a grant, open the vault with this machine's own keys (operator, launchers). Off by default. */
+  /** Without a grant, open the vault with this machine's own keys (owner, launchers). Off by default. */
   readonly direct?: boolean
   /** Where the defaults above are read from. Defaults to `process.env`. */
   readonly env?: Env

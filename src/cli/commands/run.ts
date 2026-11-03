@@ -129,7 +129,7 @@ const isVia = (value: string): value is OnePasswordVia => ONEPASSWORD_VIAS.some(
 export const importCommand = defineCommand({
   meta: {
     name: 'import',
-    description: 'Import a password-manager export, or 1Password directly, into a group (operator, one transaction)',
+    description: 'Import a password-manager export, or 1Password directly, into a group (owner, one transaction)',
   },
   args: {
     source: { type: 'positional', required: true, description: SOURCES.join(' | ') },
@@ -167,7 +167,7 @@ export const importCommand = defineCommand({
     const stored = await vault.putMany(
       result.entries.map((entry) => ({ ...entry, group })),
       async (target) => {
-        const key = vault.keyring.operator ?? (await vault.keyring.unlock(target))
+        const key = vault.keyring.owner ?? (await vault.keyring.unlock(target))
         if (key === undefined) throw new TypeVaultError('denied', `no key here can write group "${target}"`)
         return signerOf(key)
       },

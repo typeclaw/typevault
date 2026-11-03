@@ -77,10 +77,10 @@ export class ScopedVault implements Access {
   }
 
   async #signerFor(group: string): Promise<ReturnType<typeof signerOf>> {
-    // Direct mode is the key holder acting itself, so the operator signs as the operator. The daemon writes on behalf
-    // of grants and signs with the group's own key, so a grant's writes never look operator-authored.
-    const operator = this.#identity.mode === 'direct' ? this.#vault.keyring.operator : undefined
-    const key = operator ?? (await this.#vault.keyring.unlock(group)) ?? this.#vault.keyring.operator
+    // Direct mode is the key holder acting itself, so the owner signs as the owner. The daemon writes on behalf
+    // of grants and signs with the group's own key, so a grant's writes never look owner-authored.
+    const owner = this.#identity.mode === 'direct' ? this.#vault.keyring.owner : undefined
+    const key = owner ?? (await this.#vault.keyring.unlock(group)) ?? this.#vault.keyring.owner
     if (key === undefined) throw new TypeVaultError('denied', `no key here can write group "${group}"`)
     return signerOf(key)
   }

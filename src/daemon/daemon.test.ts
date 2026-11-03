@@ -18,7 +18,7 @@ import { type RunningDaemon, startDaemon } from './daemon'
 import { LiveAccess } from './live-access'
 
 let layout: Layout
-let operator: SecretKey
+let owner: SecretKey
 let daemon: RunningDaemon
 const n = parseEntryName
 const Token = z.object({ token: z.string() })
@@ -29,8 +29,8 @@ const grant = (socket: string, body: Record<string, unknown>) =>
 beforeEach(async () => {
   // Short root: unix socket paths are limited to ~104 bytes.
   layout = layoutOf(mkdtempSync('/tmp/tvd-'))
-  operator = await initVault(layout.root)
-  const vault = await Vault.open(layout, [operator], {})
+  owner = await initVault(layout.root)
+  const vault = await Vault.open(layout, [owner], {})
   const admin = new Admin(vault)
   await admin.addGroup('member')
   await admin.addGroup('trusted')
@@ -38,15 +38,15 @@ beforeEach(async () => {
   await admin.setCeiling('bot', 'member')
   await vault.put(
     { name: n('github/bot'), type: 'password', fields: { password: 'hunter2-bot' }, group: 'member' },
-    signerOf(operator),
+    signerOf(owner),
   )
   await vault.put(
     { name: n('openai'), type: 'api_key', fields: { key: 'sk-test-openai' }, group: 'member' },
-    signerOf(operator),
+    signerOf(owner),
   )
   await vault.put(
     { name: n('stripe'), type: 'api_key', fields: { key: 'sk_live_x' }, group: 'trusted' },
-    signerOf(operator),
+    signerOf(owner),
   )
   daemon = await startDaemon({ layout, env: { TYPEVAULT_DIR: layout.root } })
 })
@@ -85,9 +85,9 @@ describe('live grants', () => {
   })
 
   it('keeps a capped socket away from grants it did not issue and from the audit trail', async () => {
-    const { token } = await grant('default', { groups: ['member'], label: 'operator:session' })
+    const { token } = await grant('default', { groups: ['member'], label: 'owner:session' })
     const bot = layout.adminSocket('bot')
-    await callDaemon(bot, '/v1/revoke', { label: 'operator:session' }, z.json())
+    await callDaemon(bot, '/v1/revoke', { label: 'owner:session' }, z.json())
     expect((await new LiveAccess(layout.agentSocket, token).list()).length).toBe(2)
     expect(await callDaemon(bot, '/v1/grants', {}, z.array(z.json()))).toEqual([])
     await expect(callDaemon(bot, '/v1/audit', {}, z.json())).rejects.toMatchObject({ code: 'denied' })
@@ -114,8 +114,8 @@ describe('secret prompt', () => {
       { name: 'resend', type: 'api_key', reason: 'send mail' },
       z.object({ id: z.string(), url: z.string(), code: z.string() }),
     )
-    const vault = await Vault.open(layout, [operator], {})
-    const recipients = [vault.state.groups['member']?.recipient ?? '', vault.state.operator.recipient]
+    const vault = await Vault.open(layout, [owner], {})
+    const recipients = [vault.state.groups['member']?.recipient ?? '', vault.state.owner.recipient]
     const now = new Date().toISOString()
     const payload = {
       v: 1,
@@ -147,8 +147,8 @@ it('refuses a prompt submission for a different entry than the one requested', a
     { name: 'resend', type: 'api_key', reason: 'mail' },
     z.object({ id: z.string(), url: z.string(), code: z.string() }),
   )
-  const vault = await Vault.open(layout, [operator], {})
-  const recipients = [vault.state.groups['member']?.recipient ?? '', vault.state.operator.recipient]
+  const vault = await Vault.open(layout, [owner], {})
+  const recipients = [vault.state.groups['member']?.recipient ?? '', vault.state.owner.recipient]
   const now = new Date().toISOString()
   const forged = {
     v: 1,

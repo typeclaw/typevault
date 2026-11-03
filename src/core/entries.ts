@@ -9,7 +9,7 @@ import { decodePayload, encodePayload, type EntryPayload } from './payload'
 import { reach, reachesGroup, type VaultState } from './state'
 
 const IssuerSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('operator') }),
+  z.object({ kind: z.literal('owner') }),
   z.object({ kind: z.literal('group'), group: z.string(), gen: z.number().int().positive() }),
   z.object({ kind: z.literal('signer'), id: z.string() }),
 ])
@@ -44,8 +44,7 @@ export type Envelope = z.infer<typeof EnvelopeSchema>
 export type SignerContext = { readonly ref: SignerRef; readonly signSecret: Uint8Array }
 
 export const signerOf = (key: SecretKey): SignerContext => ({
-  ref:
-    key.role.kind === 'operator' ? { kind: 'operator' } : { kind: 'group', group: key.role.group, gen: key.role.gen },
+  ref: key.role.kind === 'owner' ? { kind: 'owner' } : { kind: 'group', group: key.role.group, gen: key.role.gen },
   signSecret: key.signSecret,
 })
 
@@ -53,8 +52,8 @@ type Authority = { readonly signPublic: string; readonly groups: readonly string
 
 function authorityOf(ref: IssuerRef, state: VaultState): Authority | undefined {
   switch (ref.kind) {
-    case 'operator':
-      return { signPublic: state.operator.signPublic, groups: ['*'] }
+    case 'owner':
+      return { signPublic: state.owner.signPublic, groups: ['*'] }
     case 'group': {
       const group = state.groups[ref.group]
       return group === undefined || group.gen !== ref.gen
@@ -95,8 +94,8 @@ const envelopeBytes = (envelope: Omit<Envelope, 'sig'>): Uint8Array => {
   return utf8(canonicalJson(body))
 }
 
-/** Whether `signer` may sign entries of `group`, judged only from operator-signed state. */
-/** `now` is the reader's clock for certificate expiry; `null` skips that one check (explicit operator adoption). */
+/** Whether `signer` may sign entries of `group`, judged only from owner-signed state. */
+/** `now` is the reader's clock for certificate expiry; `null` skips that one check (explicit owner adoption). */
 export function signerAuthority(
   signer: SignerRef,
   group: string,
@@ -137,7 +136,7 @@ export type EntryDraft = {
 export async function sealEntry(draft: EntryDraft, state: VaultState, signer: SignerContext): Promise<Envelope> {
   const group = state.groups[draft.group]
   if (group === undefined) throw new TypeVaultError('not_found', `no group "${draft.group}"`)
-  const ciphertext = await seal([group.recipient, state.operator.recipient], encodePayload(draft.payload))
+  const ciphertext = await seal([group.recipient, state.owner.recipient], encodePayload(draft.payload))
   return signCiphertext({ id: draft.id, group: draft.group, rev: draft.rev, at: draft.at }, ciphertext, state, signer)
 }
 

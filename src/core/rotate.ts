@@ -9,7 +9,7 @@ import type { Vault } from './vault'
 
 export type RotateContext = {
   readonly vault: Vault
-  readonly operator: SecretKey
+  readonly owner: SecretKey
   readonly state: VaultState
   readonly txn: Txn
 }
@@ -19,12 +19,12 @@ const signedBy = (signer: SignerRef, group: string): boolean =>
   (signer.kind === 'cert' && signer.cert.issuer.kind === 'group' && signer.cert.issuer.group === group)
 
 /**
- * Stages a new key generation for `name` into `txn`: fresh wraps for the operator and every includer,
+ * Stages a new key generation for `name` into `txn`: fresh wraps for the owner and every includer,
  * re-wraps of the groups it includes, re-sealed entries, and finally the generation flip in groups.json.
  * Entries the old key could reach are flagged `needsRotation`; their names are returned.
  */
 export async function rotateGroup(context: RotateContext, name: string): Promise<readonly string[]> {
-  const { vault, operator, state, txn } = context
+  const { vault, owner, state, txn } = context
   const meta = state.groups[name]
   if (meta === undefined) throw new TypeVaultError('not_found', `no group "${name}"`)
   const gen = meta.gen + 1
@@ -33,7 +33,7 @@ export async function rotateGroup(context: RotateContext, name: string): Promise
   const next: VaultState = { ...state, groups: { ...state.groups, [name]: updated } }
   const encoded = utf8(encodeSecretKey(key))
 
-  txn.put(wrapPath(name, gen, { kind: 'operator' }), await seal([state.operator.recipient], encoded))
+  txn.put(wrapPath(name, gen, { kind: 'owner' }), await seal([state.owner.recipient], encoded))
   for (const includer of includersOf(state.groups, name)) {
     const holder = state.groups[includer]
     if (holder === undefined) continue
@@ -64,10 +64,10 @@ export async function rotateGroup(context: RotateContext, name: string): Promise
     const resealed = await sealEntry(
       { ...draft, payload: exposed ? { ...payload, needsRotation: true } : payload },
       next,
-      signerOf(operator),
+      signerOf(owner),
     )
     txn.put(`entries/${envelope.id}.json`, `${JSON.stringify(resealed, null, 2)}\n`)
   }
-  txn.put('groups.json', groupsDoc(next.groups, operator, state.seqs.groups + 1))
+  txn.put('groups.json', groupsDoc(next.groups, owner, state.seqs.groups + 1))
   return affected.sort()
 }

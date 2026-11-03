@@ -39,7 +39,7 @@ export class SealedAccess implements Access {
   }
 
   async #vault(): Promise<Vault> {
-    if (this.#layout === undefined || !existsSync(this.#layout.operatorFile)) {
+    if (this.#layout === undefined || !existsSync(this.#layout.ownerFile)) {
       throw new TypeVaultError('unavailable', 'writing with a sealed grant needs the vault directory')
     }
     return Vault.open(this.#layout, [], this.#env)
@@ -48,7 +48,7 @@ export class SealedAccess implements Access {
   /** Best effort: a sealed grant may run where no vault directory exists. */
   async #audit(event: Omit<AuditEvent, 'mode' | 'grant' | 'label'>): Promise<void> {
     const layout = this.#layout
-    if (layout === undefined || !existsSync(layout.operatorFile)) return
+    if (layout === undefined || !existsSync(layout.ownerFile)) return
     await appendAudit(layout, { ...event, mode: 'sealed', grant: this.#bundle.id, label: this.#bundle.label })
   }
 

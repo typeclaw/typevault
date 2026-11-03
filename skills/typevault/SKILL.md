@@ -1,10 +1,10 @@
 ---
 name: typevault
-description: Use secrets from a typevault vault without leaking them into transcripts. Use when a task needs an API key, password, token, OAuth credential, SSH key or TOTP code, when a project has a `.typevault/` directory or `TYPEVAULT_GRANT` is set, or when the user mentions typevault, storing a secret, granting an agent access, or redacting secrets from output.
+description: Use secrets from a TypeVault vault without leaking them into transcripts. Use when a task needs an API key, password, token, OAuth credential, SSH key or TOTP code, when a project has a `.typevault/` directory or `TYPEVAULT_GRANT` is set, or when the user mentions TypeVault, storing a secret, granting an agent access, or redacting secrets from output.
 allowed-tools: Bash(typevault:*), Bash(bunx typevault:*)
 ---
 
-# typevault
+# TypeVault
 
 A CLI-first secrets vault for agents. Secrets are age-encrypted files in `.typevault/` (per project) or
 `~/.config/typevault` (global, `-g`). Agents reach them through a grant. With a live grant every read is audited; a sealed grant is audited
@@ -62,7 +62,7 @@ typevault run --only 'tv://openai,tv://stripe' -- bun run deploy
   first: `typevault run -- sh -c 'curl -H "Authorization: Bearer $OPENAI_KEY" ...'`.
 - TOTP fields hold the current code, never the seed.
 - `run` loads every entry from the groups you hold directly. An entry from an included group loads only when `--only`
-  names it exactly (no globs). In direct mode (no grant) the operator holds no group directly, so name what you need
+  names it exactly (no globs). In direct mode (no grant) the owner holds no group directly, so name what you need
   with `--only`.
 - Variables like `PATH`, `LD_*`, `NODE_OPTIONS`, `GIT_*`, `HTTPS_PROXY` are never set from the vault, and the child
   never sees `TYPEVAULT_*`.
@@ -101,7 +101,7 @@ Prints a one-time URL and a match code; give both to the user, then the command 
 browser encrypts the value before submitting it, and it is stored as the named entry. Needs a live grant (the daemon
 serves the page).
 
-## Import (operator)
+## Import (owner)
 
 Run these only when the user asks; they write with local keys, not a grant.
 
@@ -114,7 +114,7 @@ typevault import dotenv .env --group default                           # also: t
 
 KeePass reads its password from `--password-stdin`.
 
-## Grants (operator or launcher)
+## Grants (owner or launcher)
 
 An agent should hold a grant, not keys. Without `TYPEVAULT_GRANT`, the CLI uses local keys (direct mode).
 
@@ -137,12 +137,12 @@ grants start the daemon automatically.
 ## Troubleshooting
 
 - **No vault found**: you're outside a project. Run `typevault init` there, or use `-g` for the global vault.
-- **Entry not listed**: your grant doesn't reach its group. Ask the operator for a grant that does; don't work around
+- **Entry not listed**: your grant doesn't reach its group. Ask the owner for a grant that does; don't work around
   it.
 - **Same variable set by two entries**: narrow with `--only`.
-- **Name held by unrelated groups**: the operator settles it with `typevault rm <name> --group <g>`.
-- **Signature or merge problems after a git pull**: `typevault doctor --fix` (operator).
-- **Daemon trouble with a live grant**: check `typevault daemon status`, then ask the operator. Don't stop the daemon
+- **Name held by unrelated groups**: the owner settles it with `typevault rm <name> --group <g>`.
+- **Signature or merge problems after a git pull**: `typevault doctor --fix` (owner).
+- **Daemon trouble with a live grant**: check `typevault daemon status`, then ask the owner. Don't stop the daemon
   yourself: restarting it needs keys a grant doesn't carry.
 
 Run `typevault <command> --help` for every flag.

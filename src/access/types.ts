@@ -20,7 +20,7 @@ export type EntryValue = EntrySummary & {
   readonly fields: Readonly<Record<string, string>>
   readonly env?: string
   readonly origin?: string
-  /** Written by the operator or by a key that reaches all of the reader's own groups: its `--env` override counts. */
+  /** Written by the owner or by a key that reaches all of the reader's own groups: its `--env` override counts. */
   readonly trustedWriter?: boolean
 }
 
@@ -95,7 +95,7 @@ export const toSummary = (value: EntryValue): EntrySummary => ({
 
 /** Whether `signer` is at least as privileged as a reader holding `ownGroups`. */
 export function writtenFromAbove(signer: SignerRef, state: VaultState, ownGroups: readonly string[]): boolean {
-  if (signer.kind === 'operator') return true
+  if (signer.kind === 'owner') return true
   const groups =
     signer.kind === 'group'
       ? [signer.group]

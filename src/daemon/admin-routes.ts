@@ -7,7 +7,7 @@ import type { DaemonContext } from './agent-routes'
 import { type Handler, json, parseBody } from './http'
 import { AuditBody, GrantBody, RevokeBody } from './protocol'
 
-/** `*` means the operator's own socket: no ceiling. */
+/** `*` means the owner's own socket: no ceiling. */
 export type Ceiling = { readonly name: string; readonly group: string | '*' }
 
 function checkCeiling(context: DaemonContext, ceiling: Ceiling, groups: readonly string[]): void {
@@ -85,7 +85,7 @@ export function adminRoutes(context: DaemonContext, ceiling: Ceiling): Readonly<
     '/v1/audit': async (request) => {
       // The trail names entries of every group, so only the uncapped socket may read it.
       if (ceiling.group !== '*')
-        throw new TypeVaultError('denied', 'the audit trail is only readable on the operator socket')
+        throw new TypeVaultError('denied', 'the audit trail is only readable on the owner socket')
       const { label } = await parseBody(request, AuditBody)
       return json(readAudit(context.vault.layout).filter((record) => label === undefined || record['label'] === label))
     },

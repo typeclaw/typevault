@@ -26,15 +26,15 @@ afterEach(() => rmSync(base, { recursive: true, force: true }))
 it('finds the project vault from a nested directory and reads it with the keys kept outside', async () => {
   // given a project vault holding one entry
   const created = await initLocalVault(join(project, '.typevault'), env)
-  const operator = decodeSecretKey(readFileSync(created.operatorKey, 'utf8'))
-  const writer = await Vault.open(created, [operator], env)
+  const owner = decodeSecretKey(readFileSync(created.ownerKey, 'utf8'))
+  const writer = await Vault.open(created, [owner], env)
   await new Admin(writer).addGroup('member')
   const input = { name: parseEntryName('openai'), type: 'api_key', fields: { key: 'sk-x' }, group: 'member' } as const
-  await writer.put(input, signerOf(operator))
+  await writer.put(input, signerOf(owner))
 
   // when it is looked up from a nested directory
   const layout = layoutFrom(env, join(project, 'src', 'deep'))
-  const found = await (await Vault.open(layout, [operator], env)).find(parseEntryName('openai'))
+  const found = await (await Vault.open(layout, [owner], env)).find(parseEntryName('openai'))
 
   // then it is the same vault and the entry reads back
   expect(layout).toMatchObject({ scope: 'local', vault: created.vault, root: created.root })

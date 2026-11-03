@@ -116,7 +116,7 @@ export class Vault {
     return this.#keys
   }
 
-  /** Re-reads operator-signed state; call after another process may have changed it. */
+  /** Re-reads owner-signed state; call after another process may have changed it. */
   refresh(): void {
     this.#state = loadState(this.layout, this.#env)
     this.#keyring = new Keyring(this.layout, this.#state, this.#keys)

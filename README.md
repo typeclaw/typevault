@@ -10,7 +10,7 @@ grant allows. Every read leaves a trail, and values stay out of model context.
 - **Short-lived grants**: an agent gets a grant scoped to groups, entry patterns and a TTL; a daemon holds the keys, serves values and audits every read
 - **Instant revocation**: live grants die the moment you revoke them, along with every grant derived from them
 - **Sealed grants for CI**: self-contained grants work with no daemon for one-shot containers and pipelines
-- **Ceilings without a human in the loop**: an operator-signed ceiling caps what each admin socket may grant, so a launcher can mint grants unattended but never above its cap
+- **Ceilings without a human in the loop**: an owner-signed ceiling caps what each admin socket may grant, so a launcher can mint grants unattended but never above its cap
 
 ## Groups are keys: access enforced by cryptography
 
@@ -102,7 +102,7 @@ lands in the wrong one. `-g` goes before `--` in `run`; `TYPEVAULT_GLOBAL=1` doe
 `TYPEVAULT_DIR` always selects the vault kept whole at that path.
 
 A project vault holds only ciphertext and signed manifests, so commit `.typevault/` as is. Its keys live under
-`~/.config/typevault/vaults/<id>/`, where `<id>` comes from the vault's operator key, so every clone of the project
+`~/.config/typevault/vaults/<id>/`, where `<id>` comes from the vault's owner key, so every clone of the project
 finds them. Each checkout keeps its own trust pin, audit log and daemon under `~/.config/typevault/checkouts/<id>/`. A collaborator gets access with `TYPEVAULT_KEY` (`typevault key export`) or a
 grant, as with the global vault.
 
@@ -144,11 +144,11 @@ caller holds directly. An entry from an included group is loaded only when `--on
 change how programs load code or route traffic (`PATH`, `LD_*`, `NODE_OPTIONS`, `GIT_*`, `HTTPS_PROXY`, ...) are never set
 from the vault. The child never receives `TYPEVAULT_*` variables.
 
-An entry from an included group keeps its `--env` override only when the operator, or a key at least as privileged as
-the caller, wrote it; otherwise it gets the derived name. The operator holds no group directly, so the operator's own `run` loads only what `--only` names.
+An entry from an included group keeps its `--env` override only when the owner, or a key at least as privileged as
+the caller, wrote it; otherwise it gets the derived name. The owner holds no group directly, so the owner's own `run` loads only what `--only` names.
 
 When the same name exists in several groups, the copy in the higher group wins; timestamps never decide. If two
-unrelated groups hold it, reads of that name fail until the operator keeps one: `typevault rm <name> --group <g>`.
+unrelated groups hold it, reads of that name fail until the owner keeps one: `typevault rm <name> --group <g>`.
 
 ### References in the environment
 
@@ -173,7 +173,7 @@ variables (`PATH`, `NODE_OPTIONS`, ...) are refused, and a reference naming a va
 
 A sealed grant can write, within its groups and `--only`, until its certificate expires by the **reader's** clock.
 A daemon (every minute) or `typevault doctor --fix` adopts those writes by re-signing them. Writes nobody adopts
-before expiry stop being trusted; the operator can still keep them with `typevault doctor --fix --adopt-expired`.
+before expiry stop being trusted; the owner can still keep them with `typevault doctor --fix --adopt-expired`.
 
 ```sh
 typevault grant --group member --only 'tv://github/*' --ttl 30m --label ci:deploy
@@ -183,11 +183,11 @@ TYPEVAULT_GRANT=@/run/agent/grant typevault run -- ./deploy.sh
 ```
 
 `TYPEVAULT_GRANT` takes a live grant (`tvl1.…`), a sealed one (`tvg1:…`) or `@path` to a file holding a sealed one.
-Without it, the CLI uses local keys (direct mode: the operator, or a launcher with `TYPEVAULT_KEY`).
+Without it, the CLI uses local keys (direct mode: the owner, or a launcher with `TYPEVAULT_KEY`).
 
 ### Ceilings
 
-Each admin socket (`run/admin-<name>.sock`) may issue grants only up to its ceiling, signed by the operator:
+Each admin socket (`run/admin-<name>.sock`) may issue grants only up to its ceiling, signed by the owner:
 
 ```sh
 typevault ceiling set bot member                 # admin-bot.sock can grant member and below
@@ -195,7 +195,7 @@ TYPEVAULT_CEILING=bot typevault grant --group member
 ```
 
 The socket is the caller's identity, so protect it with file permissions or by mounting it only where it belongs.
-A capped socket lists and revokes only the grants it issued, and only the uncapped operator socket reads the audit trail.
+A capped socket lists and revokes only the grants it issued, and only the uncapped owner socket reads the audit trail.
 Processes under one OS user that can reach the same socket share its ceiling; per-session enforcement needs isolation
 (typeclaw sandboxes each session and mounts only the agent socket).
 
@@ -245,7 +245,7 @@ refuses unless you pass `direct: true`, which loads this machine's keys into you
 `createAdmin` takes `dir`, `ceiling` and `env`, and offers `grant`, `list` and `revoke`. Both take `global: true` to use
 the global vault, like `-g`.
 
-## Operator tasks
+## Owner tasks
 
 ```sh
 typevault key export member                      # TYPEVAULT_KEY for a CI launcher or remote daemon
@@ -262,7 +262,7 @@ typevault daemon status                          # also: daemon start | stop | r
 
 `group`, `ceiling` and `signer` each also have `ls` and `rm`.
 
-Operator key rotation and recovery are manual: back up `keys/operator.key` offline.
+Owner key rotation and recovery are manual: back up `keys/owner.key` offline.
 
 ### Importing from 1Password
 
@@ -312,7 +312,7 @@ typevault import csv secrets.csv --group member
 | `TYPEVAULT_KEY`                                 | Use only this key instead of the local key directory (`key export`)                                            |
 | `TYPEVAULT_GROUP`                               | Default group for `set` in direct mode                                                                         |
 | `TYPEVAULT_CEILING`                             | Admin socket to grant through (default `default`)                                                              |
-| `TYPEVAULT_OPERATOR`                            | Pin the operator key instead of trusting it on first use                                                       |
+| `TYPEVAULT_OWNER`                               | Pin the owner key instead of trusting it on first use                                                          |
 | `TYPEVAULT_PROMPT_PORT`, `TYPEVAULT_PUBLIC_URL` | Where the daemon serves `request` pages                                                                        |
 
 ## Layout
@@ -322,8 +322,8 @@ $TYPEVAULT_DIR/
   vault/            # ciphertext only, safe to commit
     entries/        # one signed file per entry, opaque names
     groups/         # wrapped group keys
-    groups.json signers.json ceilings.json   # operator-signed
-    operator.json
+    groups.json signers.json ceilings.json   # owner-signed
+    owner.json
     audit-anchors/  # one file per checkout's audit chain
   keys/             # private keys (0600), never commit
   audit/            # full local audit log

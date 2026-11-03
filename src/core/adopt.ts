@@ -16,12 +16,12 @@ export function adoptCertWrites(
   options: { readonly expired?: boolean } = {},
 ): Promise<readonly string[]> {
   return withLock(vault.layout.lockFile, 'exclusive', async () => {
-    // `expired` is the operator's explicit call to keep writes nobody adopted before their certificate ran out.
+    // `expired` is the owner's explicit call to keep writes nobody adopted before their certificate ran out.
     const { entries } = await vault.scan({ acceptExpiredCerts: options.expired === true })
     const adopted: string[] = []
     for (const { envelope, payload } of entries) {
       if (envelope.signer.kind !== 'cert') continue
-      const key = (await vault.keyring.unlock(envelope.group)) ?? vault.keyring.operator
+      const key = (await vault.keyring.unlock(envelope.group)) ?? vault.keyring.owner
       if (key === undefined) continue
       const draft = { id: envelope.id, group: envelope.group, rev: envelope.rev + 1, at: new Date().toISOString() }
       const resigned = signCiphertext(draft, fromBase64(envelope.payload), vault.state, signerOf(key))

@@ -15,26 +15,26 @@ import { Vault } from './core/vault'
 import { type RunningDaemon, startDaemon } from './daemon/daemon'
 
 let root: string
-let operator: SecretKey
+let owner: SecretKey
 let daemon: RunningDaemon
 const n = parseEntryName
 
 beforeEach(async () => {
   // Short root: unix socket paths are limited to ~104 bytes.
   root = mkdtempSync('/tmp/tvs-')
-  operator = await initVault(root)
-  const vault = await Vault.open(layoutOf(root), [operator], {})
+  owner = await initVault(root)
+  const vault = await Vault.open(layoutOf(root), [owner], {})
   const admin = new Admin(vault)
   await admin.addGroup('member')
   await admin.addGroup('trusted')
   await admin.include('trusted', 'member')
   await vault.put(
     { name: n('openai'), type: 'api_key', fields: { key: 'sk-test-openai' }, group: 'member' },
-    signerOf(operator),
+    signerOf(owner),
   )
   await vault.put(
     { name: n('stripe'), type: 'api_key', fields: { key: 'sk_live_x' }, group: 'trusted' },
-    signerOf(operator),
+    signerOf(owner),
   )
   daemon = await startDaemon({ layout: layoutOf(root), env: { TYPEVAULT_DIR: root } })
 })

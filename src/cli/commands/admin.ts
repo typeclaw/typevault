@@ -15,21 +15,19 @@ import { openAdmin, openDirect, wantsGlobal } from '../context'
 import { csv, note, print, table } from '../output'
 
 export const init = defineCommand({
-  meta: { name: 'init', description: 'Create a vault and its operator key' },
+  meta: { name: 'init', description: 'Create a vault and its owner key' },
   async run() {
     const env = process.env
     const global = wantsGlobal(env)
     const layout = global ? layoutOf(resolveRoot(env)) : await initLocalVault(join(process.cwd(), LOCAL_VAULT_DIR), env)
-    // The new vault's own operator key, never an inherited TYPEVAULT_KEY that belongs to some other vault.
-    const operatorKey = global
-      ? await initVault(layout.root)
-      : decodeSecretKey(readFileSync(layout.operatorKey, 'utf8'))
-    await new Admin(await Vault.open(layout, [operatorKey], env)).addGroup(STARTER_GROUP)
+    // The new vault's own owner key, never an inherited TYPEVAULT_KEY that belongs to some other vault.
+    const ownerKey = global ? await initVault(layout.root) : decodeSecretKey(readFileSync(layout.ownerKey, 'utf8'))
+    await new Admin(await Vault.open(layout, [ownerKey], env)).addGroup(STARTER_GROUP)
     print(`vault created at ${global ? layout.root : layout.vault} with group "${STARTER_GROUP}"`)
     const commit = global
       ? 'Only vault/ is safe to commit.'
       : `Commit ${LOCAL_VAULT_DIR}/; its keys stay in ${layout.keys}.`
-    note(`operator key: ${layout.operatorKey}\nBack it up offline: it is the only recovery path. ${commit}`)
+    note(`owner key: ${layout.ownerKey}\nBack it up offline: it is the only recovery path. ${commit}`)
     note('next: typevault set <name> --type ... --stdin (more groups: typevault group add <name>)')
   },
 })
@@ -44,7 +42,7 @@ const pair = {
 } as const
 
 export const group = defineCommand({
-  meta: { name: 'group', description: 'Manage groups (operator)' },
+  meta: { name: 'group', description: 'Manage groups (owner)' },
   subCommands: {
     ls: defineCommand({
       meta: { name: 'ls' },
@@ -91,7 +89,7 @@ function printRotation(groupName: string, affected: readonly string[]): void {
 }
 
 export const key = defineCommand({
-  meta: { name: 'key', description: 'Export or rotate group keys (operator)' },
+  meta: { name: 'key', description: 'Export or rotate group keys (owner)' },
   subCommands: {
     export: defineCommand({
       meta: { name: 'export', description: 'Print a group key for a launcher, CI secret or daemon (TYPEVAULT_KEY)' },
@@ -107,7 +105,7 @@ export const key = defineCommand({
 })
 
 export const ceiling = defineCommand({
-  meta: { name: 'ceiling', description: 'The most an admin socket may grant (operator)' },
+  meta: { name: 'ceiling', description: 'The most an admin socket may grant (owner)' },
   subCommands: {
     ls: defineCommand({
       meta: { name: 'ls' },
@@ -130,7 +128,7 @@ export const ceiling = defineCommand({
 })
 
 export const signer = defineCommand({
-  meta: { name: 'signer', description: 'Extra keys allowed to sign entries (operator)' },
+  meta: { name: 'signer', description: 'Extra keys allowed to sign entries (owner)' },
   subCommands: {
     ls: defineCommand({
       meta: { name: 'ls' },

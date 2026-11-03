@@ -72,13 +72,13 @@ export class PromptRequests {
       reason: input.reason,
       requester: grant.label,
       code,
-      recipients: [meta.recipient, state.operator.recipient],
+      recipients: [meta.recipient, state.owner.recipient],
       expiresAt: new Date(Date.now() + TTL_MS),
     })
     // Whoever holds the URL can submit, the requesting agent included, so the daemon checks what it got instead
     // of signing it blind: it must be exactly the requested entry, and the grant must still be live.
     const stored = handle.done.then(async (ciphertext) => {
-      const key = (await this.#vault.keyring.unlock(group)) ?? this.#vault.keyring.operator
+      const key = (await this.#vault.keyring.unlock(group)) ?? this.#vault.keyring.owner
       if (key === undefined) throw new TypeVaultError('denied', `no key here can read group "${group}"`)
       const payload = decodePayload(await unseal([key.identity], ciphertext))
       if (
