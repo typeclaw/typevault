@@ -10,7 +10,7 @@ grant allows. Every read leaves a trail, and values stay out of model context.
 - **Short-lived grants**: an agent gets a grant scoped to tiers, entry patterns and a TTL; a daemon holds the keys, serves values and audits every read
 - **Instant revocation**: live grants die the moment you revoke them, along with every grant derived from them
 - **Sealed grants for CI**: self-contained grants work with no daemon for one-shot containers and pipelines
-- **Ceilings without a human in the loop**: an owner-signed ceiling caps what each admin socket may grant, so a launcher can mint grants unattended but never above its cap
+- **Ceilings without a human in the loop**: an owner-signed ceiling caps what each admin socket may grant, so an issuer can mint grants unattended but never above its cap
 
 ## Tiers are keys: access enforced by cryptography
 
@@ -51,7 +51,7 @@ grant allows. Every read leaves a trail, and values stay out of model context.
 
 ## SDK: the same access in-process
 
-- **Three entry points**: `typevault` for clients, `typevault/admin` for launchers that mint grants, and `typevault/redact` for scrubbing output
+- **Three entry points**: `typevault` for clients, `typevault/admin` for issuers that mint grants, and `typevault/redact` for scrubbing output
 - **Agent skill included**: [`skills/typevault`](./skills/typevault) teaches coding agents to use grants, `run` and references correctly
 
 TypeVault is general-purpose: any agent runtime can use it. [TypeClaw](https://github.com/typeclaw/typeclaw) is its first consumer, sandboxing each session and mounting only the agent socket.
@@ -183,7 +183,7 @@ TYPEVAULT_GRANT=@/run/agent/grant typevault run -- ./deploy.sh
 ```
 
 `TYPEVAULT_GRANT` takes a live grant (`tvl1.…`), a sealed one (`tvg1:…`) or `@path` to a file holding a sealed one.
-Without it, the CLI uses local keys (direct mode: the owner, or a launcher with `TYPEVAULT_KEY`).
+Without it, the CLI uses local keys (direct mode: the owner, or an issuer with `TYPEVAULT_KEY`).
 
 ### Ceilings
 
@@ -228,7 +228,7 @@ import { createClient, parseEntryName } from 'typevault'
 import { createAdmin } from 'typevault/admin'
 import { createRedactor } from 'typevault/redact'
 
-// A launcher issues a grant within its socket's ceiling...
+// An issuer issues a grant within its socket's ceiling...
 const grant = await createAdmin({ ceiling: 'bot' }).grant({ tiers: ['member'], ttl: '30m', label: 'session:abc' })
 
 // ...and the agent side reads through it (live via the daemon, or sealed in-process).
@@ -241,14 +241,14 @@ const redactor = createRedactor(await vault.readValues())
 
 `createClient` takes `grant` (default `TYPEVAULT_GRANT`), `dir` and `env`; `dir` (default `TYPEVAULT_DIR`) selects a
 global-style vault, and without it the vault is chosen like the CLI's. Without a grant it
-refuses unless you pass `direct: true`, which loads this machine's keys into your process; keep that to launchers.
+refuses unless you pass `direct: true`, which loads this machine's keys into your process; keep that to issuers.
 `createAdmin` takes `dir`, `ceiling` and `env`, and offers `grant`, `list` and `revoke`. Both take `global: true` to use
 the global vault, like `-g`.
 
 ## Owner tasks
 
 ```sh
-typevault key export member                      # TYPEVAULT_KEY for a CI launcher or remote daemon
+typevault key export member                      # TYPEVAULT_KEY for a CI issuer or remote daemon
 typevault key rotate member                      # new generation; lists every secret to rotate at its source
 typevault tier exclude trusted member           # drop an include (rotates member)
 typevault signer add ci-bot <ed25519-public-key> --tiers member

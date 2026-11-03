@@ -92,7 +92,7 @@ export const key = defineCommand({
   meta: { name: 'key', description: 'Export or rotate tier keys (owner)' },
   subCommands: {
     export: defineCommand({
-      meta: { name: 'export', description: 'Print a tier key for a launcher, CI secret or daemon (TYPEVAULT_KEY)' },
+      meta: { name: 'export', description: 'Print a tier key for an issuer, CI secret or daemon (TYPEVAULT_KEY)' },
       args: named,
       run: async ({ args }) => print(await (await openAdmin(process.env)).exportKey(args.name)),
     }),

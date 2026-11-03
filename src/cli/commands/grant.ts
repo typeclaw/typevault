@@ -57,7 +57,7 @@ export const grant = defineCommand({
     const tiers = csv(args.tier)
     if (tiers.length === 0) throw new TypeVaultError('invalid', 'grant needs --tier')
     const request = { tiers, only: csv(args.only), ttl: args.ttl, label: args.label ?? 'unlabeled' }
-    // A launcher holding a key (CI) seals locally; everything else asks the daemon within its ceiling.
+    // An issuer holding a key (CI) seals locally; everything else asks the daemon within its ceiling.
     if (args.sealed && loadLocalKeys(layoutFrom(env), env).length > 0) {
       const vault = await openDirect(env)
       return print(await issueSealedGrant(vault, { ...request, ttlMs: parseTtl(args.ttl) }))

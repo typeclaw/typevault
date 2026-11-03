@@ -38,7 +38,7 @@ export function layoutFrom(env: Env, cwd: string = process.cwd()): Layout {
   return layout
 }
 
-/** The vault opened with this machine's own keys: direct mode, for the owner and launchers. */
+/** The vault opened with this machine's own keys: direct mode, for the owner and issuers. */
 export async function openDirect(env: Env): Promise<Vault> {
   const layout = layoutFrom(env)
   const keys = loadLocalKeys(layout, env)

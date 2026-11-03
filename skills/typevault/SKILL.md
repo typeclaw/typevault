@@ -114,7 +114,7 @@ typevault import dotenv .env --tier default                           # also: ty
 
 KeePass reads its password from `--password-stdin`.
 
-## Grants (owner or launcher)
+## Grants (owner or issuer)
 
 An agent should hold a grant, not keys. Without `TYPEVAULT_GRANT`, the CLI uses local keys (direct mode).
 
