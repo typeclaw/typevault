@@ -94,8 +94,21 @@ name in `run`.
 typevault request resend --type api_key --reason "send the weekly digest"
 ```
 
-Prints a one-time URL; give it to the user. Their browser encrypts the value before submitting it, and it is stored
-as the named entry. Needs a live grant (the daemon serves the page).
+Prints a one-time URL and a match code; give both to the user, then the command waits until they submit. Their
+browser encrypts the value before submitting it, and it is stored as the named entry. Needs a live grant (the daemon
+serves the page).
+
+## Import (operator)
+
+Run these only when the user asks; they write with local keys, not a grant.
+
+```sh
+typevault import 1password --account Acme --group default             # straight from the 1Password app; the user approves in 1Password
+typevault import 1password --via op --vault Work --tag agents --group default
+typevault import dotenv .env --group default                           # also: typeclaw, 1password (.1pux), bitwarden, lastpass, keepass, csv
+```
+
+KeePass reads its password from `--password-stdin`.
 
 ## Grants (operator or launcher)
 
@@ -125,5 +138,7 @@ grants start the daemon automatically.
 - **Same variable set by two entries**: narrow with `--only`.
 - **Name held by unrelated groups**: the operator settles it with `typevault rm <name> --group <g>`.
 - **Signature or merge problems after a git pull**: `typevault doctor --fix` (operator).
+- **Daemon trouble with a live grant**: check `typevault daemon status`, then ask the operator. Don't stop the daemon
+  yourself: restarting it needs keys a grant doesn't carry.
 
 Run `typevault <command> --help` for every flag.
