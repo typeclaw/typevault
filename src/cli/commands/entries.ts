@@ -26,14 +26,14 @@ export const ls = defineCommand({
     const rows = entries.map((e) => [
       e.name,
       e.type,
-      e.group,
+      e.tier,
       `r${e.rev}`,
       e.rotated.slice(0, 10),
       e.needsRotation ? 'needs-rotation' : '',
     ])
     print(
       table([
-        ['NAME', 'TYPE', 'GROUP', 'REV', 'ROTATED', ''],
+        ['NAME', 'TYPE', 'TIER', 'REV', 'ROTATED', ''],
         ...rows.sort((a, b) => (a[0] ?? '').localeCompare(b[0] ?? '')),
       ]),
     )
@@ -107,9 +107,9 @@ export const set = defineCommand({
   args: {
     name: { type: 'positional', description: ENTRY_NAME_SYNTAX, required: true },
     type: { type: 'string', description: 'password | api_key | oauth | ssh | totp | note' },
-    group: {
+    tier: {
       type: 'string',
-      description: "Group (defaults to your grant's group; in direct mode, $TYPEVAULT_GROUP or the vault's only group)",
+      description: "Tier (defaults to your grant's tier; in direct mode, $TYPEVAULT_TIER or the vault's only tier)",
     },
     field: { type: 'string', description: 'k=v, repeatable (non-secret fields; use --stdin for the secret)' },
     stdin: { type: 'boolean', description: 'Read the main secret field from stdin' },
@@ -139,13 +139,13 @@ export const set = defineCommand({
       name,
       type,
       fields: { ...base, ...fields },
-      group: args.group ?? existing?.group,
+      tier: args.tier ?? existing?.tier,
       env: args.env,
       origin: args.origin,
       ...(tags.length === 0 ? {} : { tags }),
       ifRev,
     })
-    note(`stored ${stored.name} in ${stored.group} (r${stored.rev})`)
+    note(`stored ${stored.name} in ${stored.tier} (r${stored.rev})`)
   },
 })
 
@@ -153,10 +153,10 @@ export const rm = defineCommand({
   meta: { name: 'rm', description: 'Remove an entry' },
   args: {
     name: { type: 'positional', description: ENTRY_NAME_SYNTAX, required: true },
-    group: { type: 'string', description: 'Remove the copy in this group (settles a name held by unrelated groups)' },
+    tier: { type: 'string', description: 'Remove the copy in this tier (settles a name held by unrelated tiers)' },
   },
   async run({ args }) {
-    await (await accessOf(process.env)).remove(parseEntryName(args.name), args.group)
+    await (await accessOf(process.env)).remove(parseEntryName(args.name), args.tier)
     note(`removed ${args.name}. Git history still holds its old ciphertext: rotate the secret if it mattered.`)
   },
 })

@@ -1,10 +1,10 @@
 ---
 name: typevault
-description: Use secrets from a typevault vault without leaking them into transcripts. Use when a task needs an API key, password, token, OAuth credential, SSH key or TOTP code, when a project has a `.typevault/` directory or `TYPEVAULT_GRANT` is set, or when the user mentions typevault, storing a secret, granting an agent access, or redacting secrets from output.
+description: Use secrets from a TypeVault vault without leaking them into transcripts. Use when a task needs an API key, password, token, OAuth credential, SSH key or TOTP code, when a project has a `.typevault/` directory or `TYPEVAULT_GRANT` is set, or when the user mentions TypeVault, storing a secret, granting an agent access, or redacting secrets from output.
 allowed-tools: Bash(typevault:*), Bash(bunx typevault:*)
 ---
 
-# typevault
+# TypeVault
 
 A CLI-first secrets vault for agents. Secrets are age-encrypted files in `.typevault/` (per project) or
 `~/.config/typevault` (global, `-g`). Agents reach them through a grant. With a live grant every read is audited; a sealed grant is audited
@@ -61,8 +61,8 @@ typevault run --only 'tv://openai,tv://stripe' -- bun run deploy
 - Write `$VAR` references in single quotes or as arguments the child expands, so your shell doesn't expand them
   first: `typevault run -- sh -c 'curl -H "Authorization: Bearer $OPENAI_KEY" ...'`.
 - TOTP fields hold the current code, never the seed.
-- `run` loads every entry from the groups you hold directly. An entry from an included group loads only when `--only`
-  names it exactly (no globs). In direct mode (no grant) the operator holds no group directly, so name what you need
+- `run` loads every entry from the tiers you hold directly. An entry from an included tier loads only when `--only`
+  names it exactly (no globs). In direct mode (no grant) the owner holds no tier directly, so name what you need
   with `--only`.
 - Variables like `PATH`, `LD_*`, `NODE_OPTIONS`, `GIT_*`, `HTTPS_PROXY` are never set from the vault, and the child
   never sees `TYPEVAULT_*`.
@@ -88,7 +88,7 @@ typevault rm tv://github/ci
 ```
 
 Never type a secret value into a command, even piped: the command text lands in your transcript. Read it from an
-existing env var or a file you don't open. `--group` defaults to your grant's group (or the vault's only group). Add `--env NAME` to choose the main field's env
+existing env var or a file you don't open. `--tier` defaults to your grant's tier (or the vault's only tier). Add `--env NAME` to choose the main field's env
 name in `run`.
 
 ## Ask a human
@@ -101,20 +101,20 @@ Prints a one-time URL and a match code; give both to the user, then the command 
 browser encrypts the value before submitting it, and it is stored as the named entry. Needs a live grant (the daemon
 serves the page).
 
-## Import (operator)
+## Import (owner)
 
 Run these only when the user asks; they write with local keys, not a grant.
 
 ```sh
-typevault import 1password --account Acme --group default             # straight from the 1Password app; the user approves in 1Password
-typevault import 1password --via op --vault Work --tag agents --group default   # items tagged agents/<field> import only that field
+typevault import 1password --account Acme --tier default             # straight from the 1Password app; the user approves in 1Password
+typevault import 1password --via op --vault Work --tag agents --tier default   # items tagged agents/<field> import only that field
 # --account, --vault and --tag repeat: any value of a flag matches, every flag must match
-typevault import dotenv .env --group default                           # also: typeclaw, 1password (.1pux), bitwarden, lastpass, keepass, csv
+typevault import dotenv .env --tier default                           # also: typeclaw, 1password (.1pux), bitwarden, lastpass, keepass, csv
 ```
 
 KeePass reads its password from `--password-stdin`.
 
-## Grants (operator or launcher)
+## Grants (owner or issuer)
 
 An agent should hold a grant, not keys. Without `TYPEVAULT_GRANT`, the CLI uses local keys (direct mode).
 
@@ -122,10 +122,10 @@ An agent should hold a grant, not keys. Without `TYPEVAULT_GRANT`, the CLI uses 
 be revoked. Never let it reach output; capture it into a variable, or a sealed one into a `0600` file.
 
 ```sh
-typevault init                                         # new project vault with a `default` group
-export TYPEVAULT_GRANT=$(typevault grant --group default --ttl 1h --label session:abc)
-DEPLOY_GRANT=$(typevault grant --group member --only 'tv://github/*' --ttl 30m --label ci:deploy)
-(umask 077; typevault grant --group member --sealed --label ci:build > build.grant)   # offline, for CI; no revocation
+typevault init                                         # new project vault with a `default` tier
+export TYPEVAULT_GRANT=$(typevault grant --tier default --ttl 1h --label session:abc)
+DEPLOY_GRANT=$(typevault grant --tier member --only 'tv://github/*' --ttl 30m --label ci:deploy)
+(umask 077; typevault grant --tier member --sealed --label ci:build > build.grant)   # offline, for CI; no revocation
 TYPEVAULT_GRANT=@build.grant typevault ls
 typevault grant ls                                     # metadata only, no tokens
 typevault grant revoke --label ci:deploy
@@ -137,12 +137,12 @@ grants start the daemon automatically.
 ## Troubleshooting
 
 - **No vault found**: you're outside a project. Run `typevault init` there, or use `-g` for the global vault.
-- **Entry not listed**: your grant doesn't reach its group. Ask the operator for a grant that does; don't work around
+- **Entry not listed**: your grant doesn't reach its tier. Ask the owner for a grant that does; don't work around
   it.
 - **Same variable set by two entries**: narrow with `--only`.
-- **Name held by unrelated groups**: the operator settles it with `typevault rm <name> --group <g>`.
-- **Signature or merge problems after a git pull**: `typevault doctor --fix` (operator).
-- **Daemon trouble with a live grant**: check `typevault daemon status`, then ask the operator. Don't stop the daemon
+- **Name held by unrelated tiers**: the owner settles it with `typevault rm <name> --tier <g>`.
+- **Signature or merge problems after a git pull**: `typevault doctor --fix` (owner).
+- **Daemon trouble with a live grant**: check `typevault daemon status`, then ask the owner. Don't stop the daemon
   yourself: restarting it needs keys a grant doesn't carry.
 
 Run `typevault <command> --help` for every flag.

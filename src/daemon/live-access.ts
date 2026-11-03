@@ -40,16 +40,16 @@ export class LiveAccess implements Access {
     return toSummaryValue(await this.call('/v1/set', input, EntrySummarySchema))
   }
 
-  async remove(name: EntryName, group?: string): Promise<void> {
-    await this.call('/v1/remove', { name, ...(group === undefined ? {} : { group }) }, Ok)
+  async remove(name: EntryName, tier?: string): Promise<void> {
+    await this.call('/v1/remove', { name, ...(tier === undefined ? {} : { tier }) }, Ok)
   }
 
   async move(from: EntryName, to: EntryName): Promise<void> {
     await this.call('/v1/move', { from, to }, Ok)
   }
 
-  async ownGroups(): Promise<readonly string[]> {
-    return (await this.call('/v1/whoami', {}, z.object({ groups: z.array(z.string()) }))).groups
+  async ownTiers(): Promise<readonly string[]> {
+    return (await this.call('/v1/whoami', {}, z.object({ tiers: z.array(z.string()) }))).tiers
   }
 
   async readValues(): Promise<readonly string[]> {

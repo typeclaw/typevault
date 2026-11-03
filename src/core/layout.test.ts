@@ -27,21 +27,21 @@ beforeEach(() => {
 })
 afterEach(() => rmSync(base, { recursive: true, force: true }))
 
-const operatorOf = (layout: Layout): SecretKey => decodeSecretKey(readFileSync(layout.operatorKey, 'utf8'))
+const ownerOf = (layout: Layout): SecretKey => decodeSecretKey(readFileSync(layout.ownerKey, 'utf8'))
 
-it('rejects a project vault whose operator was replaced, even with a key from the environment', async () => {
+it('rejects a project vault whose owner was replaced, even with a key from the environment', async () => {
   // given a project vault this checkout trusts, and a collaborator's key in TYPEVAULT_KEY
   const project = await initLocalVault(join(base, 'project', '.typevault'), env)
-  const keyEnv = { ...env, TYPEVAULT_KEY: readFileSync(project.operatorKey, 'utf8').trim() }
+  const keyEnv = { ...env, TYPEVAULT_KEY: readFileSync(project.ownerKey, 'utf8').trim() }
 
-  // when the operator and its signed manifests are replaced by another vault's
+  // when the owner and its signed manifests are replaced by another vault's
   const other = await initLocalVault(join(base, 'other', '.typevault'), env)
-  for (const file of ['operator.json', 'groups.json', 'signers.json', 'ceilings.json']) {
+  for (const file of ['owner.json', 'tiers.json', 'signers.json', 'ceilings.json']) {
     copyFileSync(join(other.vault, file), join(project.vault, file))
   }
   const layout = openLocalLayout(project.vault, keyEnv)
 
-  // then opening it is refused instead of trusting the new operator
+  // then opening it is refused instead of trusting the new owner
   await expect(Vault.open(layout, loadLocalKeys(layout, keyEnv), keyEnv)).rejects.toMatchObject({ code: 'tampered' })
 })
 
@@ -51,22 +51,22 @@ describe('two clones of one project vault', () => {
 
   beforeEach(async () => {
     first = await initLocalVault(join(base, 'a', '.typevault'), env)
-    await new Admin(await Vault.open(first, [operatorOf(first)], env)).addGroup('member')
+    await new Admin(await Vault.open(first, [ownerOf(first)], env)).addTier('member')
     cpSync(first.vault, join(base, 'b', '.typevault'), { recursive: true })
     second = openLocalLayout(join(base, 'b', '.typevault'), env)
   })
 
   it('share keys but each run a daemon over their own files', async () => {
     // given each clone holding a different entry
-    const operator = operatorOf(second)
+    const owner = ownerOf(second)
     for (const [layout, name] of [
       [first, 'alpha'],
       [second, 'beta'],
     ] as const) {
-      const vault = await Vault.open(layout, [operator], env)
+      const vault = await Vault.open(layout, [owner], env)
       await vault.put(
-        { name: parseEntryName(name), type: 'note', fields: { text: name }, group: 'member' },
-        signerOf(operator),
+        { name: parseEntryName(name), type: 'note', fields: { text: name }, tier: 'member' },
+        signerOf(owner),
       )
     }
 
@@ -76,7 +76,7 @@ describe('two clones of one project vault', () => {
       const names = await Promise.all(
         [first, second].map(async (layout) => {
           const Issued = z.object({ token: z.string() })
-          const { token } = await callDaemon(layout.adminSocket('default'), '/v1/grant', { groups: ['member'] }, Issued)
+          const { token } = await callDaemon(layout.adminSocket('default'), '/v1/grant', { tiers: ['member'] }, Issued)
           return (await new LiveAccess(layout.agentSocket, token).list()).map((entry): string => entry.name)
         }),
       )

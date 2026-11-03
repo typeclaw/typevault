@@ -15,9 +15,9 @@ export type Layout = {
   /** The committable part: ciphertext and signed manifests only. */
   readonly vault: string
   readonly entries: string
-  readonly groupsDir: string
-  readonly operatorFile: string
-  readonly groupsFile: string
+  readonly tiersDir: string
+  readonly ownerFile: string
+  readonly tiersFile: string
   readonly signersFile: string
   readonly ceilingsFile: string
   /** This checkout's audit anchors: one committed file per audit chain, so clones never check each other's. */
@@ -26,8 +26,8 @@ export type Layout = {
   readonly legacyAnchorsFile: string
   readonly txnDir: string
   readonly keys: string
-  readonly operatorKey: string
-  readonly groupKeys: string
+  readonly ownerKey: string
+  readonly tierKeys: string
   readonly trustFile: string
   readonly audit: string
   readonly auditLog: string
@@ -57,14 +57,14 @@ export function resolveRoot(env: Env = process.env): string {
 export const layoutOf = (root: string): Layout => build('global', root, join(root, 'vault'))
 
 /**
- * A project vault at `dir`. Keys are shared by every checkout of the vault (keyed by its operator key); trust, audit
- * and run state belong to this checkout (keyed by its path), so a replaced operator.json still meets the old pin and
+ * A project vault at `dir`. Keys are shared by every checkout of the vault (keyed by its owner key); trust, audit
+ * and run state belong to this checkout (keyed by its path), so a replaced owner.json still meets the old pin and
  * two clones never share a daemon or a transaction journal.
  */
-export function localLayout(dir: string, operatorSignPublic: string, env: Env = process.env): Layout {
+export function localLayout(dir: string, ownerSignPublic: string, env: Env = process.env): Layout {
   const home = resolveRoot(env)
   const root = join(home, 'checkouts', shortHash(resolve(dir)))
-  const keys = join(home, 'vaults', shortHash(operatorSignPublic), 'keys')
+  const keys = join(home, 'vaults', shortHash(ownerSignPublic), 'keys')
   return build('local', root, dir, keys, join(root, 'trust.json'))
 }
 
@@ -74,17 +74,15 @@ const shortHash = (value: string): string => sha256Hex(utf8(value)).slice(0, 16)
 export function findLocalVault(from: string): string | undefined {
   for (let dir = from; ; dir = dirname(dir)) {
     const candidate = join(dir, LOCAL_VAULT_DIR)
-    if (existsSync(join(candidate, 'operator.json'))) return candidate
+    if (existsSync(join(candidate, 'owner.json'))) return candidate
     if (dirname(dir) === dir) return undefined
   }
 }
 
-/** The local layout for a found `.typevault/`. Its operator.json only names the private directory here; it is verified on open. */
+/** The local layout for a found `.typevault/`. Its owner.json only names the private directory here; it is verified on open. */
 export function openLocalLayout(dir: string, env: Env = process.env): Layout {
-  const operator = z
-    .object({ signPublic: z.string() })
-    .parse(JSON.parse(readFileSync(join(dir, 'operator.json'), 'utf8')))
-  return localLayout(dir, operator.signPublic, env)
+  const owner = z.object({ signPublic: z.string() }).parse(JSON.parse(readFileSync(join(dir, 'owner.json'), 'utf8')))
+  return localLayout(dir, owner.signPublic, env)
 }
 
 function build(
@@ -101,9 +99,9 @@ function build(
     root,
     vault,
     entries: join(vault, 'entries'),
-    groupsDir: join(vault, 'groups'),
-    operatorFile: join(vault, 'operator.json'),
-    groupsFile: join(vault, 'groups.json'),
+    tiersDir: join(vault, 'tiers'),
+    ownerFile: join(vault, 'owner.json'),
+    tiersFile: join(vault, 'tiers.json'),
     signersFile: join(vault, 'signers.json'),
     ceilingsFile: join(vault, 'ceilings.json'),
     // Named by where the log lives, never by the log itself: a log rewritten from its first record keeps its anchors.
@@ -112,8 +110,8 @@ function build(
     // Staging lives in run/, which is never committed: a txn dir from git must not be able to steer deletes.
     txnDir: join(run, 'txn'),
     keys,
-    operatorKey: join(keys, 'operator.key'),
-    groupKeys: join(keys, 'groups'),
+    ownerKey: join(keys, 'owner.key'),
+    tierKeys: join(keys, 'tiers'),
     trustFile,
     audit,
     auditLog: join(audit, 'log.jsonl'),

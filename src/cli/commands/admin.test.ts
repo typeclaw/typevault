@@ -19,12 +19,12 @@ beforeEach(() => {
 })
 afterEach(() => rmSync(base, { recursive: true, force: true }))
 
-it('creates the starter group with the new vault operator key, even with an inherited TYPEVAULT_KEY', async () => {
-  // given a group key for some other vault in the environment
+it('creates the starter tier with the new vault owner key, even with an inherited TYPEVAULT_KEY', async () => {
+  // given a tier key for some other vault in the environment
   const otherRoot = join(base, 'other')
-  const otherOperator = await initVault(otherRoot)
-  const other = new Admin(await Vault.open(layoutOf(otherRoot), [otherOperator], {}))
-  await other.addGroup('member')
+  const otherOwner = await initVault(otherRoot)
+  const other = new Admin(await Vault.open(layoutOf(otherRoot), [otherOwner], {}))
+  await other.addTier('member')
   const env = { PATH: process.env['PATH'] ?? '', XDG_CONFIG_HOME: join(base, 'config') }
   const project = join(base, 'project')
   mkdirSync(project)
@@ -38,10 +38,10 @@ it('creates the starter group with the new vault operator key, even with an inhe
   })
   const [code, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()])
 
-  // then it succeeds and the new vault holds the default group
+  // then it succeeds and the new vault holds the default tier
   expect({ code, stderr: code === 0 ? '' : stderr }).toEqual({ code: 0, stderr: '' })
   const layout = findLayout(env, project)
   if (layout === undefined) throw new Error('no vault was created')
-  const operator = decodeSecretKey(readFileSync(layout.operatorKey, 'utf8'))
-  expect(Object.keys((await Vault.open(layout, [operator], env)).state.groups)).toEqual(['default'])
+  const owner = decodeSecretKey(readFileSync(layout.ownerKey, 'utf8'))
+  expect(Object.keys((await Vault.open(layout, [owner], env)).state.tiers)).toEqual(['default'])
 })

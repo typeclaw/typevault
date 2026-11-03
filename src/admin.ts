@@ -6,7 +6,7 @@ export const IssuedSchema = z.object({ token: z.string() })
 export const GrantInfoSchema = z.object({
   id: z.string(),
   label: z.string(),
-  groups: z.array(z.string()),
+  tiers: z.array(z.string()),
   only: z.array(z.string()),
   exp: z.string(),
 })
@@ -15,8 +15,8 @@ const RevokedSchema = z.object({ revoked: z.array(z.string()) })
 export type GrantInfo = z.infer<typeof GrantInfoSchema>
 
 export type GrantRequest = {
-  readonly groups: readonly string[]
-  /** Names or globs the grant is narrowed to. Empty means everything in `groups`. */
+  readonly tiers: readonly string[]
+  /** Names or globs the grant is narrowed to. Empty means everything in `tiers`. */
   readonly only?: readonly string[]
   /** e.g. `30m`, `1h`. Defaults to `1h`. */
   readonly ttl?: string

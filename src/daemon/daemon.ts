@@ -24,11 +24,11 @@ export type DaemonOptions = {
 }
 export type RunningDaemon = { readonly stop: () => Promise<void>; readonly ceilings: readonly Ceiling[] }
 
-/** One admin socket per operator-signed ceiling, plus an uncapped `default` socket when this daemon holds the operator key. */
+/** One admin socket per owner-signed ceiling, plus an uncapped `default` socket when this daemon holds the owner key. */
 function ceilingsOf(vault: Vault): readonly Ceiling[] {
-  const signed = Object.entries(vault.state.ceilings).map(([name, group]) => ({ name, group }))
-  const operator = vault.keyring.operator !== undefined && vault.state.ceilings['default'] === undefined
-  return operator ? [...signed, { name: 'default', group: '*' }] : signed
+  const signed = Object.entries(vault.state.ceilings).map(([name, tier]) => ({ name, tier }))
+  const owner = vault.keyring.owner !== undefined && vault.state.ceilings['default'] === undefined
+  return owner ? [...signed, { name: 'default', tier: '*' }] : signed
 }
 
 export async function startDaemon(options: DaemonOptions): Promise<RunningDaemon> {
@@ -43,7 +43,7 @@ export async function startDaemon(options: DaemonOptions): Promise<RunningDaemon
   const vault = await Vault.open(layout, keys, options.env)
   const ceilings = ceilingsOf(vault)
   if (ceilings.length === 0)
-    throw new TypeVaultError('invalid', 'no ceilings configured (typevault ceiling set <name> <group>)')
+    throw new TypeVaultError('invalid', 'no ceilings configured (typevault ceiling set <name> <tier>)')
 
   const context: DaemonContext = {
     vault,

@@ -8,8 +8,8 @@ import { fromBase64, fromBase64Url, fromUtf8, toBase64, toBase64Url, utf8 } from
 import { TypeVaultError } from './errors'
 
 export type KeyRole =
-  | { readonly kind: 'operator' }
-  | { readonly kind: 'group'; readonly group: string; readonly gen: number }
+  | { readonly kind: 'owner' }
+  | { readonly kind: 'tier'; readonly tier: string; readonly gen: number }
 
 /** An age identity for decryption plus an Ed25519 key for signing. */
 export type SecretKey = { readonly role: KeyRole; readonly identity: string; readonly signSecret: Uint8Array }
@@ -18,8 +18,8 @@ export type PublicKey = { readonly recipient: string; readonly signPublic: strin
 const KEY_PREFIX = 'tvk1:'
 
 const RoleSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('operator') }),
-  z.object({ kind: z.literal('group'), group: z.string(), gen: z.number().int().positive() }),
+  z.object({ kind: z.literal('owner') }),
+  z.object({ kind: z.literal('tier'), tier: z.string(), gen: z.number().int().positive() }),
 ])
 const EncodedKeySchema = z.object({ role: RoleSchema, age: z.string().startsWith('AGE-SECRET-KEY-1'), ed: z.string() })
 

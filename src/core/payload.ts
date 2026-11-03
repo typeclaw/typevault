@@ -4,7 +4,7 @@ import { fromUtf8, utf8 } from './encoding'
 import { TypeVaultError } from './errors'
 import { type EntryName, type EntryType, isEntryType, isFieldName, isUsableEnvName, parseEntryName } from './naming'
 
-/** The plaintext sealed inside an entry file: everything except the group is secret. */
+/** The plaintext sealed inside an entry file: everything except the tier is secret. */
 export type EntryPayload = {
   readonly v: 1
   readonly name: EntryName

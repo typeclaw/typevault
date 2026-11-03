@@ -20,7 +20,7 @@ const BundleSchema = z.object({
   v: z.literal(1),
   id: z.string(),
   label: z.string(),
-  groups: z.array(z.string()),
+  tiers: z.array(z.string()),
   only: z.array(z.string()),
   exp: z.iso.datetime(),
   entries: z.array(EntryValueSchema),
@@ -41,32 +41,32 @@ export type SealedRequest = GrantScope & { readonly ttlMs: number; readonly labe
 /** Re-seals every entry the scope allows into a self-contained grant. The issuer's own key never leaves. */
 export async function issueSealedGrant(vault: Vault, request: SealedRequest): Promise<string> {
   const issuer =
-    vault.keyring.operator ??
+    vault.keyring.owner ??
     vault.keys.find((key) => {
       const role = key.role
-      return role.kind === 'group' && request.groups.every((group) => reach(vault.state.groups, role.group).has(group))
+      return role.kind === 'tier' && request.tiers.every((tier) => reach(vault.state.tiers, role.tier).has(tier))
     })
-  if (issuer === undefined) throw new TypeVaultError('denied', 'no key here reaches every requested group')
-  for (const group of request.groups) {
-    if (vault.state.groups[group] === undefined) throw new TypeVaultError('not_found', `no group "${group}"`)
+  if (issuer === undefined) throw new TypeVaultError('denied', 'no key here reaches every requested tier')
+  for (const tier of request.tiers) {
+    if (vault.state.tiers[tier] === undefined) throw new TypeVaultError('not_found', `no tier "${tier}"`)
   }
-  const chain = [{ groups: request.groups, only: request.only }]
+  const chain = [{ tiers: request.tiers, only: request.only }]
   const { entries } = await vault.scan()
-  const allowed = entries.filter((entry) => allowsEntry(chain, vault.state, entry.envelope.group, entry.payload.name))
+  const allowed = entries.filter((entry) => allowsEntry(chain, vault.state, entry.envelope.tier, entry.payload.name))
   const granted = [...Map.groupBy(allowed, (entry) => entry.payload.name).values()]
-    .flatMap((copies) => resolveName(vault.state.groups, copies) ?? [])
+    .flatMap((copies) => resolveName(vault.state.tiers, copies) ?? [])
     .map((entry) => ({
-      ...toValue(entry.envelope.group, entry.envelope.id, entry.envelope.rev, entry.payload),
-      trustedWriter: writtenFromAbove(entry.envelope.signer, vault.state, request.groups),
+      ...toValue(entry.envelope.tier, entry.envelope.id, entry.envelope.rev, entry.payload),
+      trustedWriter: writtenFromAbove(entry.envelope.signer, vault.state, request.tiers),
     }))
   const id = randomHex(8)
   const exp = new Date(Date.now() + request.ttlMs).toISOString()
   const signing = generateSigningKey()
   const cert = issueCert(
-    { signPublic: signing.signPublic, groups: [...request.groups], only: [...request.only], exp },
+    { signPublic: signing.signPublic, tiers: [...request.tiers], only: [...request.only], exp },
     signerOf(issuer),
   )
-  const bundle = { v: 1, id, label: request.label, groups: request.groups, only: request.only, exp, entries: granted }
+  const bundle = { v: 1, id, label: request.label, tiers: request.tiers, only: request.only, exp, entries: granted }
   const write = { signSecret: toBase64(signing.signSecret), cert }
   const identity = await generateX25519Identity()
   const sealed = await seal([await identityToRecipient(identity)], utf8(JSON.stringify({ ...bundle, write })))
@@ -75,7 +75,7 @@ export async function issueSealedGrant(vault: Vault, request: SealedRequest): Pr
     mode: 'sealed',
     grant: id,
     label: request.label,
-    groups: request.groups,
+    tiers: request.tiers,
     entries: granted.map((value) => value.name),
   })
   return `${PREFIX}${toBase64Url(utf8(identity))}.${toBase64Url(sealed)}`
@@ -91,10 +91,10 @@ export async function readSealedGrant(raw: string): Promise<SealedBundle> {
   const plaintext = await unseal([fromUtf8(fromBase64Url(identity))], fromBase64Url(ciphertext))
   const parsed = BundleSchema.safeParse(JSON.parse(fromUtf8(plaintext)))
   if (!parsed.success) throw new TypeVaultError('invalid', 'malformed sealed grant')
-  const { groups, only, entries, ...rest } = parsed.data
+  const { tiers, only, entries, ...rest } = parsed.data
   return {
     ...rest,
-    scope: { groups, only },
+    scope: { tiers, only },
     entries: entries.map(toEntryValue),
   }
 }

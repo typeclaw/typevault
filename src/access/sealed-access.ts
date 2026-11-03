@@ -39,7 +39,7 @@ export class SealedAccess implements Access {
   }
 
   async #vault(): Promise<Vault> {
-    if (this.#layout === undefined || !existsSync(this.#layout.operatorFile)) {
+    if (this.#layout === undefined || !existsSync(this.#layout.ownerFile)) {
       throw new TypeVaultError('unavailable', 'writing with a sealed grant needs the vault directory')
     }
     return Vault.open(this.#layout, [], this.#env)
@@ -48,7 +48,7 @@ export class SealedAccess implements Access {
   /** Best effort: a sealed grant may run where no vault directory exists. */
   async #audit(event: Omit<AuditEvent, 'mode' | 'grant' | 'label'>): Promise<void> {
     const layout = this.#layout
-    if (layout === undefined || !existsSync(layout.operatorFile)) return
+    if (layout === undefined || !existsSync(layout.ownerFile)) return
     await appendAudit(layout, { ...event, mode: 'sealed', grant: this.#bundle.id, label: this.#bundle.label })
   }
 
@@ -75,23 +75,23 @@ export class SealedAccess implements Access {
   async set(input: SetInput): Promise<EntrySummary> {
     const bundle = this.#live()
     const vault = await this.#vault()
-    const group = input.group ?? bundle.scope.groups[0]
-    if (group === undefined || !allowsEntry([bundle.scope], vault.state, group, input.name)) {
-      throw new TypeVaultError('denied', `this grant cannot write ${input.name} in group "${group ?? '?'}"`)
+    const tier = input.tier ?? bundle.scope.tiers[0]
+    if (tier === undefined || !allowsEntry([bundle.scope], vault.state, tier, input.name)) {
+      throw new TypeVaultError('denied', `this grant cannot write ${input.name} in tier "${tier ?? '?'}"`)
     }
     const prior = bundle.entries.find((value) => value.name === input.name)
     const { ifRev } = input
     const stored = await vault.put(
-      entryInputOf(input, group),
+      entryInputOf(input, tier),
       { ref: { kind: 'cert', cert: bundle.write.cert }, signSecret: sealedSigningSecret(bundle) },
       { ...(ifRev === undefined ? {} : { ifRev }), ...(prior === undefined ? {} : { base: prior }) },
     )
-    await this.#audit({ action: 'write', entries: [input.name], groups: [group] })
+    await this.#audit({ action: 'write', entries: [input.name], tiers: [tier] })
     const { envelope, payload } = stored
     return {
       name: payload.name,
       type: payload.type,
-      group,
+      tier,
       rev: envelope.rev,
       tags: payload.tags,
       rotated: payload.rotated,
@@ -99,7 +99,7 @@ export class SealedAccess implements Access {
     }
   }
 
-  async remove(name: EntryName, _group?: string): Promise<void> {
+  async remove(name: EntryName, _tier?: string): Promise<void> {
     const entry = this.#entry(name)
     await (await this.#vault()).removeById(entry.id)
     await this.#audit({ action: 'remove', entries: [name] })
@@ -107,12 +107,12 @@ export class SealedAccess implements Access {
 
   async move(from: EntryName, to: EntryName): Promise<void> {
     const entry = this.#entry(from)
-    await this.set({ name: to, type: entry.type, fields: entry.fields, group: entry.group, tags: entry.tags })
+    await this.set({ name: to, type: entry.type, fields: entry.fields, tier: entry.tier, tags: entry.tags })
     await this.remove(from)
   }
 
-  async ownGroups(): Promise<readonly string[]> {
-    return this.#bundle.scope.groups
+  async ownTiers(): Promise<readonly string[]> {
+    return this.#bundle.scope.tiers
   }
 
   async readValues(): Promise<readonly string[]> {

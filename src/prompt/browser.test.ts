@@ -54,7 +54,7 @@ async function openPage() {
   const handle = server.open({
     name: 'stripe',
     type: 'password',
-    group: 'trusted',
+    tier: 'trusted',
     reason: 'Set up the integration.',
     requester: 'test-grant',
     code: 'MAPLE-74',

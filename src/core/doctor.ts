@@ -10,7 +10,7 @@ export type DoctorReport = {
   readonly problems: readonly ScanProblem[]
   readonly mergesResolved: readonly string[]
   readonly duplicatesRemoved: readonly string[]
-  /** Same name in several groups: reported for the operator, never deleted automatically. */
+  /** Same name in several tiers: reported for the owner, never deleted automatically. */
   readonly duplicatesKept: readonly string[]
   readonly needsRotation: readonly string[]
 }
@@ -60,18 +60,18 @@ export function doctor(vault: Vault, fix: boolean): Promise<DoctorReport> {
     const duplicatesKept: string[] = []
     for (const [name, copies] of byName) {
       if (copies.length < 2) continue
-      // Only same-group copies are removed: across groups the higher group already wins reads, and
-      // the operator decides what to delete.
-      for (const [group, inGroup] of Map.groupBy(copies, (entry) => entry.envelope.group)) {
-        const keep = resolveName(vault.state.groups, inGroup)
-        for (const copy of inGroup) {
+      // Only same-tier copies are removed: across tiers the higher tier already wins reads, and
+      // the owner decides what to delete.
+      for (const [tier, inTier] of Map.groupBy(copies, (entry) => entry.envelope.tier)) {
+        const keep = resolveName(vault.state.tiers, inTier)
+        for (const copy of inTier) {
           if (copy === keep) continue
           if (fix) rmSync(join(vault.layout.entries, `${copy.envelope.id}.json`))
-          duplicatesRemoved.push(`${name} (${group}, ${copy.envelope.id})`)
+          duplicatesRemoved.push(`${name} (${tier}, ${copy.envelope.id})`)
         }
       }
-      const groups = new Set(copies.map((entry) => entry.envelope.group))
-      if (groups.size > 1) duplicatesKept.push(`${name} (in ${[...groups].sort().join(', ')})`)
+      const tiers = new Set(copies.map((entry) => entry.envelope.tier))
+      if (tiers.size > 1) duplicatesKept.push(`${name} (in ${[...tiers].sort().join(', ')})`)
     }
     const needsRotation = entries
       .filter((entry) => entry.payload.needsRotation === true)

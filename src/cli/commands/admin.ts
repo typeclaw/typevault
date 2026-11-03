@@ -15,45 +15,43 @@ import { openAdmin, openDirect, wantsGlobal } from '../context'
 import { csv, note, print, table } from '../output'
 
 export const init = defineCommand({
-  meta: { name: 'init', description: 'Create a vault and its operator key' },
+  meta: { name: 'init', description: 'Create a vault and its owner key' },
   async run() {
     const env = process.env
     const global = wantsGlobal(env)
     const layout = global ? layoutOf(resolveRoot(env)) : await initLocalVault(join(process.cwd(), LOCAL_VAULT_DIR), env)
-    // The new vault's own operator key, never an inherited TYPEVAULT_KEY that belongs to some other vault.
-    const operatorKey = global
-      ? await initVault(layout.root)
-      : decodeSecretKey(readFileSync(layout.operatorKey, 'utf8'))
-    await new Admin(await Vault.open(layout, [operatorKey], env)).addGroup(STARTER_GROUP)
-    print(`vault created at ${global ? layout.root : layout.vault} with group "${STARTER_GROUP}"`)
+    // The new vault's own owner key, never an inherited TYPEVAULT_KEY that belongs to some other vault.
+    const ownerKey = global ? await initVault(layout.root) : decodeSecretKey(readFileSync(layout.ownerKey, 'utf8'))
+    await new Admin(await Vault.open(layout, [ownerKey], env)).addTier(STARTER_TIER)
+    print(`vault created at ${global ? layout.root : layout.vault} with tier "${STARTER_TIER}"`)
     const commit = global
       ? 'Only vault/ is safe to commit.'
       : `Commit ${LOCAL_VAULT_DIR}/; its keys stay in ${layout.keys}.`
-    note(`operator key: ${layout.operatorKey}\nBack it up offline: it is the only recovery path. ${commit}`)
-    note('next: typevault set <name> --type ... --stdin (more groups: typevault group add <name>)')
+    note(`owner key: ${layout.ownerKey}\nBack it up offline: it is the only recovery path. ${commit}`)
+    note('next: typevault set <name> --type ... --stdin (more tiers: typevault tier add <name>)')
   },
 })
 
-/** Created by `init` so `set` and `grant` work before any group design; as the only group, `set` picks it. */
-const STARTER_GROUP = 'default'
+/** Created by `init` so `set` and `grant` work before any tier design; as the only tier, `set` picks it. */
+const STARTER_TIER = 'default'
 
 const named = { name: { type: 'positional', required: true } } as const
 const pair = {
-  group: { type: 'positional', required: true },
+  tier: { type: 'positional', required: true },
   included: { type: 'positional', required: true },
 } as const
 
-export const group = defineCommand({
-  meta: { name: 'group', description: 'Manage groups (operator)' },
+export const tier = defineCommand({
+  meta: { name: 'tier', description: 'Manage tiers (owner)' },
   subCommands: {
     ls: defineCommand({
       meta: { name: 'ls' },
       async run() {
-        const groups = Object.entries((await openDirect(process.env)).state.groups)
+        const tiers = Object.entries((await openDirect(process.env)).state.tiers)
         print(
           table([
-            ['GROUP', 'GEN', 'INCLUDES'],
-            ...groups.map(([name, g]) => [name, String(g.gen), g.includes.join(', ')]),
+            ['TIER', 'GEN', 'INCLUDES'],
+            ...tiers.map(([name, g]) => [name, String(g.gen), g.includes.join(', ')]),
           ]),
         )
       },
@@ -61,40 +59,40 @@ export const group = defineCommand({
     add: defineCommand({
       meta: { name: 'add' },
       args: named,
-      run: async ({ args }) => (await openAdmin(process.env)).addGroup(args.name),
+      run: async ({ args }) => (await openAdmin(process.env)).addTier(args.name),
     }),
     rm: defineCommand({
       meta: { name: 'rm' },
       args: named,
-      run: async ({ args }) => (await openAdmin(process.env)).removeGroup(args.name),
+      run: async ({ args }) => (await openAdmin(process.env)).removeTier(args.name),
     }),
     include: defineCommand({
-      meta: { name: 'include', description: '<group> reaches everything <included> reaches' },
+      meta: { name: 'include', description: '<tier> reaches everything <included> reaches' },
       args: pair,
-      run: async ({ args }) => (await openAdmin(process.env)).include(args.group, args.included),
+      run: async ({ args }) => (await openAdmin(process.env)).include(args.tier, args.included),
     }),
     exclude: defineCommand({
-      meta: { name: 'exclude', description: 'Drop an include and rotate the included group' },
+      meta: { name: 'exclude', description: 'Drop an include and rotate the included tier' },
       args: pair,
       async run({ args }) {
-        printRotation(args.included, await (await openAdmin(process.env)).exclude(args.group, args.included))
+        printRotation(args.included, await (await openAdmin(process.env)).exclude(args.tier, args.included))
       },
     }),
   },
 })
 
-function printRotation(groupName: string, affected: readonly string[]): void {
-  print(`rotated ${groupName}`)
+function printRotation(tierName: string, affected: readonly string[]): void {
+  print(`rotated ${tierName}`)
   if (affected.length === 0) return
   note('Git history keeps the old ciphertext. Rotate these secrets at their source, then re-set them:')
   for (const name of affected) note(`  ${name}`)
 }
 
 export const key = defineCommand({
-  meta: { name: 'key', description: 'Export or rotate group keys (operator)' },
+  meta: { name: 'key', description: 'Export or rotate tier keys (owner)' },
   subCommands: {
     export: defineCommand({
-      meta: { name: 'export', description: 'Print a group key for a launcher, CI secret or daemon (TYPEVAULT_KEY)' },
+      meta: { name: 'export', description: 'Print a tier key for an issuer, CI secret or daemon (TYPEVAULT_KEY)' },
       args: named,
       run: async ({ args }) => print(await (await openAdmin(process.env)).exportKey(args.name)),
     }),
@@ -107,19 +105,19 @@ export const key = defineCommand({
 })
 
 export const ceiling = defineCommand({
-  meta: { name: 'ceiling', description: 'The most an admin socket may grant (operator)' },
+  meta: { name: 'ceiling', description: 'The most an admin socket may grant (owner)' },
   subCommands: {
     ls: defineCommand({
       meta: { name: 'ls' },
       async run() {
         const ceilings = Object.entries((await openDirect(process.env)).state.ceilings)
-        print(table([['SOCKET', 'GROUP'], ...ceilings]))
+        print(table([['SOCKET', 'TIER'], ...ceilings]))
       },
     }),
     set: defineCommand({
       meta: { name: 'set' },
-      args: { name: { type: 'positional', required: true }, group: { type: 'positional', required: true } },
-      run: async ({ args }) => (await openAdmin(process.env)).setCeiling(args.name, args.group),
+      args: { name: { type: 'positional', required: true }, tier: { type: 'positional', required: true } },
+      run: async ({ args }) => (await openAdmin(process.env)).setCeiling(args.name, args.tier),
     }),
     rm: defineCommand({
       meta: { name: 'rm' },
@@ -130,14 +128,14 @@ export const ceiling = defineCommand({
 })
 
 export const signer = defineCommand({
-  meta: { name: 'signer', description: 'Extra keys allowed to sign entries (operator)' },
+  meta: { name: 'signer', description: 'Extra keys allowed to sign entries (owner)' },
   subCommands: {
     ls: defineCommand({
       meta: { name: 'ls' },
       async run() {
         const signers = Object.entries((await openDirect(process.env)).state.signers)
         print(
-          table([['ID', 'GROUPS', 'PUBLIC KEY'], ...signers.map(([id, s]) => [id, s.groups.join(','), s.signPublic])]),
+          table([['ID', 'TIERS', 'PUBLIC KEY'], ...signers.map(([id, s]) => [id, s.tiers.join(','), s.signPublic])]),
         )
       },
     }),
@@ -146,9 +144,9 @@ export const signer = defineCommand({
       args: {
         id: { type: 'positional', required: true },
         publicKey: { type: 'positional', required: true, description: 'Base64 Ed25519 public key' },
-        groups: { type: 'string', required: true, description: 'Comma-separated groups, or *' },
+        tiers: { type: 'string', required: true, description: 'Comma-separated tiers, or *' },
       },
-      run: async ({ args }) => (await openAdmin(process.env)).setSigner(args.id, args.publicKey, csv(args.groups)),
+      run: async ({ args }) => (await openAdmin(process.env)).setSigner(args.id, args.publicKey, csv(args.tiers)),
     }),
     rm: defineCommand({
       meta: { name: 'rm' },
@@ -178,7 +176,7 @@ export const doctor = defineCommand({
     for (const dup of report.duplicatesRemoved) print(`${args.fix === true ? 'removed' : 'duplicate'}: ${dup}`)
     for (const dup of report.duplicatesKept)
       print(
-        `same name in several groups: ${dup} (if the groups are unrelated, reads of it fail: keep one with \`typevault rm <name> --group <g>\`)`,
+        `same name in several tiers: ${dup} (if the tiers are unrelated, reads of it fail: keep one with \`typevault rm <name> --tier <g>\`)`,
       )
     for (const name of report.needsRotation) print(`needs rotation: ${name}`)
     const audit = verifyAudit(vault.layout)

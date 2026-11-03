@@ -9,7 +9,7 @@ let server: PromptServer | undefined
 const view: PromptView = {
   name: 'stripe',
   type: 'api_key',
-  group: 'trusted',
+  tier: 'trusted',
   reason: '<img src=x onerror=alert(1)>',
   requester: 'test-grant',
   code: 'MAPLE-74',
@@ -89,7 +89,7 @@ test('page security hashes authorize the exact executable script and stylesheet 
 test('untrusted text is escaped in markup and cannot terminate embedded JSON', async () => {
   const { server } = await fixture()
   const hostile = '</script><img src=x onerror=alert(1)>'
-  const handle = server.open({ ...view, name: hostile, requester: hostile, group: hostile, code: hostile })
+  const handle = server.open({ ...view, name: hostile, requester: hostile, tier: hostile, code: hostile })
   const outcome = handle.done.then(
     () => undefined,
     (error: unknown) => error,

@@ -15,26 +15,26 @@ import { Vault } from './core/vault'
 import { type RunningDaemon, startDaemon } from './daemon/daemon'
 
 let root: string
-let operator: SecretKey
+let owner: SecretKey
 let daemon: RunningDaemon
 const n = parseEntryName
 
 beforeEach(async () => {
   // Short root: unix socket paths are limited to ~104 bytes.
   root = mkdtempSync('/tmp/tvs-')
-  operator = await initVault(root)
-  const vault = await Vault.open(layoutOf(root), [operator], {})
+  owner = await initVault(root)
+  const vault = await Vault.open(layoutOf(root), [owner], {})
   const admin = new Admin(vault)
-  await admin.addGroup('member')
-  await admin.addGroup('trusted')
+  await admin.addTier('member')
+  await admin.addTier('trusted')
   await admin.include('trusted', 'member')
   await vault.put(
-    { name: n('openai'), type: 'api_key', fields: { key: 'sk-test-openai' }, group: 'member' },
-    signerOf(operator),
+    { name: n('openai'), type: 'api_key', fields: { key: 'sk-test-openai' }, tier: 'member' },
+    signerOf(owner),
   )
   await vault.put(
-    { name: n('stripe'), type: 'api_key', fields: { key: 'sk_live_x' }, group: 'trusted' },
-    signerOf(operator),
+    { name: n('stripe'), type: 'api_key', fields: { key: 'sk_live_x' }, tier: 'trusted' },
+    signerOf(owner),
   )
   daemon = await startDaemon({ layout: layoutOf(root), env: { TYPEVAULT_DIR: root } })
 })
@@ -47,7 +47,7 @@ afterEach(async () => {
 describe('sdk', () => {
   it('issues a live grant and reads through it', async () => {
     const admin = createAdmin({ dir: root, env: {} })
-    const grant = await admin.grant({ groups: ['member'], label: 'sdk:test' })
+    const grant = await admin.grant({ tiers: ['member'], label: 'sdk:test' })
     const client = await createClient({ grant, dir: root, env: {} })
     expect((await client.list()).map((entry): string => entry.name)).toEqual(['openai'])
     expect((await client.get(n('openai'))).fields).toEqual({ key: 'sk-test-openai' })
@@ -56,7 +56,7 @@ describe('sdk', () => {
   })
 
   it('reads a sealed grant without the daemon round trip', async () => {
-    const grant = await createAdmin({ dir: root, env: {} }).grant({ groups: ['member'], sealed: true })
+    const grant = await createAdmin({ dir: root, env: {} }).grant({ tiers: ['member'], sealed: true })
     expect(grant.startsWith('tvg1:')).toBe(true)
     const client = await createClient({ grant, dir: root, env: {} })
     expect((await client.get(n('openai'))).fields).toEqual({ key: 'sk-test-openai' })
@@ -64,7 +64,7 @@ describe('sdk', () => {
 
   it('lists and revokes grants by label', async () => {
     const admin = createAdmin({ dir: root, env: {} })
-    const grant = await admin.grant({ groups: ['member'], label: 'sdk:revoke' })
+    const grant = await admin.grant({ tiers: ['member'], label: 'sdk:revoke' })
     expect((await admin.list()).map((info) => info.label)).toContain('sdk:revoke')
     expect(await admin.revoke({ label: 'sdk:revoke' })).toHaveLength(1)
     const client = await createClient({ grant, dir: root, env: {} })
@@ -77,11 +77,8 @@ describe('sdk', () => {
     const globalRoot = join(config, 'typevault')
     const key = await initVault(globalRoot)
     const vault = await Vault.open(layoutOf(globalRoot), [key], {})
-    await new Admin(vault).addGroup('member')
-    await vault.put(
-      { name: n('openai'), type: 'api_key', fields: { key: 'sk-global' }, group: 'member' },
-      signerOf(key),
-    )
+    await new Admin(vault).addTier('member')
+    await vault.put({ name: n('openai'), type: 'api_key', fields: { key: 'sk-global' }, tier: 'member' }, signerOf(key))
     const env = { XDG_CONFIG_HOME: config }
     // This repo dogfoods its own .typevault/, so leave it for a directory with none.
     const cwd = process.cwd()

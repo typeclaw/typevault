@@ -18,35 +18,35 @@ import { issueSealedGrant, readSealedGrant, sealedSigningSecret } from './sealed
 import { SealedAccess } from './sealed-access'
 
 let root: string
-let operator: SecretKey
+let owner: SecretKey
 let vault: Vault
 const n = parseEntryName
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'typevault-access-'))
-  operator = await initVault(root)
-  vault = await Vault.open(layoutOf(root), [operator], {})
+  owner = await initVault(root)
+  vault = await Vault.open(layoutOf(root), [owner], {})
   const admin = new Admin(vault)
-  await admin.addGroup('member')
-  await admin.addGroup('trusted')
+  await admin.addTier('member')
+  await admin.addTier('trusted')
   await admin.include('trusted', 'member')
-  const put = (name: string, group: string, fields: Record<string, string>) =>
-    vault.put({ name: n(name), type: 'password', fields, group }, signerOf(operator))
+  const put = (name: string, tier: string, fields: Record<string, string>) =>
+    vault.put({ name: n(name), type: 'password', fields, tier }, signerOf(owner))
   await put('github/bot', 'member', { username: 'bot', password: 'hunter2-bot' })
   await put('github/personal', 'member', { username: 'me', password: 'hunter2-me' })
   await put('stripe', 'trusted', { password: 'sk_live_x' })
 })
 afterEach(() => rmSync(root, { recursive: true, force: true }))
 
-const own = { ownGroups: ['member'], explicit: [] }
+const own = { ownTiers: ['member'], explicit: [] }
 
 describe('ScopedVault', () => {
   const member = () =>
-    new ScopedVault(vault, [{ groups: ['member'], only: [] }], {
+    new ScopedVault(vault, [{ tiers: ['member'], only: [] }], {
       mode: 'live',
       grant: 'g1',
       label: 'session:a',
-      defaultGroup: 'member',
+      defaultTier: 'member',
     })
 
   it('lists only entries the scope reaches', async () => {
@@ -55,10 +55,10 @@ describe('ScopedVault', () => {
 
   it('hands out only the copy a duplicated name resolves to', async () => {
     await vault.put(
-      { name: n('github/bot'), type: 'password', fields: { password: 'from-trusted' }, group: 'trusted' },
-      signerOf(operator),
+      { name: n('github/bot'), type: 'password', fields: { password: 'from-trusted' }, tier: 'trusted' },
+      signerOf(owner),
     )
-    const trusted = new ScopedVault(vault, [{ groups: ['trusted'], only: [] }], { mode: 'live' })
+    const trusted = new ScopedVault(vault, [{ tiers: ['trusted'], only: [] }], { mode: 'live' })
     const values = await trusted.values(['github/bot'])
     expect(values.map((value) => value.fields['password'])).toEqual(['from-trusted'])
   })
@@ -67,8 +67,8 @@ describe('ScopedVault', () => {
     const derived = new ScopedVault(
       vault,
       [
-        { groups: ['member'], only: [] },
-        { groups: ['trusted'], only: ['github/bot'] },
+        { tiers: ['member'], only: [] },
+        { tiers: ['trusted'], only: ['github/bot'] },
       ],
       { mode: 'live' },
     )
@@ -87,29 +87,29 @@ describe('ScopedVault', () => {
     expect(await access.readValues()).toEqual(['bot', 'hunter2-bot'])
   })
 
-  it('writes to the only group in reach when none is named', async () => {
-    const access = new ScopedVault(vault, [{ groups: ['member'], only: [] }], { mode: 'live' })
+  it('writes to the only tier in reach when none is named', async () => {
+    const access = new ScopedVault(vault, [{ tiers: ['member'], only: [] }], { mode: 'live' })
     const stored = await access.set({ name: n('openai'), type: 'api_key', fields: { key: 'sk-x' } })
-    expect(stored.group).toBe('member')
+    expect(stored.tier).toBe('member')
   })
 
-  it('asks for a group, listing the choices, when several are in reach', async () => {
+  it('asks for a tier, listing the choices, when several are in reach', async () => {
     const direct = new ScopedVault(vault, [], { mode: 'direct' })
     const write = direct.set({ name: n('openai'), type: 'api_key', fields: { key: 'sk-x' } })
-    await expect(write).rejects.toThrow('choose a group with --group (one of: member, trusted) or set TYPEVAULT_GROUP')
+    await expect(write).rejects.toThrow('choose a tier with --tier (one of: member, trusted) or set TYPEVAULT_TIER')
   })
 
-  it('rereads groups before inferring one, so a group added by another handle makes the choice ambiguous', async () => {
+  it('rereads tiers before inferring one, so a tier added by another handle makes the choice ambiguous', async () => {
     const fresh = mkdtempSync(join(tmpdir(), 'typevault-access-stale-'))
     try {
-      // given a client opened while `default` was the only group
+      // given a client opened while `default` was the only tier
       const key = await initVault(fresh)
       const admin = new Admin(await Vault.open(layoutOf(fresh), [key], {}))
-      await admin.addGroup('default')
+      await admin.addTier('default')
       const client = new ScopedVault(await Vault.open(layoutOf(fresh), [key], {}), [], { mode: 'direct' })
 
-      // when another handle adds a second group before the client writes
-      await admin.addGroup('other')
+      // when another handle adds a second tier before the client writes
+      await admin.addTier('other')
       const write = client.set({ name: n('openai'), type: 'api_key', fields: { key: 'sk-x' } })
 
       // then the client refuses to guess
@@ -119,14 +119,14 @@ describe('ScopedVault', () => {
     }
   })
 
-  it('infers the only group a direct key holder can open, ignoring groups it cannot reach', async () => {
+  it('infers the only tier a direct key holder can open, ignoring tiers it cannot reach', async () => {
     const memberKey = decodeSecretKey(await new Admin(vault).exportKey('member'))
     const direct = new ScopedVault(await Vault.open(layoutOf(root), [memberKey], {}), [], { mode: 'direct' })
     const stored = await direct.set({ name: n('openai'), type: 'api_key', fields: { key: 'sk-x' } })
-    expect(stored.group).toBe('member')
+    expect(stored.tier).toBe('member')
   })
 
-  it('points to `group add` when the vault has no group yet', async () => {
+  it('points to `tier add` when the vault has no tier yet', async () => {
     const fresh = mkdtempSync(join(tmpdir(), 'typevault-access-empty-'))
     try {
       const empty = await Vault.open(layoutOf(fresh), [await initVault(fresh)], {})
@@ -135,13 +135,13 @@ describe('ScopedVault', () => {
         type: 'api_key',
         fields: { key: 'sk-x' },
       })
-      await expect(write).rejects.toThrow('create one with `typevault group add <name>`')
+      await expect(write).rejects.toThrow('create one with `typevault tier add <name>`')
     } finally {
       rmSync(fresh, { recursive: true, force: true })
     }
   })
 
-  it('refuses to overwrite a name held in a group the scope cannot reach', async () => {
+  it('refuses to overwrite a name held in a tier the scope cannot reach', async () => {
     await expect(member().set({ name: n('stripe'), type: 'api_key', fields: { key: 'x' } })).rejects.toMatchObject({
       code: 'denied',
     })
@@ -160,45 +160,45 @@ describe('ScopedVault', () => {
     expect(env).toEqual({})
   })
 
-  it('loads entries from included groups only when named exactly', async () => {
+  it('loads entries from included tiers only when named exactly', async () => {
     const base = await member().get(n('github/bot'))
-    const lower = { ...base, name: n('planted'), group: 'guest', fields: { password: 'x' } }
+    const lower = { ...base, name: n('planted'), tier: 'guest', fields: { password: 'x' } }
     expect(envFor([lower], new Date(0), own)).toEqual({})
-    expect(envFor([lower], new Date(0), { ownGroups: ['member'], explicit: ['planted'] })).toEqual({
+    expect(envFor([lower], new Date(0), { ownTiers: ['member'], explicit: ['planted'] })).toEqual({
       PLANTED_PASSWORD: 'x',
     })
-    expect(envFor([lower], new Date(0), { ownGroups: ['member'], explicit: explicitNames(['tv://Planted']) })).toEqual({
+    expect(envFor([lower], new Date(0), { ownTiers: ['member'], explicit: explicitNames(['tv://Planted']) })).toEqual({
       PLANTED_PASSWORD: 'x',
     })
   })
 
-  it('ignores the env override of an included-group entry even when named', async () => {
+  it('ignores the env override of an included-tier entry even when named', async () => {
     const base = await member().get(n('github/bot'))
     const lower = {
       ...base,
       name: n('openai'),
       type: 'api_key' as const,
-      group: 'guest',
+      tier: 'guest',
       env: 'OPENAI_BASE_URL',
       fields: { key: 'https://evil' },
     }
-    expect(envFor([lower], new Date(0), { ownGroups: ['member'], explicit: ['openai'] })).toEqual({
+    expect(envFor([lower], new Date(0), { ownTiers: ['member'], explicit: ['openai'] })).toEqual({
       OPENAI_KEY: 'https://evil',
     })
   })
 
-  it('honors the env override of an included-group entry written from above the reader', async () => {
+  it('honors the env override of an included-tier entry written from above the reader', async () => {
     const base = await member().get(n('github/bot'))
     const imported = {
       ...base,
       name: n('openai'),
       type: 'api_key' as const,
-      group: 'guest',
+      tier: 'guest',
       env: 'OPENAI_API_KEY',
       fields: { key: 'sk' },
       trustedWriter: true,
     }
-    expect(envFor([imported], new Date(0), { ownGroups: ['member'], explicit: ['openai'] })).toEqual({
+    expect(envFor([imported], new Date(0), { ownTiers: ['member'], explicit: ['openai'] })).toEqual({
       OPENAI_API_KEY: 'sk',
     })
   })
@@ -306,8 +306,8 @@ describe('OAuth refresh', () => {
         expires_at: '2000-01-01T00:00:00.000Z',
         token_url: `http://127.0.0.1:${server.port}/token`,
       }
-      await vault.put({ name: n('google'), type: 'oauth', fields, group: 'member' }, signerOf(operator))
-      const access = new ScopedVault(vault, [{ groups: ['member'], only: [] }], { mode: 'live', label: 's' })
+      await vault.put({ name: n('google'), type: 'oauth', fields, tier: 'member' }, signerOf(owner))
+      const access = new ScopedVault(vault, [{ tiers: ['member'], only: [] }], { mode: 'live', label: 's' })
       expect((await access.get(n('google'))).fields['access_token']).toBe('fresh-token')
       expect((await vault.find(n('google')))?.payload.fields['access_token']).toBe('fresh-token')
       expect(readAudit(vault.layout).map((record) => record['action'])).toContain('refresh')
@@ -319,7 +319,7 @@ describe('OAuth refresh', () => {
 
 describe('sealed grants', () => {
   const issue = (ttlMs = 60_000) =>
-    issueSealedGrant(vault, { groups: ['member'], only: ['github/*'], ttlMs, label: 'ci:deploy' })
+    issueSealedGrant(vault, { tiers: ['member'], only: ['github/*'], ttlMs, label: 'ci:deploy' })
 
   it('carries exactly the granted entries', async () => {
     const access = new SealedAccess(await readSealedGrant(await issue()), layoutOf(root), {})
@@ -332,15 +332,15 @@ describe('sealed grants', () => {
   it('writes entries that readers accept through the certificate', async () => {
     const access = new SealedAccess(await readSealedGrant(await issue()), layoutOf(root), {})
     await access.set({ name: n('github/bot'), type: 'password', fields: { password: 'rotated' } })
-    const stored = await (await Vault.open(layoutOf(root), [operator], {})).find(n('github/bot'))
+    const stored = await (await Vault.open(layoutOf(root), [owner], {})).find(n('github/bot'))
     expect(stored?.payload.fields).toEqual({ password: 'rotated' })
     expect(stored?.envelope.signer.kind).toBe('cert')
   })
 
-  it('cannot write outside its groups', async () => {
+  it('cannot write outside its tiers', async () => {
     const access = new SealedAccess(await readSealedGrant(await issue()), layoutOf(root), {})
     await expect(
-      access.set({ name: n('github/x'), type: 'note', fields: { text: 'x' }, group: 'trusted' }),
+      access.set({ name: n('github/x'), type: 'note', fields: { text: 'x' }, tier: 'trusted' }),
     ).rejects.toMatchObject({ code: 'denied' })
   })
 
@@ -356,7 +356,7 @@ describe('sealed grants', () => {
 
   it('rejects a certificate write outside its --only, whatever the holder signs', async () => {
     await vault.put(
-      { name: n('aws/root'), type: 'api_key', fields: { key: 'forged' }, group: 'member' },
+      { name: n('aws/root'), type: 'api_key', fields: { key: 'forged' }, tier: 'member' },
       await certSigner(60_000),
     )
     expect(await vault.find(n('aws/root'))).toBeUndefined()
@@ -367,11 +367,11 @@ describe('sealed grants', () => {
 
   it('stops honoring a certificate once the reader clock passes its expiry', async () => {
     await expect(
-      vault.put({ name: n('github/x'), type: 'note', fields: { text: 'late' }, group: 'member' }, await certSigner(-1)),
+      vault.put({ name: n('github/x'), type: 'note', fields: { text: 'late' }, tier: 'member' }, await certSigner(-1)),
     ).rejects.toMatchObject({ code: 'denied' })
   })
 
-  it('honors an expired certificate only when the operator explicitly adopts', async () => {
+  it('honors an expired certificate only when the owner explicitly adopts', async () => {
     const { ref } = await certSigner(-1)
     const at = new Date(Date.parse(ref.cert.exp) - 1_000).toISOString()
     expect(signerAuthority(ref, 'member', vault.state, at)).toBeUndefined()
@@ -380,11 +380,11 @@ describe('sealed grants', () => {
 
   it('adopts certificate writes so they outlive the certificate', async () => {
     await vault.put(
-      { name: n('github/new'), type: 'note', fields: { text: 'hi' }, group: 'member' },
+      { name: n('github/new'), type: 'note', fields: { text: 'hi' }, tier: 'member' },
       await certSigner(60_000),
     )
     expect(await adoptCertWrites(vault)).toEqual(['github/new'])
-    expect((await vault.find(n('github/new')))?.envelope.signer.kind).toBe('group')
+    expect((await vault.find(n('github/new')))?.envelope.signer.kind).toBe('tier')
   })
 
   it('records the issue in the audit trail without values', async () => {

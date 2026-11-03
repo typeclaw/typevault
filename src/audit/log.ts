@@ -17,7 +17,7 @@ export type AuditEvent = {
   readonly mode: AuditMode
   readonly grant?: string
   readonly label?: string
-  readonly groups?: readonly string[]
+  readonly tiers?: readonly string[]
   readonly entries?: readonly string[]
   readonly reason?: string
 }

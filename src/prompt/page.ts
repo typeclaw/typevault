@@ -61,13 +61,13 @@ export function promptPage(view: PromptView, script: string): string {
     'Secret request',
     `
 <h1>${escapeHtml(view.name)}</h1>
-<p class="muted">Readable by: ${escapeHtml(view.group)}</p>
+<p class="muted">Readable by: ${escapeHtml(view.tier)}</p>
 <div class="context"><p class="reason">${escapeHtml(view.reason)}</p>
 <p class="muted">Requested by: ${escapeHtml(view.requester)}</p></div>
 <section class="match" aria-label="Match code"><p class="code">${escapeHtml(view.code)}</p>
 <p class="hint">Compare this code with the one in your chat before entering a secret.</p></section>
 <form id="prompt"><div id="fields"></div>
-<p class="hint">Encrypted in your browser. Only the selected group's recipients can read this secret.</p>
+<p class="hint">Encrypted in your browser. Only the selected tier's recipients can read this secret.</p>
 <button id="submit" type="submit">Encrypt and submit</button>
 <p id="status" role="alert"></p></form>
 <section id="success" hidden role="status" tabindex="-1"><h2>Secret submitted</h2>

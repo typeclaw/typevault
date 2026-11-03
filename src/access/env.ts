@@ -16,16 +16,16 @@ const isTotpField = (value: EntryValue, field: string): boolean =>
   (value.type === 'totp' && field === 'seed') || (value.type === 'password' && field === 'totp')
 
 /**
- * Which entries `run` may put in a child's env. A lower group can write entries a higher one reads, so only the
- * runner's own groups load in bulk; an entry from an included group loads only when `--only` names it exactly.
+ * Which entries `run` may put in a child's env. A lower tier can write entries a higher one reads, so only the
+ * runner's own tiers load in bulk; an entry from an included tier loads only when `--only` names it exactly.
  */
-export type EnvPolicy = { readonly ownGroups: readonly string[]; readonly explicit: readonly string[] }
+export type EnvPolicy = { readonly ownTiers: readonly string[]; readonly explicit: readonly string[] }
 
 export const explicitNames = (only: readonly string[]): readonly string[] =>
   only.filter((pattern) => !/[*?[\]{}]/.test(pattern)).map(entryPattern)
 
 export const envEligible = (value: EntryValue, policy: EnvPolicy): boolean =>
-  policy.ownGroups.includes(value.group) || policy.explicit.includes(value.name)
+  policy.ownTiers.includes(value.tier) || policy.explicit.includes(value.name)
 
 /**
  * The environment `typevault run` gives a child: one variable per non-empty field, named by the entry's
@@ -38,12 +38,12 @@ export function envFor(values: readonly EntryValue[], now: Date, policy: EnvPoli
   for (const value of values.filter((candidate) => envEligible(candidate, policy))) {
     for (const [field, raw] of Object.entries(value.fields)) {
       if (raw === '') continue
-      // An entry from an included group may pick its variable name only if its writer is at least as privileged
+      // An entry from an included tier may pick its variable name only if its writer is at least as privileged
       // as the runner; otherwise it gets the derived name, so a lower writer can't aim it at OPENAI_BASE_URL.
       const ownOverride =
         value.env !== undefined &&
         field === primaryField(value.type) &&
-        (policy.ownGroups.includes(value.group) || value.trustedWriter === true)
+        (policy.ownTiers.includes(value.tier) || value.trustedWriter === true)
       const name = ownOverride && value.env !== undefined ? value.env : deriveEnvName(value.name, field)
       if (name === undefined || isReservedEnvName(name)) continue
       const previous = owner.get(name)
@@ -59,7 +59,7 @@ export type ResolvedRefs = { readonly env: Readonly<Record<string, string>>; rea
 
 /**
  * Replaces each variable whose whole value is a `tv://` reference (`FOO=tv://github/bot#password`) with the
- * referenced field, the primary one when none is named. The caller picked the variable, but a lower group can
+ * referenced field, the primary one when none is named. The caller picked the variable, but a lower tier can
  * still write the value, so loader variables are refused here as they are for entries.
  */
 export async function resolveEnvRefs(

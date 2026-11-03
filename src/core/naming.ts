@@ -132,8 +132,8 @@ export function matchesOnly(name: EntryName, patterns: readonly string[]): boole
 }
 
 /**
- * Variables that change how the child or its interpreter loads code. A lower group can write entries a higher
- * group's `run` loads, so an entry must never set these, whether by --env override or by a derived name.
+ * Variables that change how the child or its interpreter loads code. A lower tier can write entries a higher
+ * tier's `run` loads, so an entry must never set these, whether by --env override or by a derived name.
  */
 const RESERVED_ENV = new RegExp(
   `^(${[

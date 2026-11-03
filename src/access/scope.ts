@@ -1,20 +1,20 @@
 import { TypeVaultError } from '../core/errors'
 import { type EntryName, matchesOnly } from '../core/naming'
-import { reachesGroup, type VaultState } from '../core/state'
+import { reachesTier, type VaultState } from '../core/state'
 
-/** What one grant allows: entries in groups it reaches, optionally narrowed by name patterns. */
-export type GrantScope = { readonly groups: readonly string[]; readonly only: readonly string[] }
+/** What one grant allows: entries in tiers it reaches, optionally narrowed by name patterns. */
+export type GrantScope = { readonly tiers: readonly string[]; readonly only: readonly string[] }
 
 /** A derived grant must satisfy its own scope and every ancestor's. Empty chain = direct mode, everything. */
 export type ScopeChain = readonly GrantScope[]
 
-export const allowsGroup = (chain: ScopeChain, state: VaultState, group: string): boolean =>
-  chain.every((scope) => reachesGroup(state.groups, scope.groups, group))
+export const allowsTier = (chain: ScopeChain, state: VaultState, tier: string): boolean =>
+  chain.every((scope) => reachesTier(state.tiers, scope.tiers, tier))
 
-export const allowsEntry = (chain: ScopeChain, state: VaultState, group: string, name: EntryName): boolean =>
+export const allowsEntry = (chain: ScopeChain, state: VaultState, tier: string, name: EntryName): boolean =>
   chain.every(
     (scope) =>
-      reachesGroup(state.groups, scope.groups, group) && (scope.only.length === 0 || matchesOnly(name, scope.only)),
+      reachesTier(state.tiers, scope.tiers, tier) && (scope.only.length === 0 || matchesOnly(name, scope.only)),
   )
 
 const UNITS = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 } as const

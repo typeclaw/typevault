@@ -38,7 +38,7 @@ export function layoutFrom(env: Env, cwd: string = process.cwd()): Layout {
   return layout
 }
 
-/** The vault opened with this machine's own keys: direct mode, for the operator and launchers. */
+/** The vault opened with this machine's own keys: direct mode, for the owner and issuers. */
 export async function openDirect(env: Env): Promise<Vault> {
   const layout = layoutFrom(env)
   const keys = loadLocalKeys(layout, env)
@@ -57,10 +57,10 @@ export type ResolvedAccess =
 export async function resolveAccess(env: Env): Promise<ResolvedAccess> {
   const grant = env['TYPEVAULT_GRANT']?.trim()
   if (grant === undefined || grant === '') {
-    const group = env['TYPEVAULT_GROUP']
+    const tier = env['TYPEVAULT_TIER']
     const vault = await openDirect(env)
-    const ownGroups = vault.keys.flatMap((key) => (key.role.kind === 'group' ? [key.role.group] : []))
-    const identity = { mode: 'direct' as const, ownGroups, ...(group === undefined ? {} : { defaultGroup: group }) }
+    const ownTiers = vault.keys.flatMap((key) => (key.role.kind === 'tier' ? [key.role.tier] : []))
+    const identity = { mode: 'direct' as const, ownTiers, ...(tier === undefined ? {} : { defaultTier: tier }) }
     return { kind: 'direct', access: new ScopedVault(vault, [], identity) }
   }
   if (grant.startsWith('tvl1.')) {
