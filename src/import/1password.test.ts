@@ -31,7 +31,21 @@ test('1PUX maps login, password, secure note, API, SSH, and tags without unsuppo
       }),
       item('005', { sections: [{ fields: [{ id: 'password', value: { concealed: 'second' } }] }] }),
       item('003', { notesPlain: 'private note' }, 'Memo'),
-      item('112', { sections: [{ fields: [{ id: 'credential', value: { concealed: 'fake-key' } }] }] }, 'API'),
+      item(
+        '112',
+        {
+          sections: [
+            {
+              fields: [
+                { id: 'credential', value: { concealed: 'fake-key' } },
+                { id: 'custom1', title: 'Webhook Secret', value: { concealed: 'whsec' } },
+                { id: 'custom2', title: 'Valid From', value: { date: 1700000000 } },
+              ],
+            },
+          ],
+        },
+        'API',
+      ),
       item(
         '114',
         {
@@ -63,7 +77,7 @@ test('1PUX maps login, password, secure note, API, SSH, and tags without unsuppo
     ],
     ['github/work-2', 'password', { password: 'second', url: 'https://example.com/path?secret=hidden' }],
     ['memo/work', 'note', { text: 'private note' }],
-    ['api/work', 'api_key', { key: 'fake-key' }],
+    ['api/work', 'api_key', { key: 'fake-key', 'Webhook Secret': 'whsec' }],
     ['ssh/work', 'ssh', { private_key: 'fake-private', public_key: 'fake-public' }],
   ])
   expect(result.entries[0]?.origin).toBe('https://example.com')

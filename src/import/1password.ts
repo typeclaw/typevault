@@ -2,7 +2,7 @@ import { strFromU8, unzipSync } from 'fflate'
 import { z } from 'zod'
 
 import { TypeVaultError } from '../core/errors'
-import { collectEntries, parseExternal, parseJson, type ImportItem } from './shared'
+import { collectEntries, parseExternal, parseJson, withCustomFields, type ImportItem } from './shared'
 import type { ImportResult } from './types'
 
 const KeySchema = z.object({
@@ -82,6 +82,15 @@ export function parse1Password(bytes: Uint8Array): ImportResult {
 }
 
 function mapItem(item: z.infer<typeof ItemSchema>): Omit<ImportItem, 'title'> | undefined {
+  const mapped = mapTemplate(item)
+  if (mapped === undefined) return undefined
+  const labeled = item.details.sections
+    .flatMap((section) => section.fields)
+    .map((field) => [field.title, field.value.concealed ?? field.value.string] as const)
+  return { ...mapped, fields: withCustomFields(mapped.fields, labeled) }
+}
+
+function mapTemplate(item: z.infer<typeof ItemSchema>): Omit<ImportItem, 'title'> | undefined {
   const sections = item.details.sections.flatMap((section) => section.fields)
   const field = (names: readonly string[]) =>
     sections.find((value) => names.includes(value.id.toLowerCase()) || names.includes(value.title.toLowerCase()))
