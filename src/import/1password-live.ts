@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import { TypeVaultError } from '../core/errors'
+import { findField } from '../core/naming'
 import { collectEntries, parseExternal, parseJson, withCustomFields, type ImportItem } from './shared'
 import type { ImportResult } from './types'
 
@@ -82,13 +83,16 @@ async function readOp(options: OnePasswordOptions, runOp: RunOp): Promise<Import
   )
   const items: ImportItem[] = []
   const warnings: string[] = []
-  // `op --tags` also matches nested tags (`tag/child`); keep only exact matches, like the SDK path.
-  for (const entry of listed.filter((item) => hasTag(item.tags, options.tag))) {
+  // `op --tags` also matches nested tags (`tag/child`): those name the fields to import.
+  for (const entry of listed.filter((item) => tagSelection(item.tags, options.tag) !== undefined)) {
     const args = ['item', 'get', entry.id, '--vault', entry.vault.id, '--reveal', '--format', 'json', ...account]
     const item = parseJson(await runOp(args), OpItemSchema, 'op')
     const mapped = mapOpItem(item)
     if (mapped === undefined) warnings.push(UNSUPPORTED)
-    else items.push({ ...mapped, title: item.title, container: item.vault.name, tags: item.tags })
+    else {
+      const selected = selectFields(mapped, item.title, item.tags, options.tag, warnings)
+      if (selected !== undefined) items.push({ ...selected, title: item.title, container: item.vault.name })
+    }
   }
   return collectEntries(items, warnings)
 }
@@ -140,8 +144,47 @@ function mapOpTemplate(item: z.infer<typeof OpItemSchema>): Omit<ImportItem, 'ti
   }
 }
 
-function hasTag(tags: readonly string[], tag: string | undefined): boolean {
-  return tag === undefined || tags.includes(tag)
+/**
+ * Which fields an item's tags select under `--tag`: every field for the tag itself, only the named ones for
+ * `<tag>/<field>` tags, and undefined when the item carries neither.
+ */
+function tagSelection(tags: readonly string[], tag: string | undefined): 'all' | readonly string[] | undefined {
+  if (tag === undefined || tags.includes(tag)) return 'all'
+  const fields = tags.flatMap((value) => (value.startsWith(`${tag}/`) ? [value.slice(tag.length + 1)] : []))
+  return fields.length === 0 ? undefined : fields
+}
+
+/** Narrows a mapped item to the fields its tags select, matched by stored name ignoring case, and drops the field tags. */
+function selectFields(
+  mapped: Omit<ImportItem, 'title'>,
+  title: string,
+  tags: readonly string[],
+  tag: string | undefined,
+  warnings: string[],
+): Omit<ImportItem, 'title'> | undefined {
+  const selection = tagSelection(tags, tag)
+  // Listing and fetching aren't atomic: an item untagged in between is skipped, never imported whole.
+  if (selection === undefined) {
+    warnings.push(`${title}: skipped, it no longer carries the tag`)
+    return undefined
+  }
+  const kept = tag === undefined ? tags : tags.filter((value) => !value.startsWith(`${tag}/`))
+  if (selection === 'all') return { ...mapped, tags: kept }
+  const fields: Record<string, string> = {}
+  for (const wanted of selection) {
+    // Resolve the name against every mapped field, empty ones included, so an empty canonical field is never
+    // stood in for by a custom one that differs only in case.
+    const field = findField(mapped.fields, wanted)
+    const value = field === undefined ? undefined : mapped.fields[field]
+    if (field === undefined || value === undefined || value === '')
+      warnings.push(`${title}: no single field "${wanted}" to import`)
+    else fields[field] = value
+  }
+  if (Object.keys(fields).length === 0) {
+    warnings.push(`${title}: skipped, none of its tagged fields were found`)
+    return undefined
+  }
+  return { ...mapped, fields, tags: kept }
 }
 
 const spawnOp: RunOp = async (args) => {
@@ -197,7 +240,7 @@ async function readSdk(account: string, options: OnePasswordOptions, connect: Co
   for (const vault of vaults) {
     const listed = (
       await client.items.list(vault.id, { type: 'ByState', content: { active: true, archived: false } })
-    ).filter((item) => hasTag(item.tags, options.tag))
+    ).filter((item) => tagSelection(item.tags, options.tag) !== undefined)
     if (listed.length === 0) continue
     const fetched = await client.items.getAll(
       vault.id,
@@ -211,7 +254,10 @@ async function readSdk(account: string, options: OnePasswordOptions, connect: Co
       const item = parseExternal(response.content, SdkItemSchema, '1Password SDK')
       const mapped = mapSdkItem(item)
       if (mapped === undefined) warnings.push(UNSUPPORTED)
-      else items.push({ ...mapped, title: item.title, container: vault.title, tags: item.tags })
+      else {
+        const selected = selectFields(mapped, item.title, item.tags, options.tag, warnings)
+        if (selected !== undefined) items.push({ ...selected, title: item.title, container: vault.title })
+      }
     }
   }
   return collectEntries(items, warnings)
