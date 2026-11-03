@@ -12,7 +12,7 @@ import { initVault } from '../core/init'
 import { layoutOf } from '../core/layout'
 import { parseEntryName } from '../core/naming'
 import { Vault } from '../core/vault'
-import { envFor, explicitNames } from './env'
+import { envFor, explicitNames, resolveEnvRefs } from './env'
 import { ScopedVault } from './scoped'
 import { issueSealedGrant, readSealedGrant, sealedSigningSecret } from './sealed'
 import { SealedAccess } from './sealed-access'
@@ -231,6 +231,44 @@ describe('ScopedVault', () => {
     )
     expect(env).toEqual({ GITHUB_BOT_PASSWORD: 'p4ss', GITHUB_BOT_TOTP: '287082' })
   })
+
+  it('resolves tv:// references in env values and leaves other variables alone', async () => {
+    const scope = member()
+    const resolved = await resolveEnvRefs(
+      {
+        BOT_PASSWORD: 'tv://github/bot',
+        BOT_USER: 'typevault://github/bot#username',
+        ME: 'TV://GitHub/Personal#password',
+        HOME_PAGE: 'https://example.com',
+      },
+      (name) => scope.get(name),
+      new Date(0),
+    )
+    expect(resolved.env).toEqual({ BOT_PASSWORD: 'hunter2-bot', BOT_USER: 'bot', ME: 'hunter2-me' })
+  })
+
+  it('refuses a tv:// reference outside the scope, to a missing field or in a loader variable', async () => {
+    const scope = member()
+    const resolve = (env: Record<string, string>) => resolveEnvRefs(env, (name) => scope.get(name), new Date(0))
+    await expect(resolve({ KEY: 'tv://stripe' })).rejects.toMatchObject({ code: 'not_found' })
+    await expect(resolve({ KEY: 'tv://github/bot#url' })).rejects.toMatchObject({ code: 'not_found' })
+    await expect(resolve({ NODE_OPTIONS: 'tv://github/bot' })).rejects.toMatchObject({ code: 'invalid' })
+  })
+
+  it.each(['http_proxy', 'https_proxy', 'npm_config_userconfig'])(
+    'refuses a tv:// reference in lowercase %p before reading the entry',
+    async (variable) => {
+      const reads: string[] = []
+      const get = async (name: string) => {
+        reads.push(name)
+        return member().get(n(name))
+      }
+      await expect(resolveEnvRefs({ [variable]: 'tv://github/bot' }, get, new Date(0))).rejects.toMatchObject({
+        code: 'invalid',
+      })
+      expect(reads).toEqual([])
+    },
+  )
 })
 
 describe('OAuth refresh', () => {

@@ -37,6 +37,9 @@ export const ENTRY_REF_SYNTAX = `${ENTRY_NAME_SYNTAX}[#<field>]`
 
 const REF_SCHEME = /^(?:tv|typevault):\/\//i
 
+/** True when `input` carries the `tv://` (or `typevault://`) scheme, as an env value `run` resolves. */
+export const hasRefScheme = (input: string): boolean => REF_SCHEME.test(input.trim())
+
 /** An `--only` pattern (a name or a glob) in the form names are stored in: no scheme, lowercase. */
 export const entryPattern = (input: string): string => input.trim().replace(REF_SCHEME, '').toLowerCase()
 

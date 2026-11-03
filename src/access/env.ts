@@ -1,5 +1,13 @@
 import { TypeVaultError } from '../core/errors'
-import { deriveEnvName, entryPattern, isReservedEnvName, primaryField } from '../core/naming'
+import {
+  deriveEnvName,
+  type EntryName,
+  entryPattern,
+  hasRefScheme,
+  isReservedEnvName,
+  parseEntryRef,
+  primaryField,
+} from '../core/naming'
 import { parseTotpSeed, totpCode } from '../otp/totp'
 import type { EntryValue } from './types'
 
@@ -44,6 +52,36 @@ export function envFor(values: readonly EntryValue[], now: Date, policy: EnvPoli
     }
   }
   return env
+}
+
+export type ResolvedRefs = { readonly env: Readonly<Record<string, string>>; readonly values: readonly EntryValue[] }
+
+/**
+ * Replaces each variable whose whole value is a `tv://` reference (`FOO=tv://github/bot#password`) with the
+ * referenced field, the primary one when none is named. The caller picked the variable, but a lower group can
+ * still write the value, so loader variables are refused here as they are for entries.
+ */
+export async function resolveEnvRefs(
+  env: Readonly<Record<string, string | undefined>>,
+  get: (name: EntryName) => Promise<EntryValue>,
+  now: Date,
+): Promise<ResolvedRefs> {
+  const resolved: Record<string, string> = {}
+  const values: EntryValue[] = []
+  for (const [variable, raw] of Object.entries(env)) {
+    if (raw === undefined || !hasRefScheme(raw)) continue
+    // Programs read some of these in lowercase too (curl's http_proxy), so the check ignores case.
+    if (isReservedEnvName(variable.toUpperCase()))
+      throw new TypeVaultError('invalid', `${variable} is reserved: run never sets it from the vault`)
+    const ref = parseEntryRef(raw)
+    const value = await get(ref.name)
+    const field = ref.field ?? primaryField(value.type)
+    const secret = value.fields[field]
+    if (secret === undefined) throw new TypeVaultError('not_found', `${value.name} has no field "${field}"`)
+    resolved[variable] = isTotpField(value, field) ? totpCode(parseTotpSeed(secret), now) : secret
+    values.push(value)
+  }
+  return { env: resolved, values }
 }
 
 /** Secret values handed to the child: the injected env values plus TOTP seeds, for redaction. */
