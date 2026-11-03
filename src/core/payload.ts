@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 import { fromUtf8, utf8 } from './encoding'
 import { TypeVaultError } from './errors'
-import { type EntryName, type EntryType, fieldsOf, isEntryType, isUsableEnvName, parseEntryName } from './naming'
+import { type EntryName, type EntryType, isEntryType, isFieldName, isUsableEnvName, parseEntryName } from './naming'
 
 /** The plaintext sealed inside an entry file: everything except the group is secret. */
 export type EntryPayload = {
@@ -40,9 +40,8 @@ function payloadProblem(value: unknown): string | undefined {
   if (!parsed.success) return parsed.error.issues[0]?.message ?? 'malformed'
   const { type, fields, env } = parsed.data
   if (!isEntryType(type)) return `unknown type "${type}"`
-  const allowed = fieldsOf(type)
-  const stray = Object.keys(fields).find((field) => !allowed.includes(field))
-  if (stray !== undefined) return `${type} entries have no field "${stray}"`
+  const invalid = Object.keys(fields).find((field) => !isFieldName(field))
+  if (invalid !== undefined) return `invalid field name "${invalid}"`
   if (env !== undefined && !isUsableEnvName(env)) return `${env} is not a usable env name`
   return undefined
 }

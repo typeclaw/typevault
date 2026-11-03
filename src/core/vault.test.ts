@@ -86,12 +86,23 @@ describe('integrity', () => {
     expect(scan.problems).toHaveLength(1)
   })
 
-  it('refuses to store a field the entry type does not have', async () => {
+  it('stores fields the entry type does not list, keeping their names as written', async () => {
     const vault = await open([operator])
-    await expect(
-      vault.put({ ...stripe, fields: { key: 'x', external_diff: 'sh' } }, signerOf(operator)),
-    ).rejects.toMatchObject({ code: 'invalid' })
+    await vault.put({ ...stripe, fields: { key: 'x', 'Webhook Secret': 'whsec' } }, signerOf(operator))
+    expect((await vault.find(stripe.name))?.payload.fields).toEqual({ key: 'x', 'Webhook Secret': 'whsec' })
   })
+
+  it.each(['', 'a=b', ' padded', 'line\nbreak', 'x'.repeat(65)])(
+    'refuses to store the field name %p',
+    async (field) => {
+      const vault = await open([operator])
+      await expect(
+        vault.put({ ...stripe, fields: { key: 'x', [field]: 'y' } }, signerOf(operator)),
+      ).rejects.toMatchObject({
+        code: 'invalid',
+      })
+    },
+  )
 
   it('never lets a lower group shadow a name held by a higher group', async () => {
     const vault = await open([operator])
