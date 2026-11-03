@@ -7,7 +7,7 @@ import { SealedAccess } from '../access/sealed-access'
 import type { Access } from '../access/types'
 import { Admin } from '../core/admin'
 import { TypeVaultError } from '../core/errors'
-import { type Layout, layoutOf, resolveRoot } from '../core/layout'
+import { findLocalVault, type Layout, layoutOf, openLocalLayout, resolveRoot } from '../core/layout'
 import { Vault } from '../core/vault'
 import { callDaemon } from '../daemon/client'
 import { LiveAccess } from '../daemon/live-access'
@@ -15,7 +15,28 @@ import { ensureDaemon } from '../daemon/spawn'
 
 export type Env = Readonly<Record<string, string | undefined>>
 
-export const layoutFrom = (env: Env): Layout => layoutOf(resolveRoot(env))
+const isSet = (value: string | undefined): boolean => value !== undefined && value !== ''
+
+/** `-g` (`TYPEVAULT_GLOBAL`) or an explicit `TYPEVAULT_DIR` selects the global vault; otherwise the project's. */
+export const wantsGlobal = (env: Env): boolean => isSet(env['TYPEVAULT_GLOBAL']) || isSet(env['TYPEVAULT_DIR'])
+
+/** The selected vault, or undefined when no project vault is found from `cwd`. Never falls back to the global one. */
+export function findLayout(env: Env, cwd: string = process.cwd()): Layout | undefined {
+  if (wantsGlobal(env)) return layoutOf(resolveRoot(env))
+  const dir = findLocalVault(cwd)
+  return dir === undefined ? undefined : openLocalLayout(dir, env)
+}
+
+export function layoutFrom(env: Env, cwd: string = process.cwd()): Layout {
+  const layout = findLayout(env, cwd)
+  if (layout === undefined) {
+    throw new TypeVaultError(
+      'not_found',
+      'no vault here (run `typevault init` to create one, or pass -g for the global vault)',
+    )
+  }
+  return layout
+}
 
 /** The vault opened with this machine's own keys: direct mode, for the operator and launchers. */
 export async function openDirect(env: Env): Promise<Vault> {
@@ -34,7 +55,6 @@ export type ResolvedAccess =
 
 /** `TYPEVAULT_GRANT` decides: `tvl1.` live via the daemon, `tvg1:`/`@path` sealed, unset = direct mode. */
 export async function resolveAccess(env: Env): Promise<ResolvedAccess> {
-  const layout = layoutFrom(env)
   const grant = env['TYPEVAULT_GRANT']?.trim()
   if (grant === undefined || grant === '') {
     const group = env['TYPEVAULT_GROUP']
@@ -44,11 +64,12 @@ export async function resolveAccess(env: Env): Promise<ResolvedAccess> {
     return { kind: 'direct', access: new ScopedVault(vault, [], identity) }
   }
   if (grant.startsWith('tvl1.')) {
+    const layout = layoutFrom(env)
     await ensureDaemon(layout, env)
     return { kind: 'live', access: new LiveAccess(layout.agentSocket, grant) }
   }
   if (grant.startsWith('tvg1:') || grant.startsWith('@')) {
-    return { kind: 'sealed', access: new SealedAccess(await readSealedGrant(grant), layout, env) }
+    return { kind: 'sealed', access: new SealedAccess(await readSealedGrant(grant), findLayout(env), env) }
   }
   throw new TypeVaultError('invalid', 'TYPEVAULT_GRANT is not a typevault grant')
 }

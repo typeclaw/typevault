@@ -10,6 +10,9 @@ import { importCommand, redact, request, run, scrub } from './commands/run'
 
 const main = defineCommand({
   meta: { name: 'typevault', description: 'A CLI-first secrets vault for agents' },
+  args: {
+    global: { type: 'boolean', alias: 'g', description: 'Use the global vault instead of the project vault' },
+  },
   subCommands: {
     init,
     group,
@@ -35,8 +38,13 @@ const main = defineCommand({
   },
 })
 
-const rawArgs = process.argv.slice(2)
-const ownArgs = rawArgs.includes('--') ? rawArgs.slice(0, rawArgs.indexOf('--')) : rawArgs
+const argv = process.argv.slice(2)
+const split = argv.includes('--') ? argv.indexOf('--') : argv.length
+const isGlobalFlag = (arg: string): boolean => arg === '-g' || arg === '--global'
+// -g applies to every command, so it is taken out here; anything after `--` belongs to the child of `run`.
+if (argv.slice(0, split).some(isGlobalFlag)) process.env['TYPEVAULT_GLOBAL'] = '1'
+const ownArgs = argv.slice(0, split).filter((arg) => !isGlobalFlag(arg))
+const rawArgs = [...ownArgs, ...argv.slice(split)]
 const wantsUsage = ownArgs.length === 0 || ownArgs.some((arg) => arg === '--help' || arg === '-h')
 
 if (wantsUsage) {
