@@ -1,3 +1,4 @@
+import type { Client } from '@1password/sdk'
 import { z } from 'zod'
 
 import { TypeVaultError } from '../core/errors'
@@ -16,7 +17,8 @@ export type OnePasswordOptions = {
   readonly tags?: readonly string[]
 }
 
-export type RunOp = (args: readonly string[]) => Promise<string>
+/** Runs `op` with `args`; `input` is piped to stdin, so secrets never land in argv. */
+export type RunOp = (args: readonly string[], input?: string) => Promise<string>
 
 export type SdkClient = {
   readonly vaults: { list(): Promise<readonly { readonly id: string; readonly title: string }[]> }
@@ -230,10 +232,11 @@ function selectFields(
   return { ...mapped, fields, tags: kept }
 }
 
-const spawnOp: RunOp = async (args) => {
-  let child: Bun.Subprocess<'ignore', 'pipe', 'pipe'>
+export const spawnOp: RunOp = async (args, input) => {
+  let child: Bun.Subprocess<'ignore' | Blob, 'pipe', 'pipe'>
   try {
-    child = Bun.spawn(['op', ...args], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' })
+    const stdin = input === undefined ? 'ignore' : new Blob([input])
+    child = Bun.spawn(['op', ...args], { stdin, stdout: 'pipe', stderr: 'pipe' })
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
       throw new TypeVaultError('unavailable', '1Password CLI (op) was not found; install it or use --via sdk')
@@ -341,7 +344,8 @@ function mapSdkTemplate(item: z.infer<typeof SdkItemSchema>): Omit<ImportItem, '
   }
 }
 
-const connectDesktopSdk: ConnectSdk = async (account) => {
+/** A full 1Password SDK client through the desktop app, for reads and writes. */
+export async function connectDesktop(account: string): Promise<Client> {
   // Loaded on demand: the SDK ships a large WebAssembly core that no other command needs.
   const sdk = await import('@1password/sdk')
   const { version } = z
@@ -361,3 +365,5 @@ const connectDesktopSdk: ConnectSdk = async (account) => {
     )
   }
 }
+
+const connectDesktopSdk: ConnectSdk = connectDesktop
