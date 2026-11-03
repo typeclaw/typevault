@@ -15,6 +15,7 @@ import { parseTypeclaw } from './typeclaw'
 import type { ImportResult, ImportSource } from './types'
 
 export type { ImportedEntry, ImportResult, ImportSource } from './types'
+export { ONEPASSWORD_VIAS, read1Password, type OnePasswordOptions, type OnePasswordVia } from './1password-live'
 
 const SourceSchema = z.enum(['dotenv', 'typeclaw', '1password', 'bitwarden', 'lastpass', 'keepass', 'csv'])
 const InputSchema = z.object({ path: z.string().min(1), password: z.string().optional() }).readonly()
