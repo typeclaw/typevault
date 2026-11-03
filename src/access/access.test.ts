@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { readAudit } from '../audit/log'
 import { Admin } from '../core/admin'
 import { adoptCertWrites } from '../core/adopt'
-import type { SecretKey } from '../core/crypto'
+import { decodeSecretKey, type SecretKey } from '../core/crypto'
 import { signerAuthority, signerOf } from '../core/entries'
 import { initVault } from '../core/init'
 import { layoutOf } from '../core/layout'
@@ -85,6 +85,60 @@ describe('ScopedVault', () => {
       reason: 'login',
     })
     expect(await access.readValues()).toEqual(['bot', 'hunter2-bot'])
+  })
+
+  it('writes to the only group in reach when none is named', async () => {
+    const access = new ScopedVault(vault, [{ groups: ['member'], only: [] }], { mode: 'live' })
+    const stored = await access.set({ name: n('openai'), type: 'api_key', fields: { key: 'sk-x' } })
+    expect(stored.group).toBe('member')
+  })
+
+  it('asks for a group, listing the choices, when several are in reach', async () => {
+    const direct = new ScopedVault(vault, [], { mode: 'direct' })
+    const write = direct.set({ name: n('openai'), type: 'api_key', fields: { key: 'sk-x' } })
+    await expect(write).rejects.toThrow('choose a group with --group (one of: member, trusted) or set TYPEVAULT_GROUP')
+  })
+
+  it('rereads groups before inferring one, so a group added by another handle makes the choice ambiguous', async () => {
+    const fresh = mkdtempSync(join(tmpdir(), 'typevault-access-stale-'))
+    try {
+      // given a client opened while `default` was the only group
+      const key = await initVault(fresh)
+      const admin = new Admin(await Vault.open(layoutOf(fresh), [key], {}))
+      await admin.addGroup('default')
+      const client = new ScopedVault(await Vault.open(layoutOf(fresh), [key], {}), [], { mode: 'direct' })
+
+      // when another handle adds a second group before the client writes
+      await admin.addGroup('other')
+      const write = client.set({ name: n('openai'), type: 'api_key', fields: { key: 'sk-x' } })
+
+      // then the client refuses to guess
+      await expect(write).rejects.toThrow('one of: default, other')
+    } finally {
+      rmSync(fresh, { recursive: true, force: true })
+    }
+  })
+
+  it('infers the only group a direct key holder can open, ignoring groups it cannot reach', async () => {
+    const memberKey = decodeSecretKey(await new Admin(vault).exportKey('member'))
+    const direct = new ScopedVault(await Vault.open(layoutOf(root), [memberKey], {}), [], { mode: 'direct' })
+    const stored = await direct.set({ name: n('openai'), type: 'api_key', fields: { key: 'sk-x' } })
+    expect(stored.group).toBe('member')
+  })
+
+  it('points to `group add` when the vault has no group yet', async () => {
+    const fresh = mkdtempSync(join(tmpdir(), 'typevault-access-empty-'))
+    try {
+      const empty = await Vault.open(layoutOf(fresh), [await initVault(fresh)], {})
+      const write = new ScopedVault(empty, [], { mode: 'direct' }).set({
+        name: n('openai'),
+        type: 'api_key',
+        fields: { key: 'sk-x' },
+      })
+      await expect(write).rejects.toThrow('create one with `typevault group add <name>`')
+    } finally {
+      rmSync(fresh, { recursive: true, force: true })
+    }
   })
 
   it('refuses to overwrite a name held in a group the scope cannot reach', async () => {

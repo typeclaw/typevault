@@ -85,7 +85,10 @@ export const set = defineCommand({
   args: {
     name: { type: 'positional', description: '<service>[/<account>]', required: true },
     type: { type: 'string', description: 'password | api_key | oauth | ssh | totp | note' },
-    group: { type: 'string', description: "Group (defaults to your grant's group)" },
+    group: {
+      type: 'string',
+      description: "Group (defaults to your grant's group; in direct mode, $TYPEVAULT_GROUP or the vault's only group)",
+    },
     field: { type: 'string', description: 'k=v, repeatable (non-secret fields; use --stdin for the secret)' },
     stdin: { type: 'boolean', description: 'Read the main secret field from stdin' },
     env: { type: 'string', description: 'Env var name for the main field in `run`' },

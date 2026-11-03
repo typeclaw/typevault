@@ -1,6 +1,7 @@
 import { appendAudit, type AuditEvent, type AuditMode } from '../audit/log'
 import { signerOf } from '../core/entries'
 import { TypeVaultError } from '../core/errors'
+import { withLock } from '../core/lock'
 import { type EntryName, matchesOnly } from '../core/naming'
 import { resolveName, type StoredEntry, type Vault } from '../core/vault'
 import { needsRefresh, refreshOAuth } from '../oauth/refresh'
@@ -133,9 +134,29 @@ export class ScopedVault implements Access {
     )
   }
 
-  async set(input: SetInput): Promise<EntrySummary> {
-    const group = input.group ?? this.#identity.defaultGroup
-    if (group === undefined) throw new TypeVaultError('invalid', 'choose a group with --group')
+  // The group is chosen under the same exclusive lock as the write, from freshly read state, so a group another
+  // process adds in between makes the choice ambiguous instead of silently picking the old only group.
+  set(input: SetInput): Promise<EntrySummary> {
+    return withLock(this.#vault.layout.lockFile, 'exclusive', async () => {
+      this.#vault.refresh()
+      return this.#write(input, input.group ?? this.#identity.defaultGroup ?? (await this.#onlyWritableGroup()))
+    })
+  }
+
+  /** Only infer when there is exactly one answer: the group decides who can read the secret. */
+  async #onlyWritableGroup(): Promise<string> {
+    const { state, keyring } = this.#vault
+    const writable = [...(await keyring.reachableGroups())].filter((name) => allowsGroup(this.#chain, state, name))
+    const [only, ...others] = writable
+    if (only === undefined) {
+      throw new TypeVaultError('invalid', 'no group to write to yet: create one with `typevault group add <name>`')
+    }
+    if (others.length === 0) return only
+    const viaEnv = this.#identity.mode === 'direct' ? ' or set TYPEVAULT_GROUP' : ''
+    throw new TypeVaultError('invalid', `choose a group with --group (one of: ${writable.join(', ')})${viaEnv}`)
+  }
+
+  async #write(input: SetInput, group: string): Promise<EntrySummary> {
     if (
       !allowsGroup(this.#chain, this.#vault.state, group) ||
       !allowsEntry(this.#chain, this.#vault.state, group, input.name)
