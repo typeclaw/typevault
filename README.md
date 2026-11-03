@@ -4,7 +4,6 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/typevault"><img src="https://img.shields.io/npm/v/typevault?color=cb3837&logo=npm" alt="npm version" /></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license" /></a>
-  <a href="https://discord.gg/V4NQnbXpr"><img src="https://img.shields.io/badge/Discord-TypeClaw-5865F2?logo=discord&logoColor=white" alt="Join TypeClaw on Discord" /></a>
 </p>
 
 <br />
