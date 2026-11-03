@@ -30,7 +30,7 @@ beforeEach(async () => {
   // Short root: unix socket paths are limited to ~104 bytes.
   layout = layoutOf(mkdtempSync('/tmp/tvd-'))
   operator = await initVault(layout.root)
-  const vault = await Vault.open(layout.root, [operator], {})
+  const vault = await Vault.open(layout, [operator], {})
   const admin = new Admin(vault)
   await admin.addGroup('member')
   await admin.addGroup('trusted')
@@ -48,7 +48,7 @@ beforeEach(async () => {
     { name: n('stripe'), type: 'api_key', fields: { key: 'sk_live_x' }, group: 'trusted' },
     signerOf(operator),
   )
-  daemon = await startDaemon({ root: layout.root, env: { TYPEVAULT_DIR: layout.root } })
+  daemon = await startDaemon({ layout, env: { TYPEVAULT_DIR: layout.root } })
 })
 
 afterEach(async () => {
@@ -114,7 +114,7 @@ describe('secret prompt', () => {
       { name: 'resend', type: 'api_key', reason: 'send mail' },
       z.object({ id: z.string(), url: z.string(), code: z.string() }),
     )
-    const vault = await Vault.open(layout.root, [operator], {})
+    const vault = await Vault.open(layout, [operator], {})
     const recipients = [vault.state.groups['member']?.recipient ?? '', vault.state.operator.recipient]
     const now = new Date().toISOString()
     const payload = {
@@ -147,7 +147,7 @@ it('refuses a prompt submission for a different entry than the one requested', a
     { name: 'resend', type: 'api_key', reason: 'mail' },
     z.object({ id: z.string(), url: z.string(), code: z.string() }),
   )
-  const vault = await Vault.open(layout.root, [operator], {})
+  const vault = await Vault.open(layout, [operator], {})
   const recipients = [vault.state.groups['member']?.recipient ?? '', vault.state.operator.recipient]
   const now = new Date().toISOString()
   const forged = {

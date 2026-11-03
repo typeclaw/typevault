@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import { randomHex, type SecretKey } from './crypto'
 import { fromUtf8 } from './encoding'
@@ -16,7 +16,7 @@ import {
 import { TypeVaultError } from './errors'
 import { assertNoSymlinks, atomicWrite, fsyncDir } from './fsx'
 import { Keyring } from './keyring'
-import { type Layout, layoutOf } from './layout'
+import type { Layout } from './layout'
 import { withLock } from './lock'
 import type { EntryName, EntryType } from './naming'
 import type { EntryPayload } from './payload'
@@ -97,8 +97,7 @@ export class Vault {
     this.#keyring = new Keyring(layout, this.#state, keys)
   }
 
-  static async open(root: string, keys: readonly SecretKey[], env: Env = process.env): Promise<Vault> {
-    const layout = layoutOf(root)
+  static async open(layout: Layout, keys: readonly SecretKey[], env: Env = process.env): Promise<Vault> {
     if (existsSync(layout.txnDir) && readdirSync(layout.txnDir).length > 0) {
       await withLock(layout.lockFile, 'exclusive', async () => recoverTxns(layout))
     }
@@ -129,7 +128,7 @@ export class Vault {
       this.refresh()
       const entries: StoredEntry[] = []
       const problems: ScanProblem[] = []
-      assertNoSymlinks(this.layout.root, 'vault/entries')
+      assertNoSymlinks(dirname(this.layout.vault), join(basename(this.layout.vault), 'entries'))
       const files = existsSync(this.layout.entries) ? readdirSync(this.layout.entries) : []
       const marks = new RevisionMarks(this.layout.revisionsFile)
       for (const file of files.filter(

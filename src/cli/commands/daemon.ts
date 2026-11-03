@@ -24,7 +24,7 @@ export const daemon = defineCommand({
         const promptPort = port(env['TYPEVAULT_PROMPT_PORT'])
         const publicUrl = env['TYPEVAULT_PUBLIC_URL']
         const running = await startDaemon({
-          root: layoutFrom(env).root,
+          layout: layoutFrom(env),
           env,
           prompt: {
             ...(promptPort === undefined ? {} : { port: promptPort }),

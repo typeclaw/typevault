@@ -9,6 +9,7 @@ import { adoptCertWrites } from '../core/adopt'
 import type { SecretKey } from '../core/crypto'
 import { signerAuthority, signerOf } from '../core/entries'
 import { initVault } from '../core/init'
+import { layoutOf } from '../core/layout'
 import { parseEntryName } from '../core/naming'
 import { Vault } from '../core/vault'
 import { envFor } from './env'
@@ -24,7 +25,7 @@ const n = parseEntryName
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'typevault-access-'))
   operator = await initVault(root)
-  vault = await Vault.open(root, [operator], {})
+  vault = await Vault.open(layoutOf(root), [operator], {})
   const admin = new Admin(vault)
   await admin.addGroup('member')
   await admin.addGroup('trusted')
@@ -205,7 +206,7 @@ describe('sealed grants', () => {
     issueSealedGrant(vault, { groups: ['member'], only: ['github/*'], ttlMs, label: 'ci:deploy' })
 
   it('carries exactly the granted entries', async () => {
-    const access = new SealedAccess(await readSealedGrant(await issue()), root, {})
+    const access = new SealedAccess(await readSealedGrant(await issue()), layoutOf(root), {})
     expect((await access.values([])).map((value) => value.fields['password'])).toEqual(
       expect.arrayContaining(['hunter2-bot', 'hunter2-me']),
     )
@@ -213,22 +214,22 @@ describe('sealed grants', () => {
   })
 
   it('writes entries that readers accept through the certificate', async () => {
-    const access = new SealedAccess(await readSealedGrant(await issue()), root, {})
+    const access = new SealedAccess(await readSealedGrant(await issue()), layoutOf(root), {})
     await access.set({ name: n('github/bot'), type: 'password', fields: { password: 'rotated' } })
-    const stored = await (await Vault.open(root, [operator], {})).find(n('github/bot'))
+    const stored = await (await Vault.open(layoutOf(root), [operator], {})).find(n('github/bot'))
     expect(stored?.payload.fields).toEqual({ password: 'rotated' })
     expect(stored?.envelope.signer.kind).toBe('cert')
   })
 
   it('cannot write outside its groups', async () => {
-    const access = new SealedAccess(await readSealedGrant(await issue()), root, {})
+    const access = new SealedAccess(await readSealedGrant(await issue()), layoutOf(root), {})
     await expect(
       access.set({ name: n('github/x'), type: 'note', fields: { text: 'x' }, group: 'trusted' }),
     ).rejects.toMatchObject({ code: 'denied' })
   })
 
   it('refuses to work once expired', async () => {
-    const access = new SealedAccess(await readSealedGrant(await issue(-1)), root, {})
+    const access = new SealedAccess(await readSealedGrant(await issue(-1)), layoutOf(root), {})
     await expect(access.list()).rejects.toMatchObject({ code: 'expired' })
   })
 

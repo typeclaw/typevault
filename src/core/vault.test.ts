@@ -9,6 +9,7 @@ import { utf8 } from './encoding'
 import { signerOf } from './entries'
 import { TypeVaultError } from './errors'
 import { initVault } from './init'
+import { layoutOf } from './layout'
 import { parseEntryName } from './naming'
 import { Vault } from './vault'
 
@@ -17,7 +18,7 @@ let operator: SecretKey
 let admin: Admin
 
 const env = {}
-const open = (keys: readonly SecretKey[]): Promise<Vault> => Vault.open(root, keys, env)
+const open = (keys: readonly SecretKey[]): Promise<Vault> => Vault.open(layoutOf(root), keys, env)
 const keyOf = async (group: string): Promise<SecretKey> => decodeSecretKey(await admin.exportKey(group))
 const stripe = {
   name: parseEntryName('stripe'),

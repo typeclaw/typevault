@@ -8,6 +8,7 @@ import type { SecretKey } from './crypto'
 import { doctor } from './doctor'
 import { sealEntry, signerOf } from './entries'
 import { initVault } from './init'
+import { layoutOf } from './layout'
 import { parseEntryName } from './naming'
 import { Vault } from './vault'
 
@@ -19,7 +20,7 @@ const name = parseEntryName('openai')
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'typevault-doctor-'))
   operator = await initVault(root)
-  vault = await Vault.open(root, [operator], {})
+  vault = await Vault.open(layoutOf(root), [operator], {})
   await new Admin(vault).addGroup('team')
 })
 afterEach(() => rmSync(root, { recursive: true, force: true }))
