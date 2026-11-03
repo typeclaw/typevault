@@ -276,8 +276,11 @@ typevault import 1password --account Acme --tag myproject-typevault --group memb
 ```
 
 `--account` is the account name shown in the app's sidebar (or its UUID); `--via op` uses `op`'s default account
-unless you pass one. `--vault` limits the import to one vault and `--tag` to items carrying that tag, so tagging items
-in 1Password picks what agents may reach; re-run the import after tagging more. To import only some fields of an item,
+unless you pass one. `--vault` limits the import to that vault and `--tag` to items carrying that tag, so tagging items
+in 1Password picks what agents may reach; re-run the import after tagging more. Each of `--account`, `--vault` and
+`--tag` can be repeated: an item matches any of a flag's values and must match every flag given, so
+`--account Work --account Home --vault Infra --tag agents` reads both accounts' `Infra` vaults (a vault only one
+account has is fine) for items tagged `agents`. To import only some fields of an item,
 tag it `<tag>/<field>` instead (`myproject-typevault/Account Id`, one tag per field): the name matches the field as
 TypeVault stores it (`password`, `totp`, or a custom field's label), ignoring case. The plain tag wins when an item
 carries both, and the `<tag>/...` tags aren't copied into the vault.
