@@ -163,7 +163,8 @@ const redactor = createRedactor(await vault.readValues())
 `createClient` takes `grant` (default `TYPEVAULT_GRANT`), `dir` and `env`; `dir` (default `TYPEVAULT_DIR`) selects a
 global-style vault, and without it the vault is chosen like the CLI's. Without a grant it
 refuses unless you pass `direct: true`, which loads this machine's keys into your process; keep that to launchers.
-`createAdmin` takes `dir`, `ceiling` and `env`, and offers `grant`, `list` and `revoke`.
+`createAdmin` takes `dir`, `ceiling` and `env`, and offers `grant`, `list` and `revoke`. Both take `global: true` to use
+the global vault, like `-g`.
 
 ## Operator tasks
 
