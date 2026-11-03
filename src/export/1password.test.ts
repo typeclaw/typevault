@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 
 import { TypeVaultError } from '../core/errors'
-import { export1Password, type KeyItem, type SdkWriter } from './1password'
+import { defaultTitle, export1Password, type KeyItem, type SdkWriter } from './1password'
 
 const ITEM: KeyItem = {
   title: 'TypeVault member abc',
@@ -158,6 +158,10 @@ test('SDK export prefers a vault id over another vault titled the same', async (
   await export1Password(ITEM, { vault: 'v2', account: 'acme', via: 'sdk' }, { connect: sdk.connect })
 
   expect(sdk.created.map((params) => params.vaultId)).toEqual(['v2'])
+})
+
+test('the owner backup and a tier named "owner" get different default titles', () => {
+  expect(defaultTitle({ kind: 'owner' }, 'abc')).not.toBe(defaultTitle({ kind: 'tier', tier: 'owner' }, 'abc'))
 })
 
 test('SDK export needs an account', async () => {

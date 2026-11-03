@@ -268,7 +268,7 @@ Owner key rotation and recovery are manual: back up `keys/owner.key` offline, or
 
 `key export --to 1password` uses the `op` CLI when installed, else the 1Password app (`--via sdk|op` to choose; `--account` is required for
 the app or when several `op` accounts are signed in). The key goes in the item's `credential` field, so an issuer can run with
-`TYPEVAULT_KEY="op://Infra/TypeVault member <id>/credential"` under `op run`. An existing item with the same title is refused unless
+`TYPEVAULT_KEY="op://Infra/TypeVault tier member <id>/credential"` under `op run`. An existing item with the same title is refused unless
 `--replace`, which archives it after storing the new one; re-export after `key rotate`.
 
 ### Importing from 1Password

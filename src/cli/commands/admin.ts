@@ -12,7 +12,7 @@ import { TypeVaultError } from '../../core/errors'
 import { initLocalVault, initVault } from '../../core/init'
 import { LOCAL_VAULT_DIR, layoutOf, resolveRoot, vaultIdOf } from '../../core/layout'
 import { Vault } from '../../core/vault'
-import { export1Password } from '../../export/1password'
+import { defaultTitle, export1Password } from '../../export/1password'
 import { ONEPASSWORD_VIAS } from '../../import/1password-live'
 import { openAdmin, openDirect, wantsGlobal } from '../context'
 import { csv, note, print, table } from '../output'
@@ -106,7 +106,10 @@ export const key = defineCommand({
         via: { type: 'string', description: `${ONEPASSWORD_VIAS.join(' | ')} (default: op when installed, else sdk)` },
         account: { type: 'string', description: '1Password account (required with sdk or several op accounts)' },
         vault: { type: 'string', description: '1Password vault' },
-        title: { type: 'string', description: 'Item title (default: TypeVault <tier|owner> <vault id>)' },
+        title: {
+          type: 'string',
+          description: 'Item title (default: TypeVault tier <tier> <vault id>, or TypeVault owner <vault id>)',
+        },
         replace: { type: 'boolean', description: 'Archive an existing item with the same title' },
       },
       async run({ args }) {
@@ -133,12 +136,12 @@ export const key = defineCommand({
         const tierMeta = vault.state.tiers[tierName]
         const item = owner
           ? {
-              title: args.title ?? `TypeVault owner ${id}`,
+              title: args.title ?? defaultTitle({ kind: 'owner' }, id),
               credential: admin.exportOwnerKey(),
               details: { 'vault id': id, role: 'owner', recipient: vault.state.owner.recipient },
             }
           : {
-              title: args.title ?? `TypeVault ${tierName} ${id}`,
+              title: args.title ?? defaultTitle({ kind: 'tier', tier: tierName }, id),
               credential: await admin.exportKey(tierName),
               details: {
                 'vault id': id,
