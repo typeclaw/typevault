@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 import { TypeVaultError } from '../core/errors'
-import { collectEntries, parseExternal, parseJson, type ImportItem } from './shared'
+import { collectEntries, parseExternal, parseJson, withCustomFields, type ImportItem } from './shared'
 import type { ImportResult } from './types'
 
 export const ONEPASSWORD_VIAS = ['sdk', 'op'] as const
@@ -33,6 +33,9 @@ export type SdkClient = {
 export type ConnectSdk = (account: string) => Promise<SdkClient>
 
 const UNSUPPORTED = 'skipped unsupported 1Password item category'
+// Field types kept as custom fields; dates, menus, addresses and keys don't read as one string.
+const OP_TEXT_TYPES: ReadonlySet<string> = new Set(['STRING', 'CONCEALED', 'URL', 'EMAIL', 'PHONE'])
+const SDK_TEXT_TYPES: ReadonlySet<string> = new Set(['Text', 'Concealed', 'Url', 'Email', 'Phone'])
 
 export async function read1Password(
   options: OnePasswordOptions,
@@ -91,6 +94,16 @@ async function readOp(options: OnePasswordOptions, runOp: RunOp): Promise<Import
 }
 
 function mapOpItem(item: z.infer<typeof OpItemSchema>): Omit<ImportItem, 'title'> | undefined {
+  const mapped = mapOpTemplate(item)
+  if (mapped === undefined) return undefined
+  // Built-in fields (username, password, notes) carry a purpose; custom ones don't.
+  const labeled = item.fields
+    .filter((field) => field.purpose === undefined && OP_TEXT_TYPES.has(field.type))
+    .map((field) => [field.label, field.value] as const)
+  return { ...mapped, fields: withCustomFields(mapped.fields, labeled) }
+}
+
+function mapOpTemplate(item: z.infer<typeof OpItemSchema>): Omit<ImportItem, 'title'> | undefined {
   const value = (match: (field: (typeof item.fields)[number]) => boolean) => item.fields.find(match)?.value
   const named = (names: readonly string[]) =>
     value((field) => names.includes(field.id.toLowerCase()) || names.includes(field.label.toLowerCase()))
@@ -205,6 +218,15 @@ async function readSdk(account: string, options: OnePasswordOptions, connect: Co
 }
 
 function mapSdkItem(item: z.infer<typeof SdkItemSchema>): Omit<ImportItem, 'title'> | undefined {
+  const mapped = mapSdkTemplate(item)
+  if (mapped === undefined) return undefined
+  const labeled = item.fields
+    .filter((field) => SDK_TEXT_TYPES.has(field.fieldType))
+    .map((field) => [field.title, field.value] as const)
+  return { ...mapped, fields: withCustomFields(mapped.fields, labeled) }
+}
+
+function mapSdkTemplate(item: z.infer<typeof SdkItemSchema>): Omit<ImportItem, 'title'> | undefined {
   const field = (match: (field: (typeof item.fields)[number]) => boolean) => item.fields.find(match)
   const named = (names: readonly string[]) =>
     field((value) => names.includes(value.id.toLowerCase()) || names.includes(value.title.toLowerCase()))?.value
