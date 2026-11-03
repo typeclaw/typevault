@@ -1,12 +1,9 @@
-<h3 align="center">TypeVault: secrets for agents, not for transcripts</h3>
-<p align="center">A CLI-first vault that hands each agent session exactly the secrets its grant allows.<br />Every read leaves a trail, and values stay out of model context.</p>
+# TypeVault
 
-<p align="center">
-  <a href="https://www.npmjs.com/package/typevault"><img src="https://img.shields.io/npm/v/typevault?color=cb3837&logo=npm" alt="npm version" /></a>
-  <a href="#license"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license" /></a>
-</p>
+**Secrets for agents, not for transcripts.** A CLI-first vault that hands each agent session exactly the secrets its
+grant allows. Every read leaves a trail, and values stay out of model context.
 
-<br />
+[![npm version](https://img.shields.io/npm/v/typevault?color=cb3837&logo=npm)](https://www.npmjs.com/package/typevault) [![MIT license](https://img.shields.io/badge/license-MIT-blue)](#license)
 
 ## Grants, not keys: agents never hold the vault
 
