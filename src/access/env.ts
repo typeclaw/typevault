@@ -1,5 +1,5 @@
 import { TypeVaultError } from '../core/errors'
-import { deriveEnvName, isReservedEnvName, primaryField } from '../core/naming'
+import { deriveEnvName, entryPattern, isReservedEnvName, primaryField } from '../core/naming'
 import { parseTotpSeed, totpCode } from '../otp/totp'
 import type { EntryValue } from './types'
 
@@ -13,7 +13,7 @@ const isTotpField = (value: EntryValue, field: string): boolean =>
 export type EnvPolicy = { readonly ownGroups: readonly string[]; readonly explicit: readonly string[] }
 
 export const explicitNames = (only: readonly string[]): readonly string[] =>
-  only.filter((pattern) => !/[*?[\]{}]/.test(pattern))
+  only.filter((pattern) => !/[*?[\]{}]/.test(pattern)).map(entryPattern)
 
 export const envEligible = (value: EntryValue, policy: EnvPolicy): boolean =>
   policy.ownGroups.includes(value.group) || policy.explicit.includes(value.name)
