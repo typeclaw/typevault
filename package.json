@@ -2,7 +2,15 @@
   "name": "typevault",
   "version": "0.1.0",
   "description": "CLI-first secrets vault for agents",
+  "homepage": "https://github.com/typeclaw/typevault#readme",
+  "bugs": {
+    "url": "https://github.com/typeclaw/typevault/issues"
+  },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/typeclaw/typevault.git"
+  },
   "bin": {
     "typevault": "src/cli/index.ts"
   },
