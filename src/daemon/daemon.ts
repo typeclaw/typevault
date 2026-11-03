@@ -6,7 +6,7 @@ import { anchorAudit } from '../audit/log'
 import { adoptCertWrites } from '../core/adopt'
 import { TypeVaultError } from '../core/errors'
 import { atomicWrite, ensureDir } from '../core/fsx'
-import { layoutOf } from '../core/layout'
+import type { Layout } from '../core/layout'
 import { Vault } from '../core/vault'
 import { adminRoutes, type Ceiling } from './admin-routes'
 import { agentRoutes, type DaemonContext } from './agent-routes'
@@ -18,7 +18,7 @@ import { type PromptOptions, PromptRequests } from './requests'
 const ADOPT_EVERY_MS = 60_000
 
 export type DaemonOptions = {
-  readonly root: string
+  readonly layout: Layout
   readonly env: Readonly<Record<string, string | undefined>>
   readonly prompt?: PromptOptions
 }
@@ -32,7 +32,7 @@ function ceilingsOf(vault: Vault): readonly Ceiling[] {
 }
 
 export async function startDaemon(options: DaemonOptions): Promise<RunningDaemon> {
-  const layout = layoutOf(options.root)
+  const { layout } = options
   ensureDir(layout.run, 0o700)
   if (await isDaemonAlive(layout.agentSocket))
     throw new TypeVaultError('conflict', 'a typevault daemon is already running')
@@ -40,7 +40,7 @@ export async function startDaemon(options: DaemonOptions): Promise<RunningDaemon
   const keys = loadLocalKeys(layout, options.env)
   if (keys.length === 0)
     throw new TypeVaultError('denied', 'the daemon has no keys (keys/ is empty and TYPEVAULT_KEY is unset)')
-  const vault = await Vault.open(options.root, keys, options.env)
+  const vault = await Vault.open(layout, keys, options.env)
   const ceilings = ceilingsOf(vault)
   if (ceilings.length === 0)
     throw new TypeVaultError('invalid', 'no ceilings configured (typevault ceiling set <name> <group>)')

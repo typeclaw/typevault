@@ -22,7 +22,7 @@ export async function openDirect(env: Env): Promise<Vault> {
   const layout = layoutFrom(env)
   const keys = loadLocalKeys(layout, env)
   if (keys.length === 0) throw new TypeVaultError('denied', 'no grant and no key here (set TYPEVAULT_GRANT)')
-  return Vault.open(layout.root, keys, env)
+  return Vault.open(layout, keys, env)
 }
 
 export const openAdmin = async (env: Env): Promise<Admin> => new Admin(await openDirect(env))
@@ -48,7 +48,7 @@ export async function resolveAccess(env: Env): Promise<ResolvedAccess> {
     return { kind: 'live', access: new LiveAccess(layout.agentSocket, grant) }
   }
   if (grant.startsWith('tvg1:') || grant.startsWith('@')) {
-    return { kind: 'sealed', access: new SealedAccess(await readSealedGrant(grant), layout.root, env) }
+    return { kind: 'sealed', access: new SealedAccess(await readSealedGrant(grant), layout, env) }
   }
   throw new TypeVaultError('invalid', 'TYPEVAULT_GRANT is not a typevault grant')
 }

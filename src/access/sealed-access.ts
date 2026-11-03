@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 
 import { appendAudit, type AuditEvent } from '../audit/log'
 import { TypeVaultError } from '../core/errors'
-import { layoutOf } from '../core/layout'
+import type { Layout } from '../core/layout'
 import { type EntryName, matchesOnly } from '../core/naming'
 import { Vault } from '../core/vault'
 import { allowsEntry } from './scope'
@@ -17,12 +17,13 @@ type Env = Readonly<Record<string, string | undefined>>
  */
 export class SealedAccess implements Access {
   readonly #bundle: SealedBundle
-  readonly #root: string
+  readonly #layout: Layout | undefined
   readonly #env: Env
 
-  constructor(bundle: SealedBundle, root: string, env: Env) {
+  /** `layout` is undefined where no vault is selected: reads still work, writes refuse. */
+  constructor(bundle: SealedBundle, layout: Layout | undefined, env: Env) {
     this.#bundle = bundle
-    this.#root = root
+    this.#layout = layout
     this.#env = env
   }
 
@@ -38,16 +39,16 @@ export class SealedAccess implements Access {
   }
 
   async #vault(): Promise<Vault> {
-    if (!existsSync(layoutOf(this.#root).operatorFile)) {
-      throw new TypeVaultError('unavailable', 'writing with a sealed grant needs the vault directory (TYPEVAULT_DIR)')
+    if (this.#layout === undefined || !existsSync(this.#layout.operatorFile)) {
+      throw new TypeVaultError('unavailable', 'writing with a sealed grant needs the vault directory')
     }
-    return Vault.open(this.#root, [], this.#env)
+    return Vault.open(this.#layout, [], this.#env)
   }
 
   /** Best effort: a sealed grant may run where no vault directory exists. */
   async #audit(event: Omit<AuditEvent, 'mode' | 'grant' | 'label'>): Promise<void> {
-    const layout = layoutOf(this.#root)
-    if (!existsSync(layout.operatorFile)) return
+    const layout = this.#layout
+    if (layout === undefined || !existsSync(layout.operatorFile)) return
     await appendAudit(layout, { ...event, mode: 'sealed', grant: this.#bundle.id, label: this.#bundle.label })
   }
 

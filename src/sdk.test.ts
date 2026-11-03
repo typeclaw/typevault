@@ -9,6 +9,7 @@ import { Admin } from './core/admin'
 import type { SecretKey } from './core/crypto'
 import { signerOf } from './core/entries'
 import { initVault } from './core/init'
+import { layoutOf } from './core/layout'
 import { Vault } from './core/vault'
 import { type RunningDaemon, startDaemon } from './daemon/daemon'
 
@@ -21,7 +22,7 @@ beforeEach(async () => {
   // Short root: unix socket paths are limited to ~104 bytes.
   root = mkdtempSync('/tmp/tvs-')
   operator = await initVault(root)
-  const vault = await Vault.open(root, [operator], {})
+  const vault = await Vault.open(layoutOf(root), [operator], {})
   const admin = new Admin(vault)
   await admin.addGroup('member')
   await admin.addGroup('trusted')
@@ -34,7 +35,7 @@ beforeEach(async () => {
     { name: n('stripe'), type: 'api_key', fields: { key: 'sk_live_x' }, group: 'trusted' },
     signerOf(operator),
   )
-  daemon = await startDaemon({ root, env: { TYPEVAULT_DIR: root } })
+  daemon = await startDaemon({ layout: layoutOf(root), env: { TYPEVAULT_DIR: root } })
 })
 
 afterEach(async () => {
