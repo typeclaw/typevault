@@ -6,7 +6,7 @@ import { appendAudit } from '../../audit/log'
 import { signerOf } from '../../core/entries'
 import { TypeVaultError } from '../../core/errors'
 import { ENTRY_NAME_SYNTAX } from '../../core/naming'
-import { importFrom, type ImportSource } from '../../import'
+import { importFrom, ONEPASSWORD_VIAS, type ImportSource, type OnePasswordVia, read1Password } from '../../import'
 import { createRedactor, type Redactor, scrubFile } from '../../redact'
 import { openDirect, resolveAccess } from '../context'
 import { csv, note, print, readStdin } from '../output'
@@ -124,20 +124,45 @@ export const request = defineCommand({
 
 const SOURCES = ['dotenv', 'typeclaw', '1password', 'bitwarden', 'lastpass', 'keepass', 'csv'] as const
 const isSource = (value: string): value is ImportSource => SOURCES.some((source) => source === value)
+const isVia = (value: string): value is OnePasswordVia => ONEPASSWORD_VIAS.some((via) => via === value)
 
 export const importCommand = defineCommand({
-  meta: { name: 'import', description: 'Import a password-manager export into a group (operator, one transaction)' },
+  meta: {
+    name: 'import',
+    description: 'Import a password-manager export, or 1Password directly, into a group (operator, one transaction)',
+  },
   args: {
     source: { type: 'positional', required: true, description: SOURCES.join(' | ') },
-    path: { type: 'positional', required: true },
+    path: { type: 'positional', required: false, description: 'Export file (omit it to read 1Password directly)' },
     group: { type: 'string', required: true },
     'password-stdin': { type: 'boolean', description: 'Read the KeePass password from stdin' },
+    via: { type: 'string', description: `1Password without a path: ${ONEPASSWORD_VIAS.join(' | ')} (default sdk)` },
+    account: { type: 'string', description: '1Password account (required with --via sdk)' },
+    vault: { type: 'string', description: '1Password vault (default: every vault)' },
+    tag: { type: 'string', description: 'Only 1Password items with this tag' },
   },
   async run({ args }) {
     if (!isSource(args.source)) throw new TypeVaultError('invalid', `source must be one of: ${SOURCES.join(', ')}`)
+    const live = args.source === '1password' && args.path === undefined
+    if (!live && args.path === undefined) {
+      throw new TypeVaultError('invalid', 'usage: typevault import <source> <path> --group <group>')
+    }
+    if (!live && (args.via ?? args.account ?? args.vault ?? args.tag) !== undefined) {
+      throw new TypeVaultError('invalid', '--via, --account, --vault and --tag apply only to 1password without a path')
+    }
+    const via = args.via ?? 'sdk'
+    if (!isVia(via)) throw new TypeVaultError('invalid', `--via must be one of: ${ONEPASSWORD_VIAS.join(', ')}`)
     const vault = await openDirect(process.env)
     const password = args['password-stdin'] ? await readStdin() : undefined
-    const result = await importFrom(args.source, { path: args.path, ...(password === undefined ? {} : { password }) })
+    const result =
+      args.path === undefined
+        ? await read1Password({
+            via,
+            ...(args.account === undefined ? {} : { account: args.account }),
+            ...(args.vault === undefined ? {} : { vault: args.vault }),
+            ...(args.tag === undefined ? {} : { tag: args.tag }),
+          })
+        : await importFrom(args.source, { path: args.path, ...(password === undefined ? {} : { password }) })
     const group = args.group
     const stored = await vault.putMany(
       result.entries.map((entry) => ({ ...entry, group })),
