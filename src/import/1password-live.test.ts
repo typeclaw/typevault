@@ -25,7 +25,11 @@ const OP_ITEMS: Readonly<Record<string, unknown>> = {
     title: 'API',
     category: 'API_CREDENTIAL',
     vault: { name: 'Work' },
-    fields: [{ id: 'credential', type: 'CONCEALED', label: 'credential', value: 'fake-key' }],
+    fields: [
+      { id: 'credential', type: 'CONCEALED', label: 'credential', value: 'fake-key' },
+      { id: 'custom1', type: 'CONCEALED', label: 'Webhook Secret', value: 'whsec' },
+      { id: 'expires', type: 'DATE', label: 'expires', value: '1700000000' },
+    ],
   },
   ssh: {
     title: 'SSH',
@@ -70,7 +74,7 @@ test('op import reads every listed item and maps login, note, API, SSH, and tags
       },
     ],
     ['memo/work', 'note', { text: 'private note' }],
-    ['api/work', 'api_key', { key: 'fake-key' }],
+    ['api/work', 'api_key', { key: 'fake-key', 'Webhook Secret': 'whsec' }],
     ['ssh/work', 'ssh', { private_key: 'fake-openssh', public_key: 'fake-public' }],
   ])
   expect(result.entries[0]?.tags).toEqual(['agent'])
@@ -162,7 +166,11 @@ test('sdk import maps desktop-app items and skips unreadable ones', async () => 
     {
       title: 'API',
       category: 'ApiCredentials',
-      fields: [{ id: 'credential', title: 'credential', fieldType: 'Concealed', value: 'fake-key' }],
+      fields: [
+        { id: 'credential', title: 'credential', fieldType: 'Concealed', value: 'fake-key' },
+        { id: 'custom1', title: 'Webhook Secret', fieldType: 'Concealed', value: 'whsec' },
+        { id: 'expires', title: 'expires', fieldType: 'Date', value: '2026-01-01' },
+      ],
     },
     {
       title: 'SSH',
@@ -207,7 +215,7 @@ test('sdk import maps desktop-app items and skips unreadable ones', async () => 
       },
     ],
     ['memo/work', 'note', { text: 'private note' }],
-    ['api/work', 'api_key', { key: 'fake-key' }],
+    ['api/work', 'api_key', { key: 'fake-key', 'Webhook Secret': 'whsec' }],
     ['ssh/work', 'ssh', { private_key: 'fake-private', public_key: 'fake-public' }],
   ])
   expect(result.warnings).toEqual([
