@@ -5,6 +5,7 @@ import { envEligible, envFor, explicitNames, secretValues } from '../../access/e
 import { appendAudit } from '../../audit/log'
 import { signerOf } from '../../core/entries'
 import { TypeVaultError } from '../../core/errors'
+import { ENTRY_NAME_SYNTAX } from '../../core/naming'
 import { importFrom, type ImportSource } from '../../import'
 import { createRedactor, type Redactor, scrubFile } from '../../redact'
 import { openDirect, resolveAccess } from '../context'
@@ -83,7 +84,7 @@ const RequestResponse = z.object({ id: z.string(), url: z.string(), code: z.stri
 export const request = defineCommand({
   meta: { name: 'request', description: 'Ask a human for a secret through a one-time web page (live grants)' },
   args: {
-    name: { type: 'positional', required: true },
+    name: { type: 'positional', description: ENTRY_NAME_SYNTAX, required: true },
     type: { type: 'string', required: true, description: 'Entry type' },
     group: { type: 'string', description: "Group (defaults to your grant's group)" },
     reason: { type: 'string', required: true, description: 'Shown to the human' },

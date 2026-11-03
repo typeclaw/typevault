@@ -3,6 +3,8 @@ import { z } from 'zod'
 
 import { TypeVaultError } from '../../core/errors'
 import {
+  ENTRY_NAME_SYNTAX,
+  ENTRY_REF_SYNTAX,
   type EntryType,
   fieldsOf,
   isSecretField,
@@ -41,7 +43,7 @@ export const ls = defineCommand({
 export const get = defineCommand({
   meta: { name: 'get', description: 'Print a secret (it lands in your transcript: prefer `typevault run`)' },
   args: {
-    ref: { type: 'positional', description: '<service>[/<account>][#<field>]', required: true },
+    ref: { type: 'positional', description: ENTRY_REF_SYNTAX, required: true },
     reason: { type: 'string', description: 'Why you need it (audited)' },
     json: { type: 'boolean', description: 'Print every field as JSON' },
   },
@@ -83,7 +85,7 @@ function parseFieldsJson(type: EntryType, text: string): Record<string, string> 
 export const set = defineCommand({
   meta: { name: 'set', description: 'Create or update an entry. Pipe the secret on stdin with --stdin.' },
   args: {
-    name: { type: 'positional', description: '<service>[/<account>]', required: true },
+    name: { type: 'positional', description: ENTRY_NAME_SYNTAX, required: true },
     type: { type: 'string', description: 'password | api_key | oauth | ssh | totp | note' },
     group: {
       type: 'string',
@@ -130,7 +132,7 @@ export const set = defineCommand({
 export const rm = defineCommand({
   meta: { name: 'rm', description: 'Remove an entry' },
   args: {
-    name: { type: 'positional', required: true },
+    name: { type: 'positional', description: ENTRY_NAME_SYNTAX, required: true },
     group: { type: 'string', description: 'Remove the copy in this group (settles a name held by unrelated groups)' },
   },
   async run({ args }) {
@@ -141,7 +143,10 @@ export const rm = defineCommand({
 
 export const mv = defineCommand({
   meta: { name: 'mv', description: 'Rename an entry' },
-  args: { from: { type: 'positional', required: true }, to: { type: 'positional', required: true } },
+  args: {
+    from: { type: 'positional', description: ENTRY_NAME_SYNTAX, required: true },
+    to: { type: 'positional', description: ENTRY_NAME_SYNTAX, required: true },
+  },
   async run({ args }) {
     await (await accessOf(process.env)).move(parseEntryName(args.from), parseEntryName(args.to))
   },
@@ -149,7 +154,7 @@ export const mv = defineCommand({
 
 export const otp = defineCommand({
   meta: { name: 'otp', description: 'Print the current TOTP code' },
-  args: { name: { type: 'positional', required: true }, reason: { type: 'string' } },
+  args: { name: { type: 'positional', description: ENTRY_NAME_SYNTAX, required: true }, reason: { type: 'string' } },
   async run({ args }) {
     const value = await (await accessOf(process.env)).get(parseEntryName(args.name), args.reason)
     const seed = value.type === 'totp' ? value.fields['seed'] : value.fields['totp']
