@@ -5,8 +5,8 @@ import { TypeVaultError } from '../../core/errors'
 import {
   ENTRY_NAME_SYNTAX,
   ENTRY_REF_SYNTAX,
-  type EntryType,
-  fieldsOf,
+  findField,
+  isFieldName,
   isSecretField,
   parseEntryName,
   parseEntryRef,
@@ -51,34 +51,32 @@ export const get = defineCommand({
     const ref = parseEntryRef(args.ref)
     const value = await (await accessOf(process.env)).get(ref.name, args.reason)
     if (args.json) return print(JSON.stringify(value.fields, null, 2))
-    const field = ref.field ?? primaryField(value.type)
-    const secret = value.fields[field]
-    if (secret === undefined) throw new TypeVaultError('not_found', `${value.name} has no field "${field}"`)
+    const wanted = ref.field ?? primaryField(value.type)
+    const field = findField(value.fields, wanted)
+    const secret = field === undefined ? undefined : value.fields[field]
+    if (secret === undefined) throw new TypeVaultError('not_found', `${value.name} has no field "${wanted}"`)
     print(secret)
   },
 })
 
-function parseFields(type: EntryType, pairs: readonly string[]): Record<string, string> {
-  const allowed = fieldsOf(type)
+function parseFields(pairs: readonly string[]): Record<string, string> {
   return Object.fromEntries(
     pairs.map((pair) => {
       const eq = pair.indexOf('=')
       const field = eq === -1 ? '' : pair.slice(0, eq)
-      if (!allowed.includes(field))
-        throw new TypeVaultError('invalid', `${type} entries have fields: ${allowed.join(', ')}`)
+      if (!isFieldName(field)) throw new TypeVaultError('invalid', `--field expects name=value, got "${field}"`)
       if (isSecretField(field)) {
-        throw new TypeVaultError('invalid', `pass ${field} on stdin (--stdin or --stdin-json), not as an argument`)
+        throw new TypeVaultError('invalid', `pass "${field}" on stdin (--stdin or --stdin-json), not as an argument`)
       }
       return [field, pair.slice(eq + 1)]
     }),
   )
 }
 
-function parseFieldsJson(type: EntryType, text: string): Record<string, string> {
+function parseFieldsJson(text: string): Record<string, string> {
   const fields = z.record(z.string(), z.string()).parse(JSON.parse(text))
-  const allowed = fieldsOf(type)
-  const stray = Object.keys(fields).find((field) => !allowed.includes(field))
-  if (stray !== undefined) throw new TypeVaultError('invalid', `${type} entries have fields: ${allowed.join(', ')}`)
+  const invalid = Object.keys(fields).find((field) => !isFieldName(field))
+  if (invalid !== undefined) throw new TypeVaultError('invalid', `invalid field name "${invalid}"`)
   return fields
 }
 
@@ -105,9 +103,9 @@ export const set = defineCommand({
     const existing = (await access.list()).find((entry) => entry.name === name)
     const type = args.type === undefined ? existing?.type : parseEntryType(args.type)
     if (type === undefined) throw new TypeVaultError('invalid', 'new entries need --type')
-    const given = parseFields(type, repeated(rawArgs, '--field'))
+    const given = parseFields(repeated(rawArgs, '--field'))
     const fromStdin = args['stdin-json']
-      ? parseFieldsJson(type, await readStdin())
+      ? parseFieldsJson(await readStdin())
       : args.stdin
         ? { [primaryField(type)]: await readStdin() }
         : {}
