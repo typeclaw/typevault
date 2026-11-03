@@ -8,9 +8,12 @@ import { Admin } from '../../core/admin'
 import { adoptCertWrites } from '../../core/adopt'
 import { decodeSecretKey } from '../../core/crypto'
 import { doctor as runDoctor } from '../../core/doctor'
+import { TypeVaultError } from '../../core/errors'
 import { initLocalVault, initVault } from '../../core/init'
-import { LOCAL_VAULT_DIR, layoutOf, resolveRoot } from '../../core/layout'
+import { LOCAL_VAULT_DIR, layoutOf, resolveRoot, vaultIdOf } from '../../core/layout'
 import { Vault } from '../../core/vault'
+import { export1Password } from '../../export/1password'
+import { ONEPASSWORD_VIAS } from '../../import/1password-live'
 import { openAdmin, openDirect, wantsGlobal } from '../context'
 import { csv, note, print, table } from '../output'
 
@@ -92,14 +95,76 @@ export const key = defineCommand({
   meta: { name: 'key', description: 'Export or rotate tier keys (owner)' },
   subCommands: {
     export: defineCommand({
-      meta: { name: 'export', description: 'Print a tier key for an issuer, CI secret or daemon (TYPEVAULT_KEY)' },
-      args: named,
-      run: async ({ args }) => print(await (await openAdmin(process.env)).exportKey(args.name)),
+      meta: {
+        name: 'export',
+        description: 'Print a tier key for an issuer, CI secret or daemon (TYPEVAULT_KEY), or store it in 1Password',
+      },
+      args: {
+        name: { type: 'positional', required: false, description: 'Tier (omit with --owner)' },
+        owner: { type: 'boolean', description: 'The owner key, as a recovery backup (needs --to)' },
+        to: { type: 'string', description: 'Store it instead of printing: 1password' },
+        via: { type: 'string', description: `${ONEPASSWORD_VIAS.join(' | ')} (default: op when installed, else sdk)` },
+        account: { type: 'string', description: '1Password account (required with sdk or several op accounts)' },
+        vault: { type: 'string', description: '1Password vault' },
+        title: { type: 'string', description: 'Item title (default: TypeVault <tier|owner> <vault id>)' },
+        replace: { type: 'boolean', description: 'Archive an existing item with the same title' },
+      },
+      async run({ args }) {
+        const owner = args.owner === true
+        if (owner === (args.name !== undefined)) throw new TypeVaultError('invalid', 'pass a tier or --owner')
+        if (args.to === undefined) {
+          if (owner) throw new TypeVaultError('invalid', '--owner needs --to; back up keys/owner.key offline')
+          if ((args.via ?? args.account ?? args.vault ?? args.title ?? args.replace) !== undefined) {
+            throw new TypeVaultError('invalid', '--via, --account, --vault, --title and --replace need --to')
+          }
+          print(await (await openAdmin(process.env)).exportKey(args.name ?? ''))
+          return
+        }
+        if (args.to !== '1password') throw new TypeVaultError('invalid', '--to must be 1password')
+        if (args.vault === undefined) throw new TypeVaultError('invalid', '--vault is required with --to 1password')
+        const via = ONEPASSWORD_VIAS.find((candidate) => candidate === args.via)
+        if (args.via !== undefined && via === undefined) {
+          throw new TypeVaultError('invalid', `--via must be one of: ${ONEPASSWORD_VIAS.join(', ')}`)
+        }
+        const vault = await openDirect(process.env)
+        const admin = new Admin(vault)
+        const id = vaultIdOf(vault.state.owner.signPublic)
+        const tierName = args.name ?? ''
+        const tierMeta = vault.state.tiers[tierName]
+        const item = owner
+          ? {
+              title: args.title ?? `TypeVault owner ${id}`,
+              credential: admin.exportOwnerKey(),
+              details: { 'vault id': id, role: 'owner', recipient: vault.state.owner.recipient },
+            }
+          : {
+              title: args.title ?? `TypeVault ${tierName} ${id}`,
+              credential: await admin.exportKey(tierName),
+              details: {
+                'vault id': id,
+                role: 'tier',
+                tier: tierName,
+                generation: String(tierMeta?.gen ?? ''),
+                recipient: tierMeta?.recipient ?? '',
+              },
+            }
+        const used = await export1Password(item, {
+          ...(via === undefined ? {} : { via }),
+          ...(args.account === undefined ? {} : { account: args.account }),
+          vault: args.vault,
+          replace: args.replace === true,
+        })
+        print(`stored "${item.title}" in 1Password vault "${args.vault}" (via ${used})`)
+        if (!owner) note(`use it: TYPEVAULT_KEY="op://${args.vault}/${item.title}/credential"`)
+      },
     }),
     rotate: defineCommand({
       meta: { name: 'rotate', description: 'New key generation; flags every secret the old key reached' },
       args: named,
-      run: async ({ args }) => printRotation(args.name, await (await openAdmin(process.env)).rotate(args.name)),
+      async run({ args }) {
+        printRotation(args.name, await (await openAdmin(process.env)).rotate(args.name))
+        note('a copy stored with `key export --to 1password` is now stale: export it again with --replace')
+      },
     }),
   },
 })
