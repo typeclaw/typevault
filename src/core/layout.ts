@@ -64,11 +64,14 @@ export const layoutOf = (root: string): Layout => build('global', root, join(roo
 export function localLayout(dir: string, ownerSignPublic: string, env: Env = process.env): Layout {
   const home = resolveRoot(env)
   const root = join(home, 'checkouts', shortHash(resolve(dir)))
-  const keys = join(home, 'vaults', shortHash(ownerSignPublic), 'keys')
+  const keys = join(home, 'vaults', vaultIdOf(ownerSignPublic), 'keys')
   return build('local', root, dir, keys, join(root, 'trust.json'))
 }
 
 const shortHash = (value: string): string => sha256Hex(utf8(value)).slice(0, 16)
+
+/** A vault's id, derived from its owner key: the `<id>` in `vaults/<id>/`. */
+export const vaultIdOf = (ownerSignPublic: string): string => shortHash(ownerSignPublic)
 
 /** The nearest `.typevault/` holding an initialized vault, from `from` up to the filesystem root. */
 export function findLocalVault(from: string): string | undefined {

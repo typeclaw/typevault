@@ -157,6 +157,10 @@ export class Admin {
     return encodeSecretKey(key)
   }
 
+  exportOwnerKey(): string {
+    return encodeSecretKey(this.#owner)
+  }
+
   get signer(): ReturnType<typeof signerOf> {
     return signerOf(this.#owner)
   }
