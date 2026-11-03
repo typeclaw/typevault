@@ -91,6 +91,18 @@ the caller, wrote it; otherwise it gets the derived name. The operator holds no 
 When the same name exists in several groups, the copy in the higher group wins; timestamps never decide. If two
 unrelated groups hold it, reads of that name fail until the operator keeps one: `typevault rm <name> --group <g>`.
 
+### References in the environment
+
+`run` also replaces any variable whose whole value is a reference with that field, so you pick the variable name.
+Here the scheme is required: a bare `github/bot` stays a plain string.
+
+```sh
+DATABASE_URL=tv://postgres/prod#url BOT_TOKEN=tv://github/bot typevault run -- ./deploy.sh
+```
+
+A reference names its entry exactly, so it resolves anything your grant reaches, like `--only <name>`. Loader
+variables (`PATH`, `NODE_OPTIONS`, ...) are refused, and a reference naming a variable an entry also sets is an error.
+
 ## Grants
 
 |                  | Live (default)                | Sealed (`--sealed`)            |
