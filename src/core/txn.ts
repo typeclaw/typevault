@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, isAbsolute, join, normalize, sep } from 'node:path'
 
 import { z } from 'zod'
@@ -70,8 +70,9 @@ function applyTxn(layout: Layout, dir: string): void {
     if (!existsSync(staged)) return
     assertNoSymlinks(layout.vault, checkRel(rel))
     const target = join(layout.vault, checkRel(rel))
-    mkdirSync(dirname(target), { recursive: true })
-    renameSync(staged, target)
+    // Staging (run/) and the vault may sit on different filesystems, where rename fails: write the bytes in place.
+    atomicWrite(target, readFileSync(staged))
+    rmSync(staged)
     touched.add(dirname(target))
   })
   for (const rel of manifest.removes) {
