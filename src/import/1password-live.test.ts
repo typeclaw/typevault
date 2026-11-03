@@ -1,0 +1,255 @@
+import { expect, test } from 'bun:test'
+
+import { read1Password, type SdkClient } from './1password-live'
+
+const OP_ITEMS: Readonly<Record<string, unknown>> = {
+  login: {
+    title: 'GitHub',
+    category: 'LOGIN',
+    vault: { name: 'Work' },
+    tags: ['agent'],
+    urls: [{ href: 'https://example.com/other' }, { href: 'https://example.com/login', primary: true }],
+    fields: [
+      { id: 'username', type: 'STRING', purpose: 'USERNAME', label: 'username', value: 'user@example.com' },
+      { id: 'password', type: 'CONCEALED', purpose: 'PASSWORD', label: 'password', value: 'hunter2' },
+      { id: 'one-time', type: 'OTP', label: 'one-time password', value: 'otpauth://totp/Example?secret=SEED' },
+    ],
+  },
+  note: {
+    title: 'Memo',
+    category: 'SECURE_NOTE',
+    vault: { name: 'Work' },
+    fields: [{ id: 'notesPlain', type: 'STRING', purpose: 'NOTES', label: 'notesPlain', value: 'private note' }],
+  },
+  api: {
+    title: 'API',
+    category: 'API_CREDENTIAL',
+    vault: { name: 'Work' },
+    fields: [{ id: 'credential', type: 'CONCEALED', label: 'credential', value: 'fake-key' }],
+  },
+  ssh: {
+    title: 'SSH',
+    category: 'SSH_KEY',
+    vault: { name: 'Work' },
+    fields: [
+      {
+        id: 'private_key',
+        type: 'SSHKEY',
+        label: 'private key',
+        value: 'fake-pkcs8',
+        ssh_formats: { openssh: { value: 'fake-openssh' } },
+      },
+      { id: 'public_key', type: 'STRING', label: 'public key', value: 'fake-public' },
+    ],
+  },
+  card: { title: 'Card', category: 'CREDIT_CARD', vault: { name: 'Work' } },
+}
+
+test('op import reads every listed item and maps login, note, API, SSH, and tags', async () => {
+  // given
+  const calls: (readonly string[])[] = []
+  const runOp = async (args: readonly string[]) => {
+    calls.push(args)
+    if (args[1] === 'list') return JSON.stringify(Object.keys(OP_ITEMS).map((id) => ({ id, vault: { id: 'v1' } })))
+    return JSON.stringify(OP_ITEMS[args[2] ?? ''])
+  }
+
+  // when
+  const result = await read1Password({ via: 'op', account: 'example', vault: 'Work' }, { runOp })
+
+  // then
+  expect(result.entries.map((entry) => [String(entry.name), entry.type, entry.fields])).toEqual([
+    [
+      'github/work',
+      'password',
+      {
+        username: 'user@example.com',
+        password: 'hunter2',
+        totp: 'otpauth://totp/Example?secret=SEED',
+        url: 'https://example.com/login',
+      },
+    ],
+    ['memo/work', 'note', { text: 'private note' }],
+    ['api/work', 'api_key', { key: 'fake-key' }],
+    ['ssh/work', 'ssh', { private_key: 'fake-openssh', public_key: 'fake-public' }],
+  ])
+  expect(result.entries[0]?.tags).toEqual(['agent'])
+  expect(result.entries[0]?.origin).toBe('https://example.com')
+  expect(result.warnings).toEqual(['skipped unsupported 1Password item category'])
+  expect(calls[0]).toEqual(['item', 'list', '--format', 'json', '--vault', 'Work', '--account', 'example'])
+  expect(calls[1]).toEqual([
+    'item',
+    'get',
+    'login',
+    '--vault',
+    'v1',
+    '--reveal',
+    '--format',
+    'json',
+    '--account',
+    'example',
+  ])
+})
+
+test('op import with a tag fetches only items carrying exactly that tag', async () => {
+  // given
+  const calls: (readonly string[])[] = []
+  const listed = [
+    { id: 'login', vault: { id: 'v1' }, tags: ['agent'] },
+    { id: 'note', vault: { id: 'v1' }, tags: ['agent/nested'] },
+    { id: 'api', vault: { id: 'v1' }, tags: ['other'] },
+  ]
+  const runOp = async (args: readonly string[]) => {
+    calls.push(args)
+    return JSON.stringify(args[1] === 'list' ? listed : OP_ITEMS[args[2] ?? ''])
+  }
+
+  // when
+  const result = await read1Password({ via: 'op', tag: 'agent' }, { runOp })
+
+  // then
+  expect(calls.map((args) => args.slice(0, 3))).toEqual([
+    ['item', 'list', '--format'],
+    ['item', 'get', 'login'],
+  ])
+  expect(calls[0]).toContain('--tags')
+  expect(result.entries.map((entry) => String(entry.name))).toEqual(['github/work'])
+})
+
+test('op import rejects output that is not item JSON', async () => {
+  await expect(read1Password({ via: 'op' }, { runOp: async () => 'not json' })).rejects.toMatchObject({
+    code: 'invalid',
+  })
+})
+
+function sdkClient(items: readonly unknown[], tags: readonly (readonly string[])[] = []): SdkClient {
+  return {
+    vaults: {
+      list: async () => [
+        { id: 'v1', title: 'Work' },
+        { id: 'v2', title: 'Personal' },
+      ],
+    },
+    items: {
+      list: async (vaultId) =>
+        vaultId === 'v1' ? items.map((_, index) => ({ id: String(index), tags: tags[index] ?? [] })) : [],
+      getAll: async (_vaultId, ids) => ({
+        individualResponses: ids.map((id) => {
+          const content = items[Number(id)]
+          return content === undefined ? { error: { type: 'itemNotFound' } } : { content }
+        }),
+      }),
+    },
+  }
+}
+
+test('sdk import maps desktop-app items and skips unreadable ones', async () => {
+  // given
+  const accounts: string[] = []
+  const client = sdkClient([
+    {
+      title: 'GitHub',
+      category: 'Login',
+      tags: ['agent'],
+      websites: [{ url: 'https://example.com/login' }],
+      fields: [
+        { id: 'username', title: 'username', fieldType: 'Text', value: 'user@example.com' },
+        { id: 'password', title: 'password', fieldType: 'Concealed', value: 'hunter2' },
+        { id: 'otp', title: 'one-time password', fieldType: 'Totp', value: 'otpauth://totp/Example?secret=SEED' },
+      ],
+    },
+    { title: 'Memo', category: 'SecureNote', notes: 'private note', fields: [] },
+    {
+      title: 'API',
+      category: 'ApiCredentials',
+      fields: [{ id: 'credential', title: 'credential', fieldType: 'Concealed', value: 'fake-key' }],
+    },
+    {
+      title: 'SSH',
+      category: 'SshKey',
+      fields: [
+        {
+          id: 'private_key',
+          title: 'private key',
+          fieldType: 'SshKey',
+          value: 'fake-private',
+          details: { type: 'SshKey', content: { publicKey: 'fake-public' } },
+        },
+      ],
+    },
+    { title: 'Card', category: 'CreditCard', fields: [] },
+  ])
+  const connectSdk = async (account: string) => {
+    accounts.push(account)
+    return {
+      ...client,
+      items: {
+        ...client.items,
+        getAll: async (vaultId: string, ids: string[]) => client.items.getAll(vaultId, [...ids, 'missing']),
+      },
+    }
+  }
+
+  // when
+  const result = await read1Password({ via: 'sdk', account: 'Example' }, { connectSdk })
+
+  // then
+  expect(accounts).toEqual(['Example'])
+  expect(result.entries.map((entry) => [String(entry.name), entry.type, entry.fields])).toEqual([
+    [
+      'github/work',
+      'password',
+      {
+        username: 'user@example.com',
+        password: 'hunter2',
+        totp: 'otpauth://totp/Example?secret=SEED',
+        url: 'https://example.com/login',
+      },
+    ],
+    ['memo/work', 'note', { text: 'private note' }],
+    ['api/work', 'api_key', { key: 'fake-key' }],
+    ['ssh/work', 'ssh', { private_key: 'fake-private', public_key: 'fake-public' }],
+  ])
+  expect(result.warnings).toEqual([
+    'skipped unsupported 1Password item category',
+    'skipped a 1Password item that could not be read',
+  ])
+})
+
+test('sdk import with a tag fetches only items carrying exactly that tag', async () => {
+  // given
+  const requested: string[][] = []
+  const client = sdkClient(
+    [
+      { title: 'GitHub', category: 'Login', tags: ['agent'], fields: [] },
+      { title: 'Memo', category: 'SecureNote', notes: 'private note', fields: [] },
+      { title: 'Other', category: 'SecureNote', notes: 'other note', fields: [] },
+    ],
+    [['agent'], ['agent/nested'], ['other']],
+  )
+  const connectSdk = async () => ({
+    ...client,
+    items: {
+      ...client.items,
+      getAll: async (vaultId: string, ids: string[]) => {
+        requested.push(ids)
+        return client.items.getAll(vaultId, ids)
+      },
+    },
+  })
+
+  // when
+  const result = await read1Password({ via: 'sdk', account: 'Example', tag: 'agent' }, { connectSdk })
+
+  // then
+  expect(requested).toEqual([['0']])
+  expect(result.entries.map((entry) => String(entry.name))).toEqual(['github/work'])
+})
+
+test('sdk import needs an account and an existing vault', async () => {
+  const connectSdk = async () => sdkClient([])
+  await expect(read1Password({ via: 'sdk' }, { connectSdk })).rejects.toMatchObject({ code: 'invalid' })
+  await expect(
+    read1Password({ via: 'sdk', account: 'Example', vault: 'Missing' }, { connectSdk }),
+  ).rejects.toMatchObject({ code: 'not_found' })
+})
