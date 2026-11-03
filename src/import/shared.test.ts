@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 
-import { collectEntries } from './shared'
+import { collectEntries, withCustomFields } from './shared'
 
 test('entry collection drops empty and unusable fields and resolves collisions on the last segment without losing records', () => {
   const result = collectEntries([
@@ -26,4 +26,17 @@ test('entry collection drops empty and unusable fields and resolves collisions o
   expect(result.warnings.join()).toContain('"creme-github/work-team-2"')
   expect(result.warnings.join()).toContain('"creme-github/work-team-3"')
   expect(result.warnings.join()).not.toContain('hunter2')
+})
+
+test('custom fields keep their labels but never repeat or replace a template field', () => {
+  expect(
+    withCustomFields({ key: 'k', username: undefined }, [
+      ['credential', 'k'],
+      [' Webhook Secret ', 'w'],
+      ['username', 'u'],
+      ['', 'nameless'],
+      ['Region', ''],
+      ['Webhook Secret', 'second'],
+    ]),
+  ).toEqual({ 'Webhook Secret': 'w', key: 'k', username: undefined })
 })
