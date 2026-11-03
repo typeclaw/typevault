@@ -232,6 +232,27 @@ describe('ScopedVault', () => {
     expect(env).toEqual({ GITHUB_BOT_PASSWORD: 'p4ss', GITHUB_BOT_TOTP: '287082' })
   })
 
+  it('derives env names for custom fields and skips one with no letter or digit left', async () => {
+    const base = await member().get(n('github/bot'))
+    const env = envFor([{ ...base, fields: { 'Recovery Code': 'r', 복구: 'k' } }], new Date(0), own)
+    expect(env).toEqual({ GITHUB_BOT_RECOVERY_CODE: 'r' })
+  })
+
+  it('resolves a tv:// reference to a custom field, ignoring case when only one field matches', async () => {
+    const base = await member().get(n('github/bot'))
+    const get = async () => ({ ...base, fields: { ...base.fields, 'Recovery Code': 'r' } })
+    const resolved = await resolveEnvRefs(
+      {
+        EXACT: 'tv://github/bot#Recovery Code',
+        LOOSE: 'tv://github/bot#recovery code',
+        OLD: 'tv://github/bot#PASSWORD',
+      },
+      get,
+      new Date(0),
+    )
+    expect(resolved.env).toEqual({ EXACT: 'r', LOOSE: 'r', OLD: 'hunter2-bot' })
+  })
+
   it('resolves tv:// references in env values and leaves other variables alone', async () => {
     const scope = member()
     const resolved = await resolveEnvRefs(
