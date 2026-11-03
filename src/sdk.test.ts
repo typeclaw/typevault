@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { createClient, parseEntryName } from 'typevault'
 import { createAdmin } from 'typevault/admin'
@@ -68,6 +69,29 @@ describe('sdk', () => {
     expect(await admin.revoke({ label: 'sdk:revoke' })).toHaveLength(1)
     const client = await createClient({ grant, dir: root, env: {} })
     await expect(client.list()).rejects.toMatchObject({ code: 'denied' })
+  })
+
+  it('reaches the global vault only when global is asked for', async () => {
+    // given a global vault under XDG_CONFIG_HOME and no project vault around
+    const config = mkdtempSync('/tmp/tvx-')
+    const globalRoot = join(config, 'typevault')
+    const key = await initVault(globalRoot)
+    const vault = await Vault.open(layoutOf(globalRoot), [key], {})
+    await new Admin(vault).addGroup('member')
+    await vault.put(
+      { name: n('openai'), type: 'api_key', fields: { key: 'sk-global' }, group: 'member' },
+      signerOf(key),
+    )
+    const env = { XDG_CONFIG_HOME: config }
+
+    // then only global: true reads it
+    try {
+      await expect(createClient({ direct: true, env })).rejects.toMatchObject({ code: 'not_found' })
+      const client = await createClient({ direct: true, global: true, env })
+      expect((await client.get(n('openai'))).fields).toEqual({ key: 'sk-global' })
+    } finally {
+      rmSync(config, { recursive: true, force: true })
+    }
   })
 
   it('refuses local keys unless direct mode is asked for', async () => {

@@ -20,6 +20,8 @@ export type ClientOptions = {
   readonly grant?: string
   /** A global-style typevault root. Defaults to `TYPEVAULT_DIR`; without one the vault is chosen like the CLI's. */
   readonly dir?: string
+  /** Use the global vault instead of the project's, like the CLI's `-g`. Defaults to `TYPEVAULT_GLOBAL`. */
+  readonly global?: boolean
   /** Without a grant, open the vault with this machine's own keys (operator, launchers). Off by default. */
   readonly direct?: boolean
   /** Where the defaults above are read from. Defaults to `process.env`. */
@@ -41,6 +43,7 @@ export async function createClient(options: ClientOptions = {}): Promise<Access>
     ...base,
     TYPEVAULT_GRANT: grant,
     ...(options.dir === undefined ? {} : { TYPEVAULT_DIR: options.dir }),
+    ...(options.global === undefined ? {} : { TYPEVAULT_GLOBAL: options.global ? '1' : '' }),
   }
   return (await resolveAccess(env)).access
 }

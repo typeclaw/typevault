@@ -29,6 +29,8 @@ export type GrantRequest = {
 export type AdminOptions = {
   /** A global-style typevault root. Defaults to `TYPEVAULT_DIR`; without one the vault is chosen like the CLI's. */
   readonly dir?: string
+  /** Use the global vault instead of the project's, like the CLI's `-g`. Defaults to `TYPEVAULT_GLOBAL`. */
+  readonly global?: boolean
   /** Which admin socket to use (`run/admin-<ceiling>.sock`). Defaults to `TYPEVAULT_CEILING`, else `default`. */
   readonly ceiling?: string
   /** Where the defaults above are read from. Defaults to `process.env`. */
@@ -49,6 +51,7 @@ export function createAdmin(options: AdminOptions = {}): AdminClient {
   const env: Env = {
     ...(options.env ?? process.env),
     ...(options.dir === undefined ? {} : { TYPEVAULT_DIR: options.dir }),
+    ...(options.global === undefined ? {} : { TYPEVAULT_GLOBAL: options.global ? '1' : '' }),
     ...(options.ceiling === undefined ? {} : { TYPEVAULT_CEILING: options.ceiling }),
   }
   return {
