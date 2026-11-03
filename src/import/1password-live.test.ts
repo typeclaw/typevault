@@ -54,12 +54,17 @@ test('op import reads every listed item and maps login, note, API, SSH, and tags
   const calls: (readonly string[])[] = []
   const runOp = async (args: readonly string[]) => {
     calls.push(args)
+    if (args[0] === 'vault')
+      return JSON.stringify([
+        { id: 'v1', name: 'Work' },
+        { id: 'v2', name: 'Personal' },
+      ])
     if (args[1] === 'list') return JSON.stringify(Object.keys(OP_ITEMS).map((id) => ({ id, vault: { id: 'v1' } })))
     return JSON.stringify(OP_ITEMS[args[2] ?? ''])
   }
 
   // when
-  const result = await read1Password({ via: 'op', account: 'example', vault: 'Work' }, { runOp })
+  const result = await read1Password({ via: 'op', accounts: ['example'], vaults: ['Work'] }, { runOp })
 
   // then
   expect(result.entries.map((entry) => [String(entry.name), entry.type, entry.fields])).toEqual([
@@ -80,8 +85,9 @@ test('op import reads every listed item and maps login, note, API, SSH, and tags
   expect(result.entries[0]?.tags).toEqual(['agent'])
   expect(result.entries[0]?.origin).toBe('https://example.com')
   expect(result.warnings).toEqual(['skipped unsupported 1Password item category'])
-  expect(calls[0]).toEqual(['item', 'list', '--format', 'json', '--vault', 'Work', '--account', 'example'])
-  expect(calls[1]).toEqual([
+  expect(calls[0]).toEqual(['vault', 'list', '--format', 'json', '--account', 'example'])
+  expect(calls[1]).toEqual(['item', 'list', '--format', 'json', '--vault', 'v1', '--account', 'example'])
+  expect(calls[2]).toEqual([
     'item',
     'get',
     'login',
@@ -112,7 +118,7 @@ test('op import with a tag imports whole items for the tag and only the named fi
   }
 
   // when
-  const result = await read1Password({ via: 'op', tag: 'agent' }, { runOp })
+  const result = await read1Password({ via: 'op', tags: ['agent'] }, { runOp })
 
   // then
   expect(calls.map((args) => args.slice(0, 3))).toEqual([
@@ -152,7 +158,7 @@ test('op import never imports a whole item whose detail tags no longer select it
     )
 
   // when
-  const result = await read1Password({ via: 'op', tag: 'agent' }, { runOp })
+  const result = await read1Password({ via: 'op', tags: ['agent'] }, { runOp })
 
   // then
   expect(result.entries).toEqual([])
@@ -176,7 +182,7 @@ test('op import prefers the exact field name and refuses an ambiguous one', asyn
     JSON.stringify(args[1] === 'list' ? [{ id: 'login', vault: { id: 'v1' }, tags: item.tags }] : item)
 
   // when
-  const result = await read1Password({ via: 'op', tag: 'agent' }, { runOp })
+  const result = await read1Password({ via: 'op', tags: ['agent'] }, { runOp })
 
   // then
   expect(result.entries.map((entry) => entry.fields)).toEqual([{ password: 'hunter2' }])
@@ -198,7 +204,7 @@ test('op import never stands a custom field in for an empty canonical one', asyn
     JSON.stringify(args[1] === 'list' ? [{ id: 'login', vault: { id: 'v1' }, tags: item.tags }] : item)
 
   // when
-  const result = await read1Password({ via: 'op', tag: 'agent' }, { runOp })
+  const result = await read1Password({ via: 'op', tags: ['agent'] }, { runOp })
 
   // then
   expect(result.entries).toEqual([])
@@ -206,6 +212,55 @@ test('op import never stands a custom field in for an empty canonical one', asyn
     'GitHub: no single field "password" to import',
     'GitHub: skipped, none of its tagged fields were found',
   ])
+})
+
+test('op import reads each account and vault given, and every tag in one listing', async () => {
+  // given
+  const calls: (readonly string[])[] = []
+  const vaults: Readonly<Record<string, readonly { id: string; name: string }[]>> = {
+    work: [{ id: 'w1', name: 'Shared' }],
+    home: [
+      { id: 'h1', name: 'Shared' },
+      { id: 'h2', name: 'Infra' },
+      { id: 'h3', name: 'Other' },
+    ],
+  }
+  const runOp = async (args: readonly string[]) => {
+    calls.push(args)
+    const account = args[args.indexOf('--account') + 1] ?? ''
+    if (args[0] === 'vault') return JSON.stringify(vaults[account])
+    if (args[1] === 'list') {
+      const vault = args[args.indexOf('--vault') + 1] ?? ''
+      return JSON.stringify([{ id: vault === 'w1' ? 'note' : 'api', vault: { id: vault }, tags: ['ci'] }])
+    }
+    return JSON.stringify({ ...(OP_ITEMS[args[2] ?? ''] as object), tags: ['ci'] })
+  }
+
+  // when
+  const result = await read1Password(
+    { via: 'op', accounts: ['work', 'home'], vaults: ['Shared', 'h2'], tags: ['agents', 'ci'] },
+    { runOp },
+  )
+
+  // then
+  expect(calls.filter((args) => args[1] === 'list').map((args) => args.join(' '))).toEqual([
+    'vault list --format json --account work',
+    'item list --format json --vault w1 --tags agents,ci --account work',
+    'vault list --format json --account home',
+    'item list --format json --vault h1 --tags agents,ci --account home',
+    'item list --format json --vault h2 --tags agents,ci --account home',
+  ])
+  expect(result.entries.map((entry) => String(entry.name))).toEqual(['memo/work', 'api/work', 'api/work-2'])
+  expect(result.warnings).toEqual(['name collision: "api/work" renamed to "api/work-2"'])
+})
+
+test('op import fails when a vault is in none of the accounts, and refuses a comma in a tag', async () => {
+  const runOp = async (args: readonly string[]) =>
+    JSON.stringify(args[0] === 'vault' ? [{ id: 'v1', name: 'Work' }] : [])
+  await expect(
+    read1Password({ via: 'op', accounts: ['a', 'b'], vaults: ['Work', 'Missing'] }, { runOp }),
+  ).rejects.toMatchObject({ code: 'not_found', message: '1Password vault "Missing" was not found' })
+  await expect(read1Password({ via: 'op', tags: ['a,b'] }, { runOp })).rejects.toMatchObject({ code: 'invalid' })
 })
 
 test('op import rejects output that is not item JSON', async () => {
@@ -287,7 +342,7 @@ test('sdk import maps desktop-app items and skips unreadable ones', async () => 
   }
 
   // when
-  const result = await read1Password({ via: 'sdk', account: 'Example' }, { connectSdk })
+  const result = await read1Password({ via: 'sdk', accounts: ['Example'] }, { connectSdk })
 
   // then
   expect(accounts).toEqual(['Example'])
@@ -343,7 +398,7 @@ test('sdk import with a tag fetches items carrying the tag or a <tag>/<field> ta
   })
 
   // when
-  const result = await read1Password({ via: 'sdk', account: 'Example', tag: 'agent' }, { connectSdk })
+  const result = await read1Password({ via: 'sdk', accounts: ['Example'], tags: ['agent'] }, { connectSdk })
 
   // then
   expect(requested).toEqual([['0', '1']])
@@ -369,7 +424,7 @@ test('sdk import never imports a whole item whose detail tags no longer select i
 
   // when
   const result = await read1Password(
-    { via: 'sdk', account: 'Example', tag: 'agent' },
+    { via: 'sdk', accounts: ['Example'], tags: ['agent'] },
     { connectSdk: async () => client },
   )
 
@@ -378,10 +433,40 @@ test('sdk import never imports a whole item whose detail tags no longer select i
   expect(result.warnings).toEqual(['GitHub: skipped, it no longer carries the tag'])
 })
 
+test('sdk import reads every account given and finds a vault in any of them', async () => {
+  // given
+  const connected: string[] = []
+  const work = sdkClient(
+    [{ title: 'Memo', category: 'SecureNote', notes: 'work note', tags: ['ci'], fields: [] }],
+    [['ci']],
+  )
+  const home = sdkClient(
+    [{ title: 'Memo', category: 'SecureNote', notes: 'home note', tags: ['ops'], fields: [] }],
+    [['ops']],
+  )
+  const connectSdk = async (account: string) => {
+    connected.push(account)
+    return account === 'Work' ? work : { ...home, vaults: { list: async () => [{ id: 'v1', title: 'Personal' }] } }
+  }
+
+  // when
+  const result = await read1Password(
+    { via: 'sdk', accounts: ['Work', 'Home'], vaults: ['Work', 'Personal'], tags: ['ci', 'ops'] },
+    { connectSdk },
+  )
+
+  // then
+  expect(connected).toEqual(['Work', 'Home'])
+  expect(result.entries.map((entry) => [String(entry.name), entry.fields])).toEqual([
+    ['memo/work', { text: 'work note' }],
+    ['memo/personal', { text: 'home note' }],
+  ])
+})
+
 test('sdk import needs an account and an existing vault', async () => {
   const connectSdk = async () => sdkClient([])
   await expect(read1Password({ via: 'sdk' }, { connectSdk })).rejects.toMatchObject({ code: 'invalid' })
   await expect(
-    read1Password({ via: 'sdk', account: 'Example', vault: 'Missing' }, { connectSdk }),
+    read1Password({ via: 'sdk', accounts: ['Example'], vaults: ['Missing'] }, { connectSdk }),
   ).rejects.toMatchObject({ code: 'not_found' })
 })

@@ -9,7 +9,7 @@ import { ENTRY_NAME_SYNTAX } from '../../core/naming'
 import { importFrom, ONEPASSWORD_VIAS, type ImportSource, type OnePasswordVia, read1Password } from '../../import'
 import { createRedactor, type Redactor, scrubFile } from '../../redact'
 import { openDirect, resolveAccess } from '../context'
-import { csv, note, print, readStdin } from '../output'
+import { csv, note, print, readStdin, repeated } from '../output'
 
 async function pump(stream: ReadableStream<Uint8Array>, redactor: Redactor, sink: NodeJS.WriteStream): Promise<void> {
   for await (const chunk of stream.pipeThrough(redactor.stream())) sink.write(chunk)
@@ -137,11 +137,11 @@ export const importCommand = defineCommand({
     group: { type: 'string', required: true },
     'password-stdin': { type: 'boolean', description: 'Read the KeePass password from stdin' },
     via: { type: 'string', description: `1Password without a path: ${ONEPASSWORD_VIAS.join(' | ')} (default sdk)` },
-    account: { type: 'string', description: '1Password account (required with --via sdk)' },
-    vault: { type: 'string', description: '1Password vault (default: every vault)' },
-    tag: { type: 'string', description: 'Only 1Password items with this tag' },
+    account: { type: 'string', description: '1Password account, repeatable (required with --via sdk)' },
+    vault: { type: 'string', description: '1Password vault, repeatable (default: every vault)' },
+    tag: { type: 'string', description: 'Only 1Password items with this tag, repeatable' },
   },
-  async run({ args }) {
+  async run({ args, rawArgs }) {
     if (!isSource(args.source)) throw new TypeVaultError('invalid', `source must be one of: ${SOURCES.join(', ')}`)
     const live = args.source === '1password' && args.path === undefined
     if (!live && args.path === undefined) {
@@ -158,9 +158,9 @@ export const importCommand = defineCommand({
       args.path === undefined
         ? await read1Password({
             via,
-            ...(args.account === undefined ? {} : { account: args.account }),
-            ...(args.vault === undefined ? {} : { vault: args.vault }),
-            ...(args.tag === undefined ? {} : { tag: args.tag }),
+            accounts: repeated(rawArgs, '--account'),
+            vaults: repeated(rawArgs, '--vault'),
+            tags: repeated(rawArgs, '--tag'),
           })
         : await importFrom(args.source, { path: args.path, ...(password === undefined ? {} : { password }) })
     const group = args.group
