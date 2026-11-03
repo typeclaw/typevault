@@ -1,21 +1,27 @@
+import { join } from 'node:path'
+
 import { defineCommand } from 'citty'
 
 import { verifyAudit } from '../../audit/log'
 import { adoptCertWrites } from '../../core/adopt'
 import { doctor as runDoctor } from '../../core/doctor'
-import { initVault } from '../../core/init'
-import { layoutFrom, openAdmin, openDirect } from '../context'
+import { initLocalVault, initVault } from '../../core/init'
+import { LOCAL_VAULT_DIR, layoutOf, resolveRoot } from '../../core/layout'
+import { openAdmin, openDirect, wantsGlobal } from '../context'
 import { csv, note, print, table } from '../output'
 
 export const init = defineCommand({
   meta: { name: 'init', description: 'Create a vault and its operator key' },
   async run() {
-    const layout = layoutFrom(process.env)
-    await initVault(layout.root)
-    print(`vault created at ${layout.root}`)
-    note(
-      `operator key: ${layout.operatorKey}\nBack it up offline: it is the only recovery path. Only vault/ is safe to commit.`,
-    )
+    const env = process.env
+    const global = wantsGlobal(env)
+    const layout = global ? layoutOf(resolveRoot(env)) : await initLocalVault(join(process.cwd(), LOCAL_VAULT_DIR), env)
+    if (global) await initVault(layout.root)
+    print(`vault created at ${global ? layout.root : layout.vault}`)
+    const commit = global
+      ? 'Only vault/ is safe to commit.'
+      : `Commit ${LOCAL_VAULT_DIR}/; its keys stay in ${layout.keys}.`
+    note(`operator key: ${layout.operatorKey}\nBack it up offline: it is the only recovery path. ${commit}`)
     note('next: typevault group add <name>, then typevault set <name> --type ... --group <name> --stdin')
   },
 })
