@@ -104,14 +104,27 @@ async function exportOp(item: KeyItem, options: ExportOptions, runOp: RunOp): Pr
 }
 
 async function exportSdk(item: KeyItem, options: ExportOptions, client: SdkWriter): Promise<void> {
-  const vault = (await client.vaults.list()).find(
-    (candidate) => candidate.id === options.vault || candidate.title === options.vault,
-  )
-  if (vault === undefined) throw new TypeVaultError('not_found', `1Password vault "${options.vault}" was not found`)
+  const vault = resolveVault(await client.vaults.list(), options.vault)
   const existing = (await client.items.list(vault.id)).filter((entry) => entry.title === item.title)
   if (existing.length > 0 && options.replace !== true) refuseExisting(item, options.vault)
   await client.items.create({ vaultId: vault.id, title: item.title, tags: [EXPORT_TAG], fields: fieldsOf(item) })
   for (const entry of existing) await client.items.archive(vault.id, entry.id)
+}
+
+function resolveVault<V extends { readonly id: string; readonly title: string }>(
+  vaults: readonly V[],
+  wanted: string,
+): V {
+  const byId = vaults.find((vault) => vault.id === wanted)
+  if (byId !== undefined) return byId
+  const byTitle = vaults.filter((vault) => vault.title === wanted)
+  const [only] = byTitle
+  if (only === undefined) throw new TypeVaultError('not_found', `1Password vault "${wanted}" was not found`)
+  // A key must never land in a vault picked by list order, which may be one shared with other people.
+  if (byTitle.length > 1) {
+    throw new TypeVaultError('conflict', `several 1Password vaults are named "${wanted}"; pass the vault id instead`)
+  }
+  return only
 }
 
 const connectWriter: ConnectWriter = async (account) => {

@@ -124,6 +124,42 @@ test('without op installed, export falls back to the SDK and replaces by archivi
   expect(archived).toEqual(['old'])
 })
 
+function recordingSdk(vaults: readonly { id: string; title: string }[]) {
+  const created: { vaultId: string }[] = []
+  const client: SdkWriter = {
+    vaults: { list: async () => vaults },
+    items: {
+      list: async () => [],
+      create: async (params) => created.push(params),
+      archive: async () => {},
+    },
+  }
+  return { created, connect: async () => client }
+}
+
+test('SDK export refuses a vault title shared by several vaults', async () => {
+  const sdk = recordingSdk([
+    { id: 'v1', title: 'Backup' },
+    { id: 'v2', title: 'Backup' },
+  ])
+
+  const result = export1Password(ITEM, { vault: 'Backup', account: 'acme', via: 'sdk' }, { connect: sdk.connect })
+
+  await expect(result).rejects.toMatchObject({ code: 'conflict' })
+  expect(sdk.created).toEqual([])
+})
+
+test('SDK export prefers a vault id over another vault titled the same', async () => {
+  const sdk = recordingSdk([
+    { id: 'other', title: 'v2' },
+    { id: 'v2', title: 'Backup' },
+  ])
+
+  await export1Password(ITEM, { vault: 'v2', account: 'acme', via: 'sdk' }, { connect: sdk.connect })
+
+  expect(sdk.created.map((params) => params.vaultId)).toEqual(['v2'])
+})
+
 test('SDK export needs an account', async () => {
   const result = export1Password(ITEM, { vault: 'Infra', via: 'sdk' }, { connect: async () => ({}) as SdkWriter })
 
