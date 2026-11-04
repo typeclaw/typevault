@@ -148,6 +148,11 @@ sequenceDiagram
 typevault request resend --preset api_key --reason "send the weekly digest"
 ```
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/prompt-dark.png">
+  <img width="480" alt="The secret request page: the entry name, the agent's reason, who asked and which tier can read it, the match code to compare with the chat, a secret field and an Encrypt and submit button" src="docs/diagrams/prompt-light.png">
+</picture>
+
 ## SDK
 
 The same access, in-process (Bun only):
