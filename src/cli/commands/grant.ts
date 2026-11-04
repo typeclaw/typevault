@@ -3,7 +3,7 @@ import { watch } from 'node:fs'
 import { defineCommand } from 'citty'
 import { z } from 'zod'
 
-import { loadLocalKeys } from '../../access/keys'
+import { machineKeys } from '../../access/keys'
 import { parseTtl } from '../../access/scope'
 import { issueSealedGrant } from '../../access/sealed'
 import { GrantInfoSchema, IssuedSchema } from '../../admin'
@@ -58,7 +58,7 @@ export const grant = defineCommand({
     if (tiers.length === 0) throw new TypeVaultError('invalid', 'grant needs --tier')
     const request = { tiers, only: csv(args.only), ttl: args.ttl, label: args.label ?? 'unlabeled' }
     // An issuer holding a key (CI) seals locally; everything else asks the daemon within its ceiling.
-    if (args.sealed && loadLocalKeys(layoutFrom(env), env).length > 0) {
+    if (args.sealed && machineKeys(env).length > 0) {
       const vault = await openDirect(env)
       return print(await issueSealedGrant(vault, { ...request, ttlMs: parseTtl(args.ttl) }))
     }

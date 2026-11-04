@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { z } from 'zod'
@@ -9,13 +9,16 @@ import { Admin } from '../core/admin'
 import { seal, type SecretKey } from '../core/crypto'
 import { utf8 } from '../core/encoding'
 import { signerOf } from '../core/entries'
-import { initVault } from '../core/init'
+import { createIdentity } from '../core/identity'
+import { type Founder, founderOf, initVault } from '../core/init'
 import { type Layout, layoutOf } from '../core/layout'
 import { parseEntryName } from '../core/naming'
 import { Vault } from '../core/vault'
 import { callDaemon } from './client'
 import { type RunningDaemon, startDaemon } from './daemon'
 import { LiveAccess } from './live-access'
+
+const machineFounder = async (): Promise<Founder> => founderOf((await createIdentity('owner', 'machine')).identity)
 
 let layout: Layout
 let owner: SecretKey
@@ -29,7 +32,7 @@ const grant = (socket: string, body: Record<string, unknown>) =>
 beforeEach(async () => {
   // Short root: unix socket paths are limited to ~104 bytes.
   layout = layoutOf(mkdtempSync('/tmp/tvd-'))
-  owner = await initVault(layout.root)
+  owner = (await initVault(layout.root, await machineFounder())).owner
   const vault = await Vault.open(layout, [owner], {})
   const admin = new Admin(vault)
   await admin.addTier('member')
@@ -48,7 +51,7 @@ beforeEach(async () => {
     { name: n('stripe'), type: 'api_key', fields: { key: 'sk_live_x' }, tier: 'trusted' },
     signerOf(owner),
   )
-  daemon = await startDaemon({ layout, env: { TYPEVAULT_DIR: layout.root } })
+  daemon = await startDaemon({ layout, env: { TYPEVAULT_DIR: layout.root }, keys: [owner] })
 })
 
 afterEach(async () => {
@@ -172,4 +175,24 @@ it('refuses a prompt submission for a different entry than the one requested', a
 it('keeps sockets private to the owner', async () => {
   const { mode } = await Bun.file(join(layout.run, 'agent.sock')).stat()
   expect(mode & 0o777).toBe(0o600)
+})
+
+describe('unlocked session', () => {
+  it('serves its grant from run/session.token and ends it with the daemon', async () => {
+    // given a daemon started as an unlocked session
+    await daemon.stop()
+    const env = { TYPEVAULT_DIR: layout.root }
+    daemon = await startDaemon({ layout, env, keys: [owner], session: { ttlMs: 60_000 } })
+    const token = readFileSync(layout.sessionFile, 'utf8')
+
+    // then the session reads everything its key reaches
+    const names = (await new LiveAccess(layout.agentSocket, token).list()).map((e): string => e.name).sort()
+    expect(names).toEqual(['github/bot', 'openai', 'stripe'])
+
+    // and when it stops, the token file and the grant are gone for good
+    await daemon.stop()
+    expect(existsSync(layout.sessionFile)).toBe(false)
+    daemon = await startDaemon({ layout, env, keys: [owner] })
+    await expect(new LiveAccess(layout.agentSocket, token).list()).rejects.toMatchObject({ code: 'denied' })
+  })
 })

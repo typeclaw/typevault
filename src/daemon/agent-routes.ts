@@ -3,7 +3,7 @@ import { ScopedVault } from '../access/scoped'
 import { appendAudit } from '../audit/log'
 import { TypeVaultError } from '../core/errors'
 import type { Vault } from '../core/vault'
-import type { GrantStore, ResolvedGrant } from './grants'
+import { type GrantStore, type ResolvedGrant, SESSION_CEILING } from './grants'
 import { type Handler, json, parseBody } from './http'
 import { DeriveBody, MoveBody, NameBody, RequestBody, SetBody, ValuesBody, WaitBody } from './protocol'
 import type { PromptRequests } from './requests'
@@ -14,6 +14,8 @@ export type DaemonContext = {
   /** One ScopedVault per live grant, so redaction knows every value that grant has read. */
   readonly sessions: Map<string, ScopedVault>
   readonly requests: PromptRequests
+  /** The tiers an unlocked session's member holds directly: what `run` loads in bulk, as in direct mode. */
+  readonly sessionTiers?: readonly string[]
 }
 
 function bearer(request: Request): string {
@@ -27,12 +29,14 @@ function session(context: DaemonContext, request: Request): { grant: ResolvedGra
   const { record } = grant
   const existing = context.sessions.get(record.id)
   if (existing !== undefined) return { grant, access: existing }
+  // A session reaches every tier its member does, but like direct mode it never picks a tier for `set` on its own.
+  const isSession = record.ceiling === SESSION_CEILING
   const access = new ScopedVault(context.vault, grant.chain, {
     mode: 'live',
     grant: record.id,
     label: record.label,
-    ownTiers: record.tiers,
-    ...(record.tiers[0] === undefined ? {} : { defaultTier: record.tiers[0] }),
+    ownTiers: isSession ? (context.sessionTiers ?? []) : record.tiers,
+    ...(isSession || record.tiers[0] === undefined ? {} : { defaultTier: record.tiers[0] }),
   })
   context.sessions.set(record.id, access)
   return { grant, access }
@@ -43,9 +47,10 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
   return {
     '/v1/ping': async () => json({ ok: true }),
     '/v1/whoami': async (request) => {
-      const { grant } = session(context, request)
+      const { grant, access } = session(context, request)
       const { hash: _hash, ...record } = grant.record
-      return json(record)
+      // `tiers` is what the grant may reach; `ownTiers` is what `run` loads in bulk, narrower for a session.
+      return json({ ...record, ownTiers: await access.ownTiers() })
     },
     '/v1/list': async (request) => json(await session(context, request).access.list()),
     '/v1/get': async (request) => {

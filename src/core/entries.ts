@@ -43,10 +43,15 @@ export type Envelope = z.infer<typeof EnvelopeSchema>
 /** Who signs a write: a reference other readers can check plus the matching signing secret. */
 export type SignerContext = { readonly ref: SignerRef; readonly signSecret: Uint8Array }
 
-export const signerOf = (key: SecretKey): SignerContext => ({
-  ref: key.role.kind === 'owner' ? { kind: 'owner' } : { kind: 'tier', tier: key.role.tier, gen: key.role.gen },
-  signSecret: key.signSecret,
-})
+export function signerOf(key: SecretKey): SignerContext {
+  const { role } = key
+  // A member key only opens wraps; writes are signed by the tier or owner key it unwraps.
+  if (role.kind === 'member') throw new TypeVaultError('denied', 'a member key cannot sign entries')
+  return {
+    ref: role.kind === 'owner' ? { kind: 'owner' } : { kind: 'tier', tier: role.tier, gen: role.gen },
+    signSecret: key.signSecret,
+  }
+}
 
 type Authority = { readonly signPublic: string; readonly tiers: readonly string[] }
 

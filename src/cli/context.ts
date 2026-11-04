@@ -1,17 +1,24 @@
+import { existsSync, readFileSync } from 'node:fs'
+
 import { z } from 'zod'
 
-import { loadLocalKeys } from '../access/keys'
+import { machineKeys } from '../access/keys'
 import { ScopedVault } from '../access/scoped'
 import { readSealedGrant } from '../access/sealed'
 import { SealedAccess } from '../access/sealed-access'
 import type { Access } from '../access/types'
 import { Admin } from '../core/admin'
+import type { SecretKey } from '../core/crypto'
 import { TypeVaultError } from '../core/errors'
-import { findLocalVault, type Layout, layoutOf, openLocalLayout, resolveRoot } from '../core/layout'
+import { atomicWrite } from '../core/fsx'
+import { type Identity, readIdentity, sealedCopyPath, unlockIdentity } from '../core/identity'
+import { findLocalVault, type Layout, layoutOf, localLayout, resolveRoot } from '../core/layout'
 import { Vault } from '../core/vault'
-import { callDaemon } from '../daemon/client'
+import { callDaemon, isDaemonAlive } from '../daemon/client'
 import { LiveAccess } from '../daemon/live-access'
-import { ensureDaemon } from '../daemon/spawn'
+import { ensureDaemon, LOCKED_MESSAGE, startSession } from '../daemon/spawn'
+import { note } from './output'
+import { type Passwords, passwords, passwordsFromStdin } from './password'
 
 export type Env = Readonly<Record<string, string | undefined>>
 
@@ -24,7 +31,7 @@ export const wantsGlobal = (env: Env): boolean => isSet(env['TYPEVAULT_GLOBAL'])
 export function findLayout(env: Env, cwd: string = process.cwd()): Layout | undefined {
   if (wantsGlobal(env)) return layoutOf(resolveRoot(env))
   const dir = findLocalVault(cwd)
-  return dir === undefined ? undefined : openLocalLayout(dir, env)
+  return dir === undefined ? undefined : localLayout(dir, env)
 }
 
 export function layoutFrom(env: Env, cwd: string = process.cwd()): Layout {
@@ -38,13 +45,59 @@ export function layoutFrom(env: Env, cwd: string = process.cwd()): Layout {
   return layout
 }
 
-/** The vault opened with this machine's own keys: direct mode, for the owner and issuers. */
+/**
+ * The vault opened with this member's own key: direct mode, for owners and issuers. A machine member's key is at
+ * hand; a human types their password, since only the daemon keeps an unlocked key around.
+ */
 export async function openDirect(env: Env): Promise<Vault> {
   const layout = layoutFrom(env)
-  const keys = loadLocalKeys(layout, env)
-  if (keys.length === 0) throw new TypeVaultError('denied', 'no grant and no key here (set TYPEVAULT_GRANT)')
+  const machine = machineKeys(env)
+  const identity = readIdentity(env)
+  if (machine.length === 0 && identity === undefined) {
+    throw new TypeVaultError('denied', 'no grant and no identity here (set TYPEVAULT_GRANT, or run typevault join)')
+  }
+  const keys = machine.length > 0 ? machine : [await unlockHuman(identity, passwords())]
   return Vault.open(layout, keys, env)
 }
+
+async function unlockHuman(identity: Identity | undefined, passwords: Passwords): Promise<SecretKey> {
+  if (identity === undefined) throw new TypeVaultError('not_found', 'no identity here (run typevault init or join)')
+  if (identity.kind === 'machine') return unlockIdentity(identity)
+  return unlockIdentity(identity, await passwords.ask(`Password for ${identity.name}: `))
+}
+
+/**
+ * Unlocks a human member's session: their key goes to a daemon that holds it for `ttlMs`, and this user's CLI
+ * reads through the session grant it writes. Returns false when a session (or a machine daemon) already runs.
+ */
+export async function unlockSession(env: Env, passwords: Passwords, ttlMs: number): Promise<boolean> {
+  const layout = layoutFrom(env)
+  if (await isDaemonAlive(layout.agentSocket)) return false
+  const identity = readIdentity(env)
+  const key = await unlockHuman(identity, passwords)
+  const vault = await Vault.open(layout, [key], env)
+  if (vault.member === undefined) {
+    throw new TypeVaultError(
+      'denied',
+      `${identity?.name ?? 'you'} is not a member of this vault (share \`typevault identity show\` with an owner)`,
+    )
+  }
+  if (identity?.kind === 'human') refreshSealedCopy(vault, identity)
+  await startSession(layout, env, key, ttlMs)
+  return true
+}
+
+/** After `passwd`, the copy committed in this vault still opens with the old password until it is replaced. */
+function refreshSealedCopy(vault: Vault, identity: Identity & { readonly kind: 'human' }): void {
+  const copy = sealedCopyPath(vault.layout, identity.name)
+  if (existsSync(copy) && readFileSync(copy, 'utf8') !== identity.sealedKey) {
+    atomicWrite(copy, identity.sealedKey)
+    note(`updated ${copy} to your current password; commit it`)
+  }
+}
+
+/** The vault's public, owner-signed state, readable without any key. */
+export const openPublic = (env: Env): Promise<Vault> => Vault.open(layoutFrom(env), [], env)
 
 export const openAdmin = async (env: Env): Promise<Admin> => new Admin(await openDirect(env))
 
@@ -57,9 +110,11 @@ export type ResolvedAccess =
 export async function resolveAccess(env: Env): Promise<ResolvedAccess> {
   const grant = env['TYPEVAULT_GRANT']?.trim()
   if (grant === undefined || grant === '') {
+    const machine = machineKeys(env)
+    if (machine.length === 0) return { kind: 'live', access: await sessionAccess(env) }
     const tier = env['TYPEVAULT_TIER']
-    const vault = await openDirect(env)
-    const ownTiers = vault.keys.flatMap((key) => (key.role.kind === 'tier' ? [key.role.tier] : []))
+    const vault = await Vault.open(layoutFrom(env), machine, env)
+    const ownTiers = vault.member === undefined ? [] : (vault.state.members[vault.member]?.tiers ?? [])
     const identity = { mode: 'direct' as const, ownTiers, ...(tier === undefined ? {} : { defaultTier: tier }) }
     return { kind: 'direct', access: new ScopedVault(vault, [], identity) }
   }
@@ -73,6 +128,28 @@ export async function resolveAccess(env: Env): Promise<ResolvedAccess> {
   }
   throw new TypeVaultError('invalid', 'TYPEVAULT_GRANT is not a typevault grant')
 }
+
+/**
+ * A human member's CLI reads through the unlocked session's grant. On a terminal a locked vault asks for the
+ * password right away; anywhere else (an agent) it stays locked until a human unlocks it.
+ */
+async function sessionAccess(env: Env): Promise<LiveAccess> {
+  const layout = layoutFrom(env)
+  if (!(await isDaemonAlive(layout.agentSocket))) {
+    const identity = readIdentity(env)
+    if (identity === undefined) {
+      throw new TypeVaultError('denied', 'no grant and no identity here (set TYPEVAULT_GRANT, or run typevault join)')
+    }
+    const canAsk = process.stdin.isTTY || passwordsFromStdin()
+    if (identity.kind !== 'human' || !canAsk) throw new TypeVaultError('locked', LOCKED_MESSAGE)
+    await unlockSession(env, passwords(), DEFAULT_SESSION_MS)
+  }
+  if (!existsSync(layout.sessionFile)) throw new TypeVaultError('locked', LOCKED_MESSAGE)
+  return new LiveAccess(layout.agentSocket, readFileSync(layout.sessionFile, 'utf8').trim())
+}
+
+/** How long an unlocked session lasts unless `unlock --for` says otherwise. */
+export const DEFAULT_SESSION_MS = 8 * 60 * 60_000
 
 export const accessOf = async (env: Env): Promise<Access> => (await resolveAccess(env)).access
 

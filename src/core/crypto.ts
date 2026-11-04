@@ -10,6 +10,7 @@ import { TypeVaultError } from './errors'
 export type KeyRole =
   | { readonly kind: 'owner' }
   | { readonly kind: 'tier'; readonly tier: string; readonly gen: number }
+  | { readonly kind: 'member'; readonly name: string }
 
 /** An age identity for decryption plus an Ed25519 key for signing. */
 export type SecretKey = { readonly role: KeyRole; readonly identity: string; readonly signSecret: Uint8Array }
@@ -20,6 +21,7 @@ const KEY_PREFIX = 'tvk1:'
 const RoleSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('owner') }),
   z.object({ kind: z.literal('tier'), tier: z.string(), gen: z.number().int().positive() }),
+  z.object({ kind: z.literal('member'), name: z.string() }),
 ])
 const EncodedKeySchema = z.object({ role: RoleSchema, age: z.string().startsWith('AGE-SECRET-KEY-1'), ed: z.string() })
 

@@ -109,7 +109,7 @@ export const set = defineCommand({
     type: { type: 'string', description: 'password | api_key | oauth | ssh | totp | note' },
     tier: {
       type: 'string',
-      description: "Tier (defaults to your grant's tier; in direct mode, $TYPEVAULT_TIER or the vault's only tier)",
+      description: "Tier (defaults to $TYPEVAULT_TIER, else your grant's tier, else the only tier you reach)",
     },
     field: { type: 'string', description: 'k=v, repeatable (non-secret fields; use --stdin for the secret)' },
     stdin: { type: 'boolean', description: 'Read the main secret field from stdin' },
@@ -139,7 +139,7 @@ export const set = defineCommand({
       name,
       type,
       fields: { ...base, ...fields },
-      tier: args.tier ?? existing?.tier,
+      tier: args.tier ?? existing?.tier ?? process.env['TYPEVAULT_TIER'],
       env: args.env,
       origin: args.origin,
       ...(tags.length === 0 ? {} : { tags }),

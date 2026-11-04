@@ -4,7 +4,7 @@ import { generateX25519Identity, identityToRecipient } from 'age-encryption'
 import { z } from 'zod'
 
 import { appendAudit } from '../audit/log'
-import { generateSigningKey, randomHex, seal, unseal } from '../core/crypto'
+import { generateSigningKey, randomHex, seal, type SecretKey, unseal } from '../core/crypto'
 import { fromBase64, fromBase64Url, fromUtf8, toBase64, toBase64Url, utf8 } from '../core/encoding'
 import { CertSchema, issueCert, signerOf } from '../core/entries'
 import { TypeVaultError } from '../core/errors'
@@ -40,12 +40,7 @@ export type SealedRequest = GrantScope & { readonly ttlMs: number; readonly labe
 
 /** Re-seals every entry the scope allows into a self-contained grant. The issuer's own key never leaves. */
 export async function issueSealedGrant(vault: Vault, request: SealedRequest): Promise<string> {
-  const issuer =
-    vault.keyring.owner ??
-    vault.keys.find((key) => {
-      const role = key.role
-      return role.kind === 'tier' && request.tiers.every((tier) => reach(vault.state.tiers, role.tier).has(tier))
-    })
+  const issuer = vault.keyring.owner ?? (await memberTierKey(vault, request.tiers))
   if (issuer === undefined) throw new TypeVaultError('denied', 'no key here reaches every requested tier')
   for (const tier of request.tiers) {
     if (vault.state.tiers[tier] === undefined) throw new TypeVaultError('not_found', `no tier "${tier}"`)
@@ -79,6 +74,17 @@ export async function issueSealedGrant(vault: Vault, request: SealedRequest): Pr
     entries: granted.map((value) => value.name),
   })
   return `${PREFIX}${toBase64Url(utf8(identity))}.${toBase64Url(sealed)}`
+}
+
+/** The key of a tier this member holds that reaches every one of `tiers`, to sign the grant's certificate. */
+async function memberTierKey(vault: Vault, tiers: readonly string[]): Promise<SecretKey | undefined> {
+  const held = vault.member === undefined ? [] : (vault.state.members[vault.member]?.tiers ?? [])
+  for (const tier of held) {
+    if (!tiers.every((wanted) => reach(vault.state.tiers, tier).has(wanted))) continue
+    const key = await vault.keyring.unlock(tier)
+    if (key !== undefined) return key
+  }
+  return undefined
 }
 
 /** Opens `tvg1:...` or `@/path/to/file` holding one. */

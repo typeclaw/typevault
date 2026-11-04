@@ -49,7 +49,7 @@ export class LiveAccess implements Access {
   }
 
   async ownTiers(): Promise<readonly string[]> {
-    return (await this.call('/v1/whoami', {}, z.object({ tiers: z.array(z.string()) }))).tiers
+    return (await this.call('/v1/whoami', {}, z.object({ ownTiers: z.array(z.string()) }))).ownTiers
   }
 
   async readValues(): Promise<readonly string[]> {

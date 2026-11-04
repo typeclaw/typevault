@@ -1,18 +1,18 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
-
 import { decodeSecretKey, type SecretKey } from '../core/crypto'
-import type { Layout } from '../core/layout'
+import { TypeVaultError } from '../core/errors'
+import { readIdentity } from '../core/identity'
 
-/** `TYPEVAULT_KEY` alone when set; otherwise the owner key and tier keys in the key directory. */
-export function loadLocalKeys(layout: Layout, env: Readonly<Record<string, string | undefined>>): readonly SecretKey[] {
+/**
+ * The member keys this process holds without anyone typing a password: `TYPEVAULT_KEY`, else a machine identity.
+ * A human identity yields nothing here; it is unlocked once with `typevault unlock`.
+ */
+export function machineKeys(env: Readonly<Record<string, string | undefined>>): readonly SecretKey[] {
   const explicit = env['TYPEVAULT_KEY']
-  if (explicit !== undefined && explicit !== '') return [decodeSecretKey(explicit)]
-  const owner = existsSync(layout.ownerKey) ? [decodeSecretKey(readFileSync(layout.ownerKey, 'utf8'))] : []
-  const tiers = existsSync(layout.tierKeys)
-    ? readdirSync(layout.tierKeys)
-        .filter((file) => file.endsWith('.key'))
-        .map((file) => decodeSecretKey(readFileSync(join(layout.tierKeys, file), 'utf8')))
-    : []
-  return [...owner, ...tiers]
+  if (explicit !== undefined && explicit !== '') {
+    const key = decodeSecretKey(explicit)
+    if (key.role.kind !== 'member') throw new TypeVaultError('invalid', 'TYPEVAULT_KEY must be a member key')
+    return [key]
+  }
+  const identity = readIdentity(env)
+  return identity?.kind === 'machine' ? [decodeSecretKey(identity.key)] : []
 }

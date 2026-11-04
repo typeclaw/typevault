@@ -1,16 +1,14 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-
-import { z } from 'zod'
 
 import { sha256Hex } from './crypto'
 import { utf8 } from './encoding'
 
 export type Layout = {
-  /** `global`: one vault per user. `local`: a `.typevault/` committed in a project, keys kept outside it. */
+  /** `global`: one vault per user. `local`: a `.typevault/` committed in a project. */
   readonly scope: 'global' | 'local'
-  /** Private state (audit, run; keys too for a global vault). Never committed. */
+  /** Private state (trust pin, audit, run). Never committed. */
   readonly root: string
   /** The committable part: ciphertext and signed manifests only. */
   readonly vault: string
@@ -18,6 +16,11 @@ export type Layout = {
   readonly tiersDir: string
   readonly ownerFile: string
   readonly tiersFile: string
+  readonly membersFile: string
+  /** Each human member's password-sealed key, so a new device needs only the password and Secret Key. */
+  readonly membersDir: string
+  /** The owner key wrapped to each owner member. */
+  readonly ownerWrapsDir: string
   readonly signersFile: string
   readonly ceilingsFile: string
   /** This checkout's audit anchors: one committed file per audit chain, so clones never check each other's. */
@@ -25,9 +28,6 @@ export type Layout = {
   /** Anchors from before chains had their own file; still checked against this checkout's log. */
   readonly legacyAnchorsFile: string
   readonly txnDir: string
-  readonly keys: string
-  readonly ownerKey: string
-  readonly tierKeys: string
   readonly trustFile: string
   readonly audit: string
   readonly auditLog: string
@@ -35,6 +35,8 @@ export type Layout = {
   readonly lockFile: string
   readonly auditLock: string
   readonly grantsFile: string
+  /** The unlocked session's grant token, readable only by this user while the daemon runs. */
+  readonly sessionFile: string
   readonly revisionsFile: string
   readonly agentSocket: string
   readonly adminSocket: (ceiling: string) => string
@@ -57,20 +59,16 @@ export function resolveRoot(env: Env = process.env): string {
 export const layoutOf = (root: string): Layout => build('global', root, join(root, 'vault'))
 
 /**
- * A project vault at `dir`. Keys are shared by every checkout of the vault (keyed by its owner key); trust, audit
- * and run state belong to this checkout (keyed by its path), so a replaced owner.json still meets the old pin and
- * two clones never share a daemon or a transaction journal.
+ * A project vault at `dir`. Trust, audit and run state belong to this checkout (keyed by its path), so a replaced
+ * owner.json still meets the old pin and two clones never share a daemon or a transaction journal.
  */
-export function localLayout(dir: string, ownerSignPublic: string, env: Env = process.env): Layout {
-  const home = resolveRoot(env)
-  const root = join(home, 'checkouts', shortHash(resolve(dir)))
-  const keys = join(home, 'vaults', vaultIdOf(ownerSignPublic), 'keys')
-  return build('local', root, dir, keys, join(root, 'trust.json'))
+export function localLayout(dir: string, env: Env = process.env): Layout {
+  return build('local', join(resolveRoot(env), 'checkouts', shortHash(resolve(dir))), dir)
 }
 
 const shortHash = (value: string): string => sha256Hex(utf8(value)).slice(0, 16)
 
-/** A vault's id, derived from its owner key: the `<id>` in `vaults/<id>/`. */
+/** A vault's id, derived from its owner key. */
 export const vaultIdOf = (ownerSignPublic: string): string => shortHash(ownerSignPublic)
 
 /** The nearest `.typevault/` holding an initialized vault, from `from` up to the filesystem root. */
@@ -82,19 +80,7 @@ export function findLocalVault(from: string): string | undefined {
   }
 }
 
-/** The local layout for a found `.typevault/`. Its owner.json only names the private directory here; it is verified on open. */
-export function openLocalLayout(dir: string, env: Env = process.env): Layout {
-  const owner = z.object({ signPublic: z.string() }).parse(JSON.parse(readFileSync(join(dir, 'owner.json'), 'utf8')))
-  return localLayout(dir, owner.signPublic, env)
-}
-
-function build(
-  scope: Layout['scope'],
-  root: string,
-  vault: string,
-  keys = join(root, 'keys'),
-  trustFile = join(keys, 'trust.json'),
-): Layout {
+function build(scope: Layout['scope'], root: string, vault: string): Layout {
   const audit = join(root, 'audit')
   const run = join(root, 'run')
   return {
@@ -105,6 +91,9 @@ function build(
     tiersDir: join(vault, 'tiers'),
     ownerFile: join(vault, 'owner.json'),
     tiersFile: join(vault, 'tiers.json'),
+    membersFile: join(vault, 'members.json'),
+    membersDir: join(vault, 'members'),
+    ownerWrapsDir: join(vault, 'owner'),
     signersFile: join(vault, 'signers.json'),
     ceilingsFile: join(vault, 'ceilings.json'),
     // Named by where the log lives, never by the log itself: a log rewritten from its first record keeps its anchors.
@@ -112,16 +101,14 @@ function build(
     legacyAnchorsFile: join(vault, 'audit-anchors.jsonl'),
     // Staging lives in run/, which is never committed: a txn dir from git must not be able to steer deletes.
     txnDir: join(run, 'txn'),
-    keys,
-    ownerKey: join(keys, 'owner.key'),
-    tierKeys: join(keys, 'tiers'),
-    trustFile,
+    trustFile: join(root, 'trust.json'),
     audit,
     auditLog: join(audit, 'log.jsonl'),
     run,
     lockFile: join(run, 'lock'),
     auditLock: join(run, 'audit.lock'),
     grantsFile: join(run, 'grants.json'),
+    sessionFile: join(run, 'session.token'),
     revisionsFile: join(run, 'revisions.json'),
     agentSocket: join(run, 'agent.sock'),
     adminSocket: (ceiling: string) => join(run, `admin-${ceiling}.sock`),

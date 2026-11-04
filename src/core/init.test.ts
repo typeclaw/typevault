@@ -3,13 +3,18 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-import { initLocalVault, initVault } from './init'
+import { createIdentity } from './identity'
+import { type Founder, founderOf, initLocalVault, initVault } from './init'
 import { layoutOf } from './layout'
+import { Vault } from './vault'
 
 function plantOldVault(vaultDir: string): void {
   mkdirSync(vaultDir, { recursive: true })
   writeFileSync(join(vaultDir, 'operator.json'), '{}')
 }
+
+const founder = async (kind: 'human' | 'machine'): Promise<Founder> =>
+  founderOf((await createIdentity('alice', kind, kind === 'human' ? 'correct horse' : undefined)).identity)
 
 let base: string
 
@@ -18,20 +23,36 @@ beforeEach(() => {
 })
 afterEach(() => rmSync(base, { recursive: true, force: true }))
 
-it('keeps a project vault committable and its keys under the typevault root', async () => {
-  const layout = await initLocalVault(join(base, 'project', '.typevault'), { XDG_CONFIG_HOME: join(base, 'config') })
+it('keeps every key of a project vault inside it, sealed, with only checkout state outside', async () => {
+  // when a human founds a project vault
+  const env = { XDG_CONFIG_HOME: join(base, 'config') }
+  const { layout } = await initLocalVault(join(base, 'project', '.typevault'), await founder('human'), env)
 
+  // then the committable part holds the owner wrap and the founder's sealed key, and nothing else is shared
   expect(layout.vault).toBe(join(base, 'project', '.typevault'))
-  expect(layout.keys.startsWith(join(base, 'config', 'typevault', 'vaults'))).toBe(true)
   expect(layout.root.startsWith(join(base, 'config', 'typevault', 'checkouts'))).toBe(true)
   expect(readdirSync(layout.vault).sort()).toEqual([
     'ceilings.json',
     'entries',
+    'members',
+    'members.json',
+    'owner',
     'owner.json',
     'signers.json',
     'tiers.json',
   ])
-  expect(readdirSync(layout.keys)).toContain('owner.key')
+  expect(readdirSync(join(layout.vault, 'owner'))).toEqual(['alice.age'])
+  expect(readdirSync(layout.membersDir)).toEqual(['alice.key'])
+  expect(existsSync(join(base, 'config', 'typevault', 'vaults'))).toBe(false)
+})
+
+it('lists the founder as the only member, an owner', async () => {
+  const { layout } = await initVault(join(base, 'global'), await founder('machine'))
+
+  const { members } = (await Vault.open(layout, [], {})).state
+
+  expect(Object.keys(members)).toEqual(['alice'])
+  expect(members['alice']).toMatchObject({ kind: 'machine', owner: true, tiers: [] })
 })
 
 it('refuses to init over an old-format project vault without writing anything', async () => {
@@ -40,7 +61,7 @@ it('refuses to init over an old-format project vault without writing anything', 
   plantOldVault(dir)
 
   // when
-  const init = initLocalVault(dir, { XDG_CONFIG_HOME: join(base, 'config') })
+  const init = initLocalVault(dir, await founder('machine'), { XDG_CONFIG_HOME: join(base, 'config') })
 
   // then
   await expect(init).rejects.toThrow('old-format vault')
@@ -54,7 +75,7 @@ it('refuses to init over an old-format global vault without writing anything', a
   plantOldVault(dirname(ownerFile))
 
   // when
-  const init = initVault(root)
+  const init = initVault(root, await founder('machine'))
 
   // then
   await expect(init).rejects.toThrow('old-format vault')

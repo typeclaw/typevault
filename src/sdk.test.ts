@@ -9,7 +9,8 @@ import { createRedactor } from 'typevault/redact'
 import { Admin } from './core/admin'
 import type { SecretKey } from './core/crypto'
 import { signerOf } from './core/entries'
-import { initVault } from './core/init'
+import { createIdentity, writeIdentity } from './core/identity'
+import { founderOf, initVault } from './core/init'
 import { layoutOf } from './core/layout'
 import { Vault } from './core/vault'
 import { type RunningDaemon, startDaemon } from './daemon/daemon'
@@ -19,10 +20,17 @@ let owner: SecretKey
 let daemon: RunningDaemon
 const n = parseEntryName
 
+/** A vault owned by a machine identity kept in `root`, the way a CI host or agent box holds its key. */
+async function machineVault(root: string): Promise<SecretKey> {
+  const { identity } = await createIdentity('owner', 'machine')
+  writeIdentity({ TYPEVAULT_DIR: root }, identity)
+  return (await initVault(root, founderOf(identity))).owner
+}
+
 beforeEach(async () => {
   // Short root: unix socket paths are limited to ~104 bytes.
   root = mkdtempSync('/tmp/tvs-')
-  owner = await initVault(root)
+  owner = await machineVault(root)
   const vault = await Vault.open(layoutOf(root), [owner], {})
   const admin = new Admin(vault)
   await admin.addTier('member')
@@ -36,7 +44,7 @@ beforeEach(async () => {
     { name: n('stripe'), type: 'api_key', fields: { key: 'sk_live_x' }, tier: 'trusted' },
     signerOf(owner),
   )
-  daemon = await startDaemon({ layout: layoutOf(root), env: { TYPEVAULT_DIR: root } })
+  daemon = await startDaemon({ layout: layoutOf(root), env: { TYPEVAULT_DIR: root }, keys: [owner] })
 })
 
 afterEach(async () => {
@@ -75,7 +83,7 @@ describe('sdk', () => {
     // given a global vault under XDG_CONFIG_HOME and no project vault around
     const config = mkdtempSync('/tmp/tvx-')
     const globalRoot = join(config, 'typevault')
-    const key = await initVault(globalRoot)
+    const key = await machineVault(globalRoot)
     const vault = await Vault.open(layoutOf(globalRoot), [key], {})
     await new Admin(vault).addTier('member')
     await vault.put({ name: n('openai'), type: 'api_key', fields: { key: 'sk-global' }, tier: 'member' }, signerOf(key))

@@ -1,47 +1,137 @@
 import { afterEach, beforeEach, expect, it } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { Admin } from '../../core/admin'
-import { decodeSecretKey } from '../../core/crypto'
-import { initVault } from '../../core/init'
-import { layoutOf } from '../../core/layout'
-import { Vault } from '../../core/vault'
-import { findLayout } from '../context'
-
 const CLI = join(import.meta.dir, '..', 'index.ts')
+const PASSWORD = 'correct horse battery staple'
+
+type Run = { readonly code: number; readonly stdout: string; readonly stderr: string }
 
 let base: string
+let project: string
+let owner: Record<string, string>
 
-beforeEach(() => {
-  base = realpathSync(mkdtempSync(join(tmpdir(), 'typevault-cli-init-')))
-})
-afterEach(() => rmSync(base, { recursive: true, force: true }))
-
-it('creates the starter tier with the new vault owner key, even with an inherited TYPEVAULT_KEY', async () => {
-  // given a tier key for some other vault in the environment
-  const otherRoot = join(base, 'other')
-  const otherOwner = await initVault(otherRoot)
-  const other = new Admin(await Vault.open(layoutOf(otherRoot), [otherOwner], {}))
-  await other.addTier('member')
-  const env = { PATH: process.env['PATH'] ?? '', XDG_CONFIG_HOME: join(base, 'config') }
-  const project = join(base, 'project')
-  mkdirSync(project)
-
-  // when a project vault is initialized
-  const proc = Bun.spawn([process.execPath, CLI, 'init'], {
+async function cli(args: readonly string[], env: Record<string, string>, stdin = ''): Promise<Run> {
+  const proc = Bun.spawn([process.execPath, CLI, ...args], {
     cwd: project,
-    env: { ...env, TYPEVAULT_KEY: await other.exportKey('member') },
+    env,
+    stdin: new TextEncoder().encode(stdin),
     stdout: 'pipe',
     stderr: 'pipe',
   })
-  const [code, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()])
+  const [code, stdout, stderr] = await Promise.all([
+    proc.exited,
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ])
+  return { code, stdout, stderr }
+}
 
-  // then it succeeds and the new vault holds the default tier
-  expect({ code, stderr: code === 0 ? '' : stderr }).toEqual({ code: 0, stderr: '' })
-  const layout = findLayout(env, project)
-  if (layout === undefined) throw new Error('no vault was created')
-  const owner = decodeSecretKey(readFileSync(layout.ownerKey, 'utf8'))
-  expect(Object.keys((await Vault.open(layout, [owner], env)).state.tiers)).toEqual(['default'])
+const succeeds = (run: Run): Run => {
+  expect({ code: run.code, stderr: run.code === 0 ? '' : run.stderr }).toEqual({ code: 0, stderr: '' })
+  return run
+}
+
+beforeEach(async () => {
+  // Short root: the daemon's unix socket path is limited to ~104 bytes.
+  base = realpathSync(mkdtempSync('/tmp/tvc-'))
+  project = join(base, 'p')
+  mkdirSync(project)
+  owner = { PATH: process.env['PATH'] ?? '', XDG_CONFIG_HOME: join(base, 'alice') }
+  const init = succeeds(await cli(['init', '--name', 'alice', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
+  expect(init.stderr).toContain('TVSK-')
+})
+
+afterEach(async () => {
+  await cli(['lock'], owner)
+  rmSync(base, { recursive: true, force: true })
+})
+
+it('keeps a human-owned vault locked until its owner unlocks it, and locks it again', async () => {
+  // given a fresh vault: commands from a non-terminal (an agent) can't ask for the password
+  const locked = await cli(['set', 'tv://openai', '--type', 'api_key', '--stdin'], owner, 'sk-test-1')
+  expect({ code: locked.code, stderr: locked.stderr }).toEqual({
+    code: 1,
+    stderr: 'typevault: the vault is locked: ask a human to run `typevault unlock`\n',
+  })
+
+  // when the owner unlocks it
+  succeeds(await cli(['unlock', '--for', '10m', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
+
+  // then commands go through the session until it is locked again
+  succeeds(await cli(['set', 'tv://openai', '--type', 'api_key', '--stdin'], owner, 'sk-test-1'))
+  expect(JSON.parse(succeeds(await cli(['ls', '--json'], owner)).stdout)).toMatchObject([{ name: 'openai' }])
+  succeeds(await cli(['lock'], owner))
+  expect((await cli(['ls'], owner)).stderr).toContain('the vault is locked')
+})
+
+it('refuses to unlock with the wrong password', async () => {
+  const run = await cli(['unlock', '--vault-password-stdin'], owner, 'wrong\n')
+
+  expect({ code: run.code, stderr: run.stderr }).toEqual({
+    code: 1,
+    stderr: 'typevault: wrong password or Secret Key\n',
+  })
+})
+
+it('lets a machine member that joined read its tier without any password', async () => {
+  // given a secret in the default tier
+  succeeds(await cli(['unlock', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
+  succeeds(await cli(['set', 'tv://openai', '--type', 'api_key', '--stdin'], owner, 'sk-test-1'))
+
+  // when a machine joins and the owner adds it with the line join printed
+  const machine = { PATH: owner['PATH'] ?? '', XDG_CONFIG_HOME: join(base, 'ci') }
+  const joined = succeeds(await cli(['join', '--machine', '--name', 'ci'], machine))
+  const publicKey = joined.stdout.split(' ').find((word) => word.startsWith('tvp1:')) ?? ''
+  const added = ['member', 'add', 'ci', publicKey, '--tier', 'default', '--vault-password-stdin']
+  succeeds(await cli(added, owner, `${PASSWORD}\n`))
+
+  // then the machine reads the secret directly
+  const read = succeeds(await cli(['get', 'tv://openai', '--reveal'], machine))
+  expect(read.stdout).toBe('sk-test-1\n')
+})
+
+it('bulk-loads nothing for an owner session, and what --only names', async () => {
+  // given an owner session and a secret in the default tier
+  succeeds(await cli(['unlock', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
+  succeeds(await cli(['set', 'tv://openai', '--type', 'api_key', '--stdin'], owner, 'sk-test-1'))
+  const length = ['sh', '-c', 'echo ${#OPENAI_KEY}']
+
+  // then an owner holds no tier directly, as in direct mode: only --only loads it
+  expect(succeeds(await cli(['run', '--', ...length], owner)).stdout).toBe('0\n')
+  expect(succeeds(await cli(['run', '--only', 'tv://openai', '--', ...length], owner)).stdout).toBe('9\n')
+})
+
+it.each([
+  [
+    'the sealed copy',
+    (vault: string, outside: string) => {
+      rmSync(join(vault, 'members', 'alice.key'))
+      symlinkSync(outside, join(vault, 'members', 'alice.key'))
+    },
+  ],
+  [
+    'its directory',
+    (vault: string, outside: string) => {
+      const dir = join(base, 'elsewhere')
+      mkdirSync(dir)
+      symlinkSync(outside, join(dir, 'alice.key'))
+      rmSync(join(vault, 'members'), { recursive: true })
+      symlinkSync(dir, join(vault, 'members'))
+    },
+  ],
+])('refuses to unlock through a symlinked %s, leaving the target untouched', async (_, plant) => {
+  // given the committed sealed copy redirected to a file outside the vault, and a password change to sync
+  const outside = join(base, 'outside.txt')
+  writeFileSync(outside, 'keep me')
+  succeeds(await cli(['passwd', '--vault-password-stdin'], owner, `${PASSWORD}\nnew password\n`))
+  const vault = join(project, '.typevault')
+  plant(vault, outside)
+
+  // when the owner unlocks
+  const run = await cli(['unlock', '--vault-password-stdin'], owner, 'new password\n')
+
+  // then it is refused and the outside file keeps its content
+  expect({ code: run.code, refused: run.stderr.includes('is a symlink') }).toEqual({ code: 1, refused: true })
+  expect(readFileSync(outside, 'utf8')).toBe('keep me')
 })
