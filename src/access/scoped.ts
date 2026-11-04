@@ -203,13 +203,20 @@ export class ScopedVault implements Access {
     return toSummary(valueOf(stored))
   }
 
-  async remove(name: EntryName, tier?: string): Promise<void> {
-    if (tier === undefined) await this.#find(name)
-    else if (!allowsEntry(this.#chain, this.#vault.state, tier, name)) {
-      throw new TypeVaultError('not_found', `no entry named ${name}`)
-    }
-    await this.#vault.remove(name, tier)
-    await this.#audit({ action: 'remove', entries: [name], ...(tier === undefined ? {} : { tiers: [tier] }) })
+  // The scope check and the delete resolve the name under one exclusive lock: otherwise a copy another process
+  // writes in between (say in a tier above this scope) is what the delete resolves to, not the checked one.
+  remove(name: EntryName, tier?: string): Promise<void> {
+    return withLock(this.#vault.layout.lockFile, 'exclusive', async () => {
+      if (tier === undefined) await this.#find(name)
+      else {
+        this.#vault.refresh()
+        if (!allowsEntry(this.#chain, this.#vault.state, tier, name)) {
+          throw new TypeVaultError('not_found', `no entry named ${name}`)
+        }
+      }
+      await this.#vault.remove(name, tier)
+      await this.#audit({ action: 'remove', entries: [name], ...(tier === undefined ? {} : { tiers: [tier] }) })
+    })
   }
 
   async move(from: EntryName, to: EntryName): Promise<void> {
