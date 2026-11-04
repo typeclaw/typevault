@@ -3,7 +3,7 @@ import { afterAll, afterEach, expect, test } from 'bun:test'
 import { Decrypter, generateIdentity, identityToRecipient } from 'age-encryption'
 
 import { TypeVaultError } from '../core/errors'
-import { parseEntryName } from '../core/naming'
+import { parseEntryName, type Preset } from '../core/naming'
 import { decodePayload } from '../core/payload'
 import { startPromptServer, type PromptServer } from './index'
 
@@ -45,7 +45,7 @@ afterEach(async () => {
 })
 afterAll(() => browser?.close())
 
-async function openPage() {
+async function openPage(preset: Preset | null = 'password') {
   const current = browser
   if (current === undefined) throw new TypeVaultError('unavailable', 'WebView is unavailable')
   const identities = await Promise.all([generateIdentity(), generateIdentity()])
@@ -53,7 +53,7 @@ async function openPage() {
   server = await startPromptServer()
   const handle = server.open({
     name: 'stripe',
-    type: 'password',
+    ...(preset === null ? {} : { preset }),
     tier: 'trusted',
     reason: 'Set up the integration.',
     requester: 'test-grant',
@@ -67,7 +67,7 @@ async function openPage() {
   )
   await current.navigate(handle.url)
   await current.evaluate(`new Promise((resolve, reject) => {
-    const ready = () => document.querySelector('#field-password') !== null;
+    const ready = () => document.querySelector('#fields input,#fields textarea') !== null;
     if (ready()) { resolve(true); return; }
     const timeout = setTimeout(() => { observer.disconnect(); reject(new TypeError('Fields did not render')); }, 10000);
     const observer = new MutationObserver(() => {
@@ -78,7 +78,10 @@ async function openPage() {
   return { current, identities, handle, outcome, server }
 }
 
-async function submitPage(current: BrowserView): Promise<unknown> {
+async function submitPage(
+  current: BrowserView,
+  values: Readonly<Record<string, string>> = { username: 'test-user', password: 'test-browser-secret' },
+): Promise<unknown> {
   return current.evaluate(`new Promise((resolve, reject) => {
     const timeout = setTimeout(() => { observer.disconnect(); reject(new TypeError('Submission did not settle')); }, 10000);
     const finish = (state) => { clearTimeout(timeout); observer.disconnect(); resolve(state); };
@@ -87,8 +90,7 @@ async function submitPage(current: BrowserView): Promise<unknown> {
       else if (document.querySelector('#status').textContent) finish('error');
     });
     observer.observe(document.body, { childList: true, subtree: true, attributes: true });
-    document.querySelector('#field-username').value = 'test-user';
-    document.querySelector('#field-password').value = 'test-browser-secret';
+    for (const [name, value] of Object.entries(${JSON.stringify(values)})) document.getElementById('field-' + name).value = value;
     document.querySelector('form').requestSubmit();
   })`)
 }
@@ -107,8 +109,10 @@ test.skipIf(browser === undefined)(
       expect(payload).toEqual({
         v: 1,
         name: parseEntryName('stripe'),
-        type: 'password',
-        fields: { username: 'test-user', password: 'test-browser-secret' },
+        fields: {
+          username: { type: 'text' as const, value: 'test-user' },
+          password: { type: 'secret' as const, value: 'test-browser-secret' },
+        },
         tags: [],
         created: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/),
         rotated: payload.created,
@@ -133,3 +137,26 @@ test.skipIf(browser === undefined)('expired submission shows an error without cl
   })`),
   ).toEqual({ successHidden: true, password: 'test-browser-secret', submitDisabled: false })
 })
+
+test.skipIf(browser === undefined)('browser keeps the line breaks of a note', async () => {
+  const { current, identities, handle } = await openPage('note')
+  expect(await submitPage(current, { $default: 'line one\nline two' })).toBe('success')
+  const decrypter = new Decrypter()
+  for (const identity of identities) decrypter.addIdentity(identity)
+  const payload = decodePayload(await decrypter.decrypt(await handle.done))
+  expect(payload.fields['$default']).toEqual({ type: 'secret', value: 'line one\nline two' })
+})
+
+for (const preset of [null, 'oauth'] as const) {
+  test.skipIf(browser === undefined)(`browser stores the default field for preset ${preset ?? 'none'}`, async () => {
+    const { current, identities, handle } = await openPage(preset)
+    const value = preset === 'oauth' ? { access_token: 'test-access', refresh_token: 'test-refresh' } : 'test-secret'
+    const typed = typeof value === 'string' ? value : JSON.stringify(value)
+    expect(await submitPage(current, { $default: typed })).toBe('success')
+    const decrypter = new Decrypter()
+    for (const identity of identities) decrypter.addIdentity(identity)
+    const payload = decodePayload(await decrypter.decrypt(await handle.done))
+    expect(payload.fields['$default']?.type).toBe(preset === 'oauth' ? 'oauth' : 'secret')
+    expect(payload.fields['$default']?.value).toEqual(value)
+  })
+}

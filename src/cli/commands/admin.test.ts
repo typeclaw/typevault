@@ -49,7 +49,7 @@ afterEach(async () => {
 
 it('keeps a human-owned vault locked until its owner unlocks it, and locks it again', async () => {
   // given a fresh vault: commands from a non-terminal (an agent) can't ask for the password
-  const locked = await cli(['set', 'tv://openai', '--type', 'api_key', '--stdin'], owner, 'sk-test-1')
+  const locked = await cli(['set', 'tv://openai', '--preset', 'api_key', '--stdin'], owner, 'sk-test-1')
   expect({ code: locked.code, stderr: locked.stderr }).toEqual({
     code: 1,
     stderr: 'typevault: the vault is locked: ask a human to run `typevault unlock`\n',
@@ -59,7 +59,7 @@ it('keeps a human-owned vault locked until its owner unlocks it, and locks it ag
   succeeds(await cli(['unlock', '--for', '10m', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
 
   // then commands go through the session until it is locked again
-  succeeds(await cli(['set', 'tv://openai', '--type', 'api_key', '--stdin'], owner, 'sk-test-1'))
+  succeeds(await cli(['set', 'tv://openai', '--preset', 'api_key', '--stdin'], owner, 'sk-test-1'))
   expect(JSON.parse(succeeds(await cli(['ls', '--json'], owner)).stdout)).toMatchObject([{ name: 'openai' }])
   succeeds(await cli(['lock'], owner))
   expect((await cli(['ls'], owner)).stderr).toContain('the vault is locked')
@@ -77,7 +77,7 @@ it('refuses to unlock with the wrong password', async () => {
 it('lets a machine member that joined read its tier without any password', async () => {
   // given a secret in the default tier
   succeeds(await cli(['unlock', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
-  succeeds(await cli(['set', 'tv://openai', '--type', 'api_key', '--stdin'], owner, 'sk-test-1'))
+  succeeds(await cli(['set', 'tv://openai', '--preset', 'api_key', '--stdin'], owner, 'sk-test-1'))
 
   // when a machine joins and the owner adds it with the line join printed
   const machine = { PATH: owner['PATH'] ?? '', XDG_CONFIG_HOME: join(base, 'ci') }
@@ -94,8 +94,8 @@ it('lets a machine member that joined read its tier without any password', async
 it('bulk-loads nothing for an owner session, and what --only names', async () => {
   // given an owner session and a secret in the default tier
   succeeds(await cli(['unlock', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
-  succeeds(await cli(['set', 'tv://openai', '--type', 'api_key', '--stdin'], owner, 'sk-test-1'))
-  const length = ['sh', '-c', 'echo ${#OPENAI_KEY}']
+  succeeds(await cli(['set', 'tv://openai', '--preset', 'api_key', '--stdin'], owner, 'sk-test-1'))
+  const length = ['sh', '-c', 'echo ${#OPENAI}']
 
   // then an owner holds no tier directly, as in direct mode: only --only loads it
   expect(succeeds(await cli(['run', '--', ...length], owner)).stdout).toBe('0\n')
@@ -158,6 +158,6 @@ it('replaces a daemon that holds no session when its owner unlocks', async () =>
 
   // then the session replaced that daemon, and the owner's commands go through it
   expect(unlocked.stdout).toContain('unlocked vault')
-  succeeds(await cli(['set', 'tv://openai', '--type', 'api_key', '--stdin'], owner, 'sk-test-1'))
+  succeeds(await cli(['set', 'tv://openai', '--preset', 'api_key', '--stdin'], owner, 'sk-test-1'))
   expect(JSON.parse(succeeds(await cli(['ls', '--json'], owner)).stdout)).toMatchObject([{ name: 'openai' }])
 }, 30_000)

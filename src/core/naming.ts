@@ -1,25 +1,22 @@
 import { TypeVaultError } from './errors'
 
-export const ENTRY_TYPES = {
-  password: { fields: ['username', 'password', 'totp', 'url'], primary: 'password' },
-  api_key: { fields: ['key'], primary: 'key' },
-  oauth: {
-    fields: ['access_token', 'refresh_token', 'expires_at', 'token_url', 'client_id', 'client_secret'],
-    primary: 'access_token',
-  },
-  ssh: { fields: ['private_key', 'public_key'], primary: 'private_key' },
-  totp: { fields: ['seed'], primary: 'seed' },
-  note: { fields: ['text'], primary: 'text' },
-} as const
-
-export type EntryType = keyof typeof ENTRY_TYPES
-export const ENTRY_TYPE_NAMES: readonly string[] = Object.keys(ENTRY_TYPES)
-
-export const isEntryType = (value: string): value is EntryType => Object.hasOwn(ENTRY_TYPES, value)
-
-export function parseEntryType(value: string): EntryType {
-  if (isEntryType(value)) return value
-  throw new TypeVaultError('invalid', `unknown type "${value}" (expected one of: ${ENTRY_TYPE_NAMES.join(', ')})`)
+export type FieldType = 'secret' | 'text' | 'totp' | 'oauth'
+export type Field =
+  | { readonly type: 'secret' | 'text' | 'totp'; readonly value: string }
+  | { readonly type: 'oauth'; readonly value: Readonly<Record<string, string>> }
+export const PRESETS = {
+  password: { fields: { username: 'text', password: 'secret', totp: 'totp', url: 'text' }, input: 'password' },
+  api_key: { fields: { $default: 'secret' }, input: '$default' },
+  oauth: { fields: { $default: 'oauth' }, input: '$default' },
+  ssh: { fields: { private_key: 'secret', public_key: 'text' }, input: 'private_key' },
+  totp: { fields: { $default: 'totp' }, input: '$default' },
+  note: { fields: { $default: 'secret' }, input: '$default' },
+} as const satisfies Record<string, { readonly fields: Readonly<Record<string, FieldType>>; readonly input: string }>
+export type Preset = keyof typeof PRESETS
+export const isPreset = (value: string): value is Preset => Object.hasOwn(PRESETS, value)
+export function parsePreset(value: string): Preset {
+  if (isPreset(value)) return value
+  throw new TypeVaultError('invalid', `unknown preset "${value}" (expected one of: ${Object.keys(PRESETS).join(', ')})`)
 }
 
 export type EntryName = string & { readonly __brand: 'EntryName' }
@@ -61,18 +58,22 @@ export type EntryRef = { readonly name: EntryName; readonly field: string | unde
 const MAX_FIELD_LENGTH = 64
 
 /**
- * A type lists the fields it suggests, but an entry may hold any field: up to 64 characters, no surrounding
+ * An entry may hold any field: up to 64 characters, no surrounding
  * whitespace, no control characters and no `=` (which `--field name=value` splits on). Case is kept.
  */
 export const isFieldName = (field: string): boolean =>
-  field !== '' && field.length <= MAX_FIELD_LENGTH && field.trim() === field && !/[\p{Cc}=]/u.test(field)
+  (!field.startsWith('$') || field === '$default') &&
+  field !== '' &&
+  field.length <= MAX_FIELD_LENGTH &&
+  field.trim() === field &&
+  !/[\p{Cc}=]/u.test(field)
 
 /** Parses `[tv://]<service>[/<account>][#<field>]`. The field is everything after the first `#`. */
 export function parseEntryRef(input: string): EntryRef {
   const hash = input.indexOf('#')
   if (hash === -1) return { name: parseEntryName(input), field: undefined }
   const field = input.slice(hash + 1)
-  if (!isFieldName(field)) throw new TypeVaultError('invalid', `invalid field "${field}"`)
+  if (field === '$default' || !isFieldName(field)) throw new TypeVaultError('invalid', `invalid field "${field}"`)
   return { name: parseEntryName(input.slice(0, hash)), field }
 }
 
@@ -83,22 +84,74 @@ export function findField(fields: Readonly<Record<string, unknown>>, field: stri
   return matches.length === 1 ? matches[0] : undefined
 }
 
-/**
- * Fields known to hold no secret. Every other field, custom ones included, is never accepted on the command line,
- * where `ps` and shell history see it.
- */
-const PLAIN_FIELDS: ReadonlySet<string> = new Set([
-  'username',
-  'url',
-  'token_url',
-  'client_id',
-  'expires_at',
-  'public_key',
-])
-export const isSecretField = (field: string): boolean => !PLAIN_FIELDS.has(field)
+/** The field a reference without `#field` reads: `$default`, else the only field, else none. */
+export function defaultFieldOf(fields: Readonly<Record<string, unknown>>): string | undefined {
+  if (Object.hasOwn(fields, '$default')) return '$default'
+  const names = Object.keys(fields)
+  return names.length === 1 ? names[0] : undefined
+}
 
-export const fieldsOf = (type: EntryType): readonly string[] => ENTRY_TYPES[type].fields
-export const primaryField = (type: EntryType): string => ENTRY_TYPES[type].primary
+export function defaultField(fields: Readonly<Record<string, unknown>>, name = 'entry'): string {
+  const field = defaultFieldOf(fields)
+  if (field !== undefined) return field
+  const names = Object.keys(fields)
+  throw new TypeVaultError(
+    'not_found',
+    names.length === 0 ? `${name} has no fields` : `${name} has several fields, name one: ${names.join(', ')}`,
+  )
+}
+
+/**
+ * The field `wanted` names, else a part of a compound field: `oauth.refresh_token`, or `refresh_token` alone for a
+ * part of the default field (which a ref can't name, since `#$default` is refused).
+ */
+export function resolveField(fields: Readonly<Record<string, Field>>, wanted: string): Field | undefined {
+  const key = findField(fields, wanted)
+  if (key !== undefined) return fields[key]
+  const dot = wanted.lastIndexOf('.')
+  const parent = dot === -1 ? defaultFieldOf(fields) : findField(fields, wanted.slice(0, dot))
+  const field = parent === undefined ? undefined : fields[parent]
+  if (field === undefined) return undefined
+  switch (field.type) {
+    case 'oauth': {
+      const part = field.value[wanted.slice(dot + 1)]
+      return part === undefined ? undefined : { type: 'secret', value: part }
+    }
+    case 'secret':
+    case 'text':
+    case 'totp':
+      return undefined
+    default:
+      return assertNever(field)
+  }
+}
+export function fieldValue(field: Field): string {
+  switch (field.type) {
+    case 'oauth':
+      return field.value['access_token'] ?? ''
+    case 'secret':
+    case 'text':
+    case 'totp':
+      return field.value
+    default:
+      return assertNever(field)
+  }
+}
+export function fieldStrings(field: Field): readonly string[] {
+  switch (field.type) {
+    case 'oauth':
+      return Object.values(field.value)
+    case 'secret':
+    case 'text':
+    case 'totp':
+      return [field.value]
+    default:
+      return assertNever(field)
+  }
+}
+function assertNever(value: never): never {
+  throw new TypeVaultError('invalid', `unexpected field ${JSON.stringify(value)}`)
+}
 
 /**
  * `github/bot` + `password` becomes `GITHUB_BOT_PASSWORD`, and `Secret Access Key` becomes `..._SECRET_ACCESS_KEY`.
@@ -106,6 +159,7 @@ export const primaryField = (type: EntryType): string => ENTRY_TYPES[type].prima
  * through a `tv://` ref.
  */
 export function deriveEnvName(name: EntryName, field: string): string | undefined {
+  if (field === '$default') return name.toUpperCase().replace(/[/-]/g, '_')
   const suffix = field
     .normalize('NFKD')
     .replace(/\p{M}/gu, '')

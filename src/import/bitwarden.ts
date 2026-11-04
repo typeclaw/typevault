@@ -42,7 +42,7 @@ export function parseBitwarden(text: string): ImportResult {
         const url = item.login?.uris?.find((uri) => uri.uri)?.uri ?? undefined
         items.push({
           ...common,
-          type: 'password',
+          preset: 'password',
           fields: {
             username: item.login?.username ?? undefined,
             password: item.login?.password ?? undefined,
@@ -54,12 +54,12 @@ export function parseBitwarden(text: string): ImportResult {
         break
       }
       case 2:
-        items.push({ ...common, type: 'note', fields: { text: item.notes ?? undefined } })
+        items.push({ ...common, preset: 'note', fields: { $default: item.notes ?? undefined } })
         break
       case 5:
         items.push({
           ...common,
-          type: 'ssh',
+          preset: 'ssh',
           fields: {
             private_key: item.sshKey?.privateKey ?? undefined,
             public_key: item.sshKey?.publicKey ?? undefined,

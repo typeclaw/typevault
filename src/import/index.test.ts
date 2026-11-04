@@ -11,27 +11,27 @@ const cases: readonly {
   readonly source: ImportSource
   readonly text: string | Uint8Array
   readonly name: string
-  readonly type: string
+  readonly field: string
 }[] = [
-  { source: 'dotenv', text: 'API_KEY=hunter2', name: 'api-key', type: 'api_key' },
-  { source: 'typeclaw', text: 'TYPECLAW_SECRET_EXAMPLE=hunter2\nOTHER=ignored', name: 'example', type: 'password' },
+  { source: 'dotenv', text: 'API_KEY=hunter2', name: 'api-key', field: '$default' },
+  { source: 'typeclaw', text: 'TYPECLAW_SECRET_EXAMPLE=hunter2\nOTHER=ignored', name: 'example', field: '$default' },
   {
     source: 'csv',
     text: 'name,url,username,password\nExample,https://example.com,user@example.com,hunter2',
     name: 'example',
-    type: 'password',
+    field: 'password',
   },
   {
     source: 'lastpass',
     text: 'url,username,password,totp,extra,name,grouping,fav\nhttp://sn,,,,hunter2,Example,,0',
     name: 'example',
-    type: 'note',
+    field: '$default',
   },
   {
     source: 'bitwarden',
     text: '{"items":[{"type":2,"name":"Example","notes":"hunter2"}]}',
     name: 'example',
-    type: 'note',
+    field: '$default',
   },
   {
     source: '1password',
@@ -57,20 +57,20 @@ const cases: readonly {
       ),
     }),
     name: 'example',
-    type: 'note',
+    field: '$default',
   },
 ]
 
-test.each(cases)('dispatcher reads $source and leaves the source unchanged', async ({ source, text, name, type }) => {
+test.each(cases)('dispatcher reads $source and leaves the source unchanged', async ({ source, text, name, field }) => {
   const directory = await mkdtemp(join(tmpdir(), 'typevault-import-'))
   try {
     const path = join(directory, '.env')
     await writeFile(path, text)
     const before = await readFile(path)
     const result = await importFrom(source, { path: source === 'typeclaw' ? directory : path })
-    expect<readonly (readonly string[])[]>(result.entries.map((entry) => [entry.name, entry.type])).toEqual([
-      [name, type],
-    ])
+    expect<readonly (readonly string[])[]>(
+      result.entries.map((entry) => [entry.name, entry.fields[field]?.type ?? 'missing']),
+    ).toEqual([[name, 'secret']])
     expect(await readFile(path)).toEqual(before)
   } finally {
     await rm(directory, { recursive: true, force: true })

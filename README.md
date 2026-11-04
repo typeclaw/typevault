@@ -80,15 +80,15 @@ typevault init                                   # creates .typevault/ here with
 typevault unlock                                 # once per session (8h by default); your agents use it too
 
 # With one tier, set needs no --tier
-printf '%s' "$OPENAI_KEY" | typevault set tv://openai --type api_key --stdin
-typevault set tv://anthropic --type api_key        # from a terminal: type it in a one-time local page (--web)
-typevault set tv://github/bot --type password --field username=bot --stdin < password.txt
-echo '{"access_token":"…","refresh_token":"…"}' | typevault set tv://google --type oauth --stdin-json
+printf '%s' "$OPENAI_KEY" | typevault set tv://openai --preset api_key --stdin
+typevault set tv://anthropic --preset api_key        # from a terminal: type it in a one-time local page (--web)
+typevault set tv://github/bot --preset password --field username=bot --stdin < password.txt
+echo '{"access_token":"…","refresh_token":"…"}' | typevault set tv://google --preset oauth --stdin
 
 # Split reach once agents need different access
 typevault tier add trusted
 typevault tier include trusted default          # trusted reaches everything default reaches
-printf '%s' "$STRIPE_KEY" | typevault set tv://stripe --type api_key --tier trusted --stdin
+printf '%s' "$STRIPE_KEY" | typevault set tv://stripe --preset api_key --tier trusted --stdin
 
 # Hand an agent a grant instead of a key (served by your unlocked session's daemon)
 export TYPEVAULT_GRANT=$(typevault grant --tier default --label session:abc)
@@ -159,31 +159,35 @@ sealed to the owner key, which can't be rotated yet.
 
 `tv://<service>[/<account>][#<field>]`: `tv://openai`, `tv://github/bot#password`, `tv://github/personal#totp`.
 That is the canonical form. For convenience, `typevault://github/bot` and the bare `github/bot` work everywhere too.
-No environments, no domains, no tier in the name. Each type suggests fields, and an entry may add any other:
+No environments, no domains, no tier in the name.
 
-| Type       | Fields (default first)                                                       |
-| ---------- | ---------------------------------------------------------------------------- |
-| `password` | password, username, totp, url                                                |
-| `api_key`  | key                                                                          |
-| `oauth`    | access_token, refresh_token, expires_at, token_url, client_id, client_secret |
-| `ssh`      | private_key, public_key                                                      |
-| `totp`     | seed                                                                         |
-| `note`     | text                                                                         |
+Each field stores its own type: `secret` (sensitive string), `text` (public string), `totp` (seed or otpauth URI), or `oauth` (an object with `access_token` and optional `refresh_token`, `expires_at`, `token_url`, `client_id`, `client_secret`). OAuth reads yield the access token and refresh expired credentials when possible.
 
-A field name is anything up to 64 characters without `=`, control characters or surrounding spaces, kept as written:
+Presets only pre-fill fields at write time; no preset is stored:
+
+| Preset     | Fields                                                  | Single stdin input |
+| ---------- | ------------------------------------------------------- | ------------------ |
+| `password` | username(text), password(secret), totp(totp), url(text) | password           |
+| `api_key`  | $default(secret)                                        | $default           |
+| `oauth`    | $default(oauth)                                         | JSON via --stdin   |
+| `ssh`      | private_key(secret), public_key(text)                   | private_key        |
+| `totp`     | $default(totp)                                          | $default           |
+| `note`     | $default(secret)                                        | $default           |
+
+Without a preset, `set --stdin` stores `$default` (or overwrites the existing default field). Bare references choose `$default`, else the only field, else fail and list the fields. A login with several fields needs `#password` or another selector. `#$default` is rejected; use the bare name. OAuth parts use `#field.refresh_token`, or `#refresh_token` for the default field; an actual field with that name wins.
+
+Field names keep their case, with up to 64 characters and no `=`, controls or surrounding spaces. Names starting with `$` are reserved except `$default`:
 
 ```sh
-echo '{"key":"…","Webhook Secret":"…"}' | typevault set tv://stripe --type api_key --stdin-json
+echo '{"$default":"…","Webhook Secret":"…"}' | typevault set tv://stripe --preset api_key --stdin-json
 typevault get 'tv://stripe#Webhook Secret' --reveal   # an exact match, else the one field equal ignoring case
 ```
 
 Env names are derived: `tv://github/bot#password` becomes `GITHUB_BOT_PASSWORD` and `tv://stripe#Webhook Secret`
 becomes `STRIPE_WEBHOOK_SECRET`. A field with no Latin letter or digit gets no variable; reach it with a reference.
-Override the main field's name with `--env`.
-In `run`, TOTP fields carry the current code, never the seed; `typevault otp <name>` prints it for an entry with a
-seed (a `totp` entry, or a `password` entry whose `totp` field is set). Only `username`, `url`, `token_url`,
-`client_id`, `expires_at` and `public_key` are accepted as `--field` arguments; every other field, custom ones
-included, would land in `ps` and shell history, so pass it with `--stdin` or `--stdin-json`.
+The `$default` field uses the entry name alone: `tv://openai` becomes `OPENAI`. Override the default field's variable with `--env`.
+In `run`, TOTP fields carry the current code; `otp [ref]` prints a selected TOTP field, the default when typed TOTP, or the only TOTP field. `get` keeps the raw stored seed.
+`--field k=v` always writes a `text` field. Pass secrets through stdin or the browser. `--stdin-json` accepts strings or full `{"type":"secret","value":"…"}` objects. Updates merge existing fields and preserve their types; `--replace` replaces all fields.
 
 ### What `run` loads
 
@@ -205,7 +209,7 @@ unrelated tiers hold it, reads of that name fail until the owner keeps one: `typ
 Here the scheme is required: a bare `github/bot` stays a plain string.
 
 ```sh
-DATABASE_URL=tv://postgres/prod#url BOT_TOKEN=tv://github/bot typevault run -- ./deploy.sh
+DATABASE_URL=tv://postgres/prod#url BOT_TOKEN=tv://github/bot#password typevault run -- ./deploy.sh
 ```
 
 A reference names its entry exactly, so it resolves anything your grant reaches, like `--only <name>`. Loader
@@ -252,7 +256,7 @@ Processes under one OS user that can reach the same socket share its ceiling; pe
 ## Asking a human for a secret
 
 ```sh
-typevault request resend --type api_key --reason "send the weekly digest"
+typevault request resend --preset api_key --reason "send the weekly digest"
 ```
 
 It prints a one-time URL and a match code to give the human, then waits until they submit. The daemon serves the page
@@ -266,8 +270,8 @@ is never written to logs or shown to the model.
 - `typevault run` redacts its child's stdout and stderr by default.
 - `cmd | typevault redact` scrubs anything your grant has read.
 - `typevault scrub <files>` rewrites transcripts in place.
-- `typevault get` prints plain fields (`username`, `url`, ...) but refuses a secret field without `--reveal`;
-  `--json` shows secret fields as `<redacted>`. Prefer `run`.
+- `typevault get` prints `text` fields but refuses other field types without `--reveal`;
+  `--json` prints `{field: {type, value}}` with non-text values redacted. Prefer `run`.
 
 ## SDK
 

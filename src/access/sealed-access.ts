@@ -5,6 +5,7 @@ import { TypeVaultError } from '../core/errors'
 import type { Layout } from '../core/layout'
 import { type EntryName, matchesOnly } from '../core/naming'
 import { Vault } from '../core/vault'
+import { secretValues } from './env'
 import { allowsEntry } from './scope'
 import { type SealedBundle, sealedSigningSecret } from './sealed'
 import { type Access, type EntrySummary, type EntryValue, entryInputOf, type SetInput, toSummary } from './types'
@@ -90,7 +91,6 @@ export class SealedAccess implements Access {
     const { envelope, payload } = stored
     return {
       name: payload.name,
-      type: payload.type,
       tier,
       rev: envelope.rev,
       tags: payload.tags,
@@ -107,7 +107,7 @@ export class SealedAccess implements Access {
 
   async move(from: EntryName, to: EntryName): Promise<void> {
     const entry = this.#entry(from)
-    await this.set({ name: to, type: entry.type, fields: entry.fields, tier: entry.tier, tags: entry.tags })
+    await this.set({ name: to, fields: entry.fields, tier: entry.tier, tags: entry.tags })
     await this.remove(from)
   }
 
@@ -116,6 +116,6 @@ export class SealedAccess implements Access {
   }
 
   async readValues(): Promise<readonly string[]> {
-    return this.#bundle.entries.flatMap((value) => Object.values(value.fields).filter((field) => field !== ''))
+    return secretValues(this.#bundle.entries)
   }
 }

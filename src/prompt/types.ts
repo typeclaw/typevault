@@ -1,8 +1,8 @@
-import type { EntryType } from '../core/naming'
+import type { Preset } from '../core/naming'
 
 export type PromptView = {
   readonly name: string
-  readonly type: EntryType
+  readonly preset?: Preset | undefined
   readonly tier: string
   readonly reason: string
   readonly requester: string

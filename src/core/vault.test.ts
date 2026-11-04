@@ -29,8 +29,8 @@ const keyOf = async (tier: string): Promise<SecretKey> => {
 }
 const stripe = {
   name: parseEntryName('stripe'),
-  type: 'api_key',
-  fields: { key: 'sk_test_123' },
+
+  fields: { key: { type: 'secret' as const, value: 'sk_test_123' } },
   tier: 'member',
 } as const
 
@@ -51,7 +51,9 @@ describe('tier access', () => {
   it('lets a tier key read entries of the tiers it includes, transitively', async () => {
     await (await open([owner])).put(stripe, signerOf(owner))
     const trusted = await open([await keyOf('trusted')])
-    expect((await trusted.find(stripe.name))?.payload.fields).toEqual({ key: 'sk_test_123' })
+    expect((await trusted.find(stripe.name))?.payload.fields).toEqual({
+      key: { type: 'secret' as const, value: 'sk_test_123' },
+    })
   })
 
   it('hides entries of tiers a key does not reach', async () => {
@@ -95,19 +97,37 @@ describe('integrity', () => {
 
   it('stores fields the entry type does not list, keeping their names as written', async () => {
     const vault = await open([owner])
-    await vault.put({ ...stripe, fields: { key: 'x', 'Webhook Secret': 'whsec' } }, signerOf(owner))
-    expect((await vault.find(stripe.name))?.payload.fields).toEqual({ key: 'x', 'Webhook Secret': 'whsec' })
+    await vault.put(
+      {
+        ...stripe,
+        fields: {
+          key: { type: 'secret' as const, value: 'x' },
+          'Webhook Secret': { type: 'secret' as const, value: 'whsec' },
+        },
+      },
+      signerOf(owner),
+    )
+    expect((await vault.find(stripe.name))?.payload.fields).toEqual({
+      key: { type: 'secret' as const, value: 'x' },
+      'Webhook Secret': { type: 'secret' as const, value: 'whsec' },
+    })
   })
 
   it.each(['', 'a=b', ' padded', 'line\nbreak', 'x'.repeat(65)])(
     'refuses to store the field name %p',
     async (field) => {
       const vault = await open([owner])
-      await expect(vault.put({ ...stripe, fields: { key: 'x', [field]: 'y' } }, signerOf(owner))).rejects.toMatchObject(
-        {
-          code: 'invalid',
-        },
-      )
+      await expect(
+        vault.put(
+          {
+            ...stripe,
+            fields: { key: { type: 'secret' as const, value: 'x' }, [field]: { type: 'secret' as const, value: 'y' } },
+          },
+          signerOf(owner),
+        ),
+      ).rejects.toMatchObject({
+        code: 'invalid',
+      })
     },
   )
 
@@ -116,9 +136,12 @@ describe('integrity', () => {
     await vault.put({ ...stripe, tier: 'trusted' }, signerOf(owner))
     const guestKey = await keyOf('guest')
     const guest = await open([guestKey])
-    await guest.put({ ...stripe, tier: 'guest', fields: { key: 'ATTACKER' } }, signerOf(guestKey))
+    await guest.put(
+      { ...stripe, tier: 'guest', fields: { key: { type: 'secret' as const, value: 'ATTACKER' } } },
+      signerOf(guestKey),
+    )
     await expect((await open([await keyOf('trusted')])).find(stripe.name)).resolves.toMatchObject({
-      payload: { fields: { key: 'sk_test_123' } },
+      payload: { fields: { key: { type: 'secret' as const, value: 'sk_test_123' } } },
     })
   })
 
@@ -126,7 +149,7 @@ describe('integrity', () => {
     const vault = await open([owner])
     const first = await vault.put(stripe, signerOf(owner))
     await vault.scan()
-    await vault.put({ ...stripe, fields: { key: 'sk_test_456' } }, signerOf(owner))
+    await vault.put({ ...stripe, fields: { key: { type: 'secret' as const, value: 'sk_test_456' } } }, signerOf(owner))
     await vault.scan()
     const file = join(root, 'vault', 'entries', `${first.envelope.id}.json`)
     writeFileSync(file, JSON.stringify(first.envelope))
@@ -140,19 +163,25 @@ describe('integrity', () => {
     await admin.addTier('ci')
     await vault.put(stripe, signerOf(owner))
     const ciKey = await keyOf('ci')
-    await (await open([ciKey])).put({ ...stripe, tier: 'ci', fields: { key: 'from-ci' } }, signerOf(ciKey))
+    await (
+      await open([ciKey])
+    ).put({ ...stripe, tier: 'ci', fields: { key: { type: 'secret' as const, value: 'from-ci' } } }, signerOf(ciKey))
     await expect(vault.find(stripe.name)).rejects.toMatchObject({ code: 'conflict' })
     await vault.remove(stripe.name, 'ci')
-    expect((await vault.find(stripe.name))?.payload.fields).toEqual({ key: 'sk_test_123' })
+    expect((await vault.find(stripe.name))?.payload.fields).toEqual({
+      key: { type: 'secret' as const, value: 'sk_test_123' },
+    })
   })
 
   it('refuses a deleted entry restored from history', async () => {
     const vault = await open([owner])
     const old = await vault.put(stripe, signerOf(owner))
     await vault.remove(stripe.name)
-    await vault.put({ ...stripe, fields: { key: 'sk_test_new' } }, signerOf(owner))
+    await vault.put({ ...stripe, fields: { key: { type: 'secret' as const, value: 'sk_test_new' } } }, signerOf(owner))
     writeFileSync(join(root, 'vault', 'entries', `${old.envelope.id}.json`), JSON.stringify(old.envelope))
-    expect((await vault.find(stripe.name))?.payload.fields).toEqual({ key: 'sk_test_new' })
+    expect((await vault.find(stripe.name))?.payload.fields).toEqual({
+      key: { type: 'secret' as const, value: 'sk_test_new' },
+    })
   })
 
   it('ignores a planted, malformed key wrap instead of failing every scan', async () => {
@@ -162,7 +191,9 @@ describe('integrity', () => {
     const wrap = join(root, 'vault', 'tiers', 'member', String(gen), 'owner.age')
     writeFileSync(wrap, await seal([vault.state.owner.recipient], utf8('tvk1:bm90IGpzb24')))
     const viaTrusted = await open([await keyOf('trusted')])
-    expect((await viaTrusted.find(stripe.name))?.payload.fields).toEqual({ key: 'sk_test_123' })
+    expect((await viaTrusted.find(stripe.name))?.payload.fields).toEqual({
+      key: { type: 'secret' as const, value: 'sk_test_123' },
+    })
     await expect((await open([owner])).scan()).resolves.toBeDefined()
   })
 
@@ -221,7 +252,10 @@ describe('rotation', () => {
     const vault = await open([owner])
     await vault.put(stripe, signerOf(owner))
     await admin.rotate('member')
-    const reset = await vault.put({ ...stripe, fields: { key: 'sk_test_456' } }, signerOf(owner))
+    const reset = await vault.put(
+      { ...stripe, fields: { key: { type: 'secret' as const, value: 'sk_test_456' } } },
+      signerOf(owner),
+    )
     expect(reset.payload.needsRotation).toBeUndefined()
   })
 

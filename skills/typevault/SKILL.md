@@ -18,7 +18,7 @@ Install: `bun add -g typevault`
   refuses secret fields unless you pass `--reveal`. `--reveal` and `otp` put the value in your transcript; use
   them only when nothing else works.
 - **Never put a secret on the command line.** Pass it on stdin (`--stdin`, `--stdin-json`); `--field` takes only
-  `username`, `url`, `token_url`, `client_id`, `expires_at` and `public_key`.
+  public values and writes them as `text` fields.
 - **Need a secret you don't have? Ask the human through `typevault request`**, not in chat. The value never reaches
   the model.
 - **Always give a `--reason`.** It is written to the audit trail.
@@ -34,18 +34,22 @@ typevault ls --json
 ```
 
 Entries are named `tv://<service>[/<account>][#<field>]`: `tv://openai`, `tv://github/bot#password` (`github/bot`
-works too). Without `#field`, the type's main field
-is used. The type suggests fields, and an entry may hold any other (`tv://stripe#Webhook Secret`; quote it in the
-shell). Field names keep their case; a ref matches exactly, else the one field equal ignoring case.
+works too). Field names keep their case; a ref matches exactly, else the one field equal ignoring case.
 
-| Type       | Fields (main first)                                                          |
-| ---------- | ---------------------------------------------------------------------------- |
-| `password` | password, username, totp, url                                                |
-| `api_key`  | key                                                                          |
-| `oauth`    | access_token, refresh_token, expires_at, token_url, client_id, client_secret |
-| `ssh`      | private_key, public_key                                                      |
-| `totp`     | seed                                                                         |
-| `note`     | text                                                                         |
+Each field stores its own type: `secret` (sensitive string), `text` (public string), `totp` (seed or otpauth URI), or `oauth` (an object with `access_token` and optional `refresh_token`, `expires_at`, `token_url`, `client_id`, `client_secret`). OAuth reads yield the access token and refresh expired credentials when possible.
+
+Presets only pre-fill fields at write time; no preset is stored:
+
+| Preset     | Fields                                                  | Single stdin input |
+| ---------- | ------------------------------------------------------- | ------------------ |
+| `password` | username(text), password(secret), totp(totp), url(text) | password           |
+| `api_key`  | $default(secret)                                        | $default           |
+| `oauth`    | $default(oauth)                                         | JSON via --stdin   |
+| `ssh`      | private_key(secret), public_key(text)                   | private_key        |
+| `totp`     | $default(totp)                                          | $default           |
+| `note`     | $default(secret)                                        | $default           |
+
+Without a preset, `set --stdin` stores `$default` (or overwrites the existing default field). Bare references choose `$default`, else the only field, else fail and list the fields. A login with several fields needs `#password` or another selector. `#$default` is rejected; use the bare name. OAuth parts use `#field.refresh_token`, or `#refresh_token` for the default field; an actual field with that name wins.
 
 ## Use secrets
 
@@ -55,11 +59,11 @@ typevault run --only tv://github/bot --reason "log in to GitHub" -- sh -c 'agent
 typevault run --only 'tv://openai,tv://stripe' -- bun run deploy
 ```
 
-- Env names are derived from the name: `tv://github/bot#password` -> `GITHUB_BOT_PASSWORD`, `tv://openai` -> `OPENAI_KEY`,
+- Env names are derived from the name: `tv://github/bot#password` -> `GITHUB_BOT_PASSWORD`, `tv://openai` -> `OPENAI`,
   `tv://stripe#Webhook Secret` -> `STRIPE_WEBHOOK_SECRET`, unless the entry sets `--env`. To pick the name yourself, set the variable to a reference:
   `DATABASE_URL=tv://postgres/prod#url typevault run -- ...` (the scheme is required here).
 - Write `$VAR` references in single quotes or as arguments the child expands, so your shell doesn't expand them
-  first: `typevault run -- sh -c 'curl -H "Authorization: Bearer $OPENAI_KEY" ...'`.
+  first: `typevault run -- sh -c 'curl -H "Authorization: Bearer $OPENAI" ...'`.
 - TOTP fields hold the current code, never the seed.
 - `run` loads every entry from the tiers you hold directly. An entry from an included tier loads only when `--only`
   names it exactly (no globs). Without a grant, a person's session loads only the tiers that member holds
@@ -79,22 +83,23 @@ Redaction is best effort: values under 4 characters, hex or composed encodings (
 ## Store secrets
 
 ```sh
-printf '%s' "$VALUE" | typevault set tv://openai --type api_key --stdin
-typevault set tv://github/bot --type password --field username=bot --stdin < password.txt
-typevault set tv://google --type oauth --stdin-json < oauth.json   # a file the human wrote; don't read it
-# custom fields go in the same JSON: {"key":"...","Webhook Secret":"..."}
+printf '%s' "$VALUE" | typevault set tv://openai --preset api_key --stdin
+typevault set tv://github/bot --preset password --field username=bot --stdin < password.txt
+typevault set tv://google --preset oauth --stdin < oauth.json   # a file the human wrote; don't read it
+# JSON accepts strings or typed fields: {"$default":"...","Webhook Secret":{"type":"secret","value":"..."}}
+# OAuth JSON: {"access_token":"...","refresh_token":"..."}
 typevault mv tv://github/bot tv://github/ci
 typevault rm tv://github/ci
 ```
 
 Never type a secret value into a command, even piped: the command text lands in your transcript. Read it from an
-existing env var or a file you don't open. `--tier` defaults to your grant's tier (or the vault's only tier). Add `--env NAME` to choose the main field's env
+existing env var or a file you don't open. `--tier` defaults to your grant's tier (or the vault's only tier). Add `--env NAME` to choose the default field's env
 name in `run`.
 
 ## Ask a human
 
 ```sh
-typevault request resend --type api_key --reason "send the weekly digest"
+typevault request resend --preset api_key --reason "send the weekly digest"
 ```
 
 Prints a one-time URL and a match code; give both to the user, then the command waits until they submit. Their

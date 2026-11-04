@@ -20,15 +20,26 @@ test('Chrome CSV maps logins and preserves passwords while deriving safe origins
     '\uFEFFNAME,URL,USERNAME,PASSWORD,note\r\nGitHub,https://example.com:8443/path,user@example.com,hunter2,ignored\r\n' +
       'GitHub,ftp://example.com,user@example.com,second,\r\nGitHub-2,invalid,,,',
   )
-  expect(result.entries.map((entry) => [entry.name, entry.type, entry.fields, entry.origin])).toEqual([
+  expect(result.entries.map((entry) => [entry.name, entry.fields, entry.origin])).toEqual([
     [
       'github',
-      'password',
-      { url: 'https://example.com:8443/path', username: 'user@example.com', password: 'hunter2' },
+      {
+        url: { type: 'text', value: 'https://example.com:8443/path' },
+        username: { type: 'text', value: 'user@example.com' },
+        password: { type: 'secret', value: 'hunter2' },
+      },
       'https://example.com:8443',
     ],
-    ['github-2', 'password', { url: 'ftp://example.com', username: 'user@example.com', password: 'second' }, undefined],
-    ['github-2-2', 'password', { url: 'invalid' }, undefined],
+    [
+      'github-2',
+      {
+        url: { type: 'text', value: 'ftp://example.com' },
+        username: { type: 'text', value: 'user@example.com' },
+        password: { type: 'secret', value: 'second' },
+      },
+      undefined,
+    ],
+    ['github-2-2', { url: { type: 'text', value: 'invalid' } }, undefined],
   ])
   expect(result.warnings).toHaveLength(2)
   expect(result.warnings[0]).toContain('"github"')
@@ -40,9 +51,9 @@ test('Safari CSV retains OTPAuth but excludes notes outside password field allow
     'Title,URL,Username,Password,Notes,OTPAuth\nExample,https://example.com/a,,hunter2,private,otpauth://totp/Example?secret=SEED',
   )
   expect(result.entries[0]?.fields).toEqual({
-    url: 'https://example.com/a',
-    password: 'hunter2',
-    totp: 'otpauth://totp/Example?secret=SEED',
+    url: { type: 'text', value: 'https://example.com/a' },
+    password: { type: 'secret', value: 'hunter2' },
+    totp: { type: 'totp', value: 'otpauth://totp/Example?secret=SEED' },
   })
 })
 

@@ -29,8 +29,14 @@ beforeEach(async () => {
 afterEach(() => rmSync(root, { recursive: true, force: true }))
 
 it('resolves a git merge conflict by keeping the highest valid revision', async () => {
-  const first = await vault.put({ name, type: 'api_key', fields: { key: 'one' }, tier: 'team' }, signerOf(owner))
-  const second = await vault.put({ name, type: 'api_key', fields: { key: 'two' }, tier: 'team' }, signerOf(owner))
+  const first = await vault.put(
+    { name, fields: { key: { type: 'secret' as const, value: 'one' } }, tier: 'team' },
+    signerOf(owner),
+  )
+  const second = await vault.put(
+    { name, fields: { key: { type: 'secret' as const, value: 'two' } }, tier: 'team' },
+    signerOf(owner),
+  )
   const file = join(root, 'vault', 'entries', `${second.envelope.id}.json`)
   const ours = JSON.stringify(first.envelope, null, 2)
   const theirs = JSON.stringify(second.envelope, null, 2)
@@ -40,13 +46,16 @@ it('resolves a git merge conflict by keeping the highest valid revision', async 
 
   expect(report.mergesResolved).toEqual([`${second.envelope.id}.json`])
   expect(JSON.parse(readFileSync(file, 'utf8')).rev).toBe(2)
-  expect((await vault.find(name))?.payload.fields).toEqual({ key: 'two' })
+  expect((await vault.find(name))?.payload.fields).toEqual({ key: { type: 'secret' as const, value: 'two' } })
 })
 
 it('removes the older copy when two files hold the same name', async () => {
-  await vault.put({ name, type: 'api_key', fields: { key: 'zero' }, tier: 'team' }, signerOf(owner))
-  const kept = await vault.put({ name, type: 'api_key', fields: { key: 'one' }, tier: 'team' }, signerOf(owner))
-  const payload = { ...kept.payload, fields: { key: 'stale' } }
+  await vault.put({ name, fields: { key: { type: 'secret' as const, value: 'zero' } }, tier: 'team' }, signerOf(owner))
+  const kept = await vault.put(
+    { name, fields: { key: { type: 'secret' as const, value: 'one' } }, tier: 'team' },
+    signerOf(owner),
+  )
+  const payload = { ...kept.payload, fields: { key: { type: 'secret' as const, value: 'stale' } } }
   const stale = await sealEntry(
     { id: 'f'.repeat(32), tier: 'team', rev: 1, at: '2020-01-01T00:00:00.000Z', payload },
     vault.state,
@@ -62,8 +71,11 @@ it('removes the older copy when two files hold the same name', async () => {
 
 it('never deletes a copy that lives in another tier', async () => {
   await new Admin(vault).addTier('other')
-  const kept = await vault.put({ name, type: 'api_key', fields: { key: 'one' }, tier: 'team' }, signerOf(owner))
-  const payload = { ...kept.payload, fields: { key: 'planted' } }
+  const kept = await vault.put(
+    { name, fields: { key: { type: 'secret' as const, value: 'one' } }, tier: 'team' },
+    signerOf(owner),
+  )
+  const payload = { ...kept.payload, fields: { key: { type: 'secret' as const, value: 'planted' } } }
   const planted = await sealEntry(
     { id: 'e'.repeat(32), tier: 'other', rev: 99, at: kept.envelope.at, payload },
     vault.state,

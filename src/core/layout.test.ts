@@ -67,7 +67,7 @@ describe('two clones of one project vault', () => {
     ] as const) {
       const vault = await Vault.open(layout, [owner], env)
       await vault.put(
-        { name: parseEntryName(name), type: 'note', fields: { text: name }, tier: 'member' },
+        { name: parseEntryName(name), fields: { text: { type: 'secret' as const, value: name } }, tier: 'member' },
         signerOf(owner),
       )
     }

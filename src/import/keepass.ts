@@ -57,10 +57,10 @@ export async function parseKeepass(bytes: Uint8Array, password?: string): Promis
       const url = fields['URL']
       items.push({
         title: fields['Title'] ?? '',
-        type: login ? 'password' : 'note',
+        preset: login ? 'password' : 'note',
         fields: login
           ? { username: fields['UserName'], password: fields['Password'], url, totp: fields['otp'] }
-          : { text: fields['Notes'] },
+          : { $default: fields['Notes'] },
         tags: parseExternal(entry.tags, z.array(z.string()).readonly(), 'KeePass tags'),
         ...(container === undefined ? {} : { container }),
         ...(url === undefined ? {} : { url }),

@@ -1,12 +1,11 @@
 import type { SignerRef } from '../core/entries'
 import { TypeVaultError } from '../core/errors'
-import { type EntryName, type EntryType, isReservedEnvName } from '../core/naming'
+import { type EntryName, type Field, isReservedEnvName } from '../core/naming'
 import type { EntryPayload } from '../core/payload'
 import { reachesTier, type VaultState } from '../core/state'
 
 export type EntrySummary = {
   readonly name: EntryName
-  readonly type: EntryType
   readonly tier: string
   readonly rev: number
   readonly tags: readonly string[]
@@ -17,7 +16,7 @@ export type EntrySummary = {
 export type EntryValue = EntrySummary & {
   readonly id: string
   readonly created: string
-  readonly fields: Readonly<Record<string, string>>
+  readonly fields: Readonly<Record<string, Field>>
   readonly env?: string
   readonly origin?: string
   /** Written by the owner or by a key that reaches all of the reader's own tiers: its `--env` override counts. */
@@ -26,8 +25,7 @@ export type EntryValue = EntrySummary & {
 
 export type SetInput = {
   readonly name: EntryName
-  readonly type: EntryType
-  readonly fields: Readonly<Record<string, string>>
+  readonly fields: Readonly<Record<string, Field>>
   readonly tier?: string | undefined
   readonly env?: string | undefined
   readonly origin?: string | undefined
@@ -42,7 +40,6 @@ export function entryInputOf(input: SetInput, tier: string) {
   }
   return {
     name: input.name,
-    type: input.type,
     fields: input.fields,
     tier,
     ...(input.env === undefined ? {} : { env: input.env }),
@@ -70,7 +67,6 @@ export function toValue(tier: string, id: string, rev: number, payload: EntryPay
   return {
     id,
     name: payload.name,
-    type: payload.type,
     tier,
     rev,
     tags: payload.tags,
@@ -85,7 +81,6 @@ export function toValue(tier: string, id: string, rev: number, payload: EntryPay
 
 export const toSummary = (value: EntryValue): EntrySummary => ({
   name: value.name,
-  type: value.type,
   tier: value.tier,
   rev: value.rev,
   tags: value.tags,

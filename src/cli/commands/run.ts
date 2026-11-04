@@ -96,7 +96,7 @@ export const request = defineCommand({
   meta: { name: 'request', description: 'Ask a human for a secret through a one-time web page (live grants)' },
   args: {
     name: { type: 'positional', description: ENTRY_NAME_SYNTAX, required: true },
-    type: { type: 'string', required: true, description: 'Entry type' },
+    preset: { type: 'string', description: 'Optional field preset' },
     tier: { type: 'string', description: "Tier (defaults to your grant's tier)" },
     reason: { type: 'string', required: true, description: 'Shown to the human' },
   },
@@ -106,7 +106,7 @@ export const request = defineCommand({
       throw new TypeVaultError('unavailable', 'request needs a live grant (the daemon hosts the page)')
     const body = {
       name: args.name,
-      type: args.type,
+      preset: args.preset,
       reason: args.reason,
       ...(args.tier === undefined ? {} : { tier: args.tier }),
     }

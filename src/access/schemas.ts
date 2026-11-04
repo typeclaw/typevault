@@ -1,11 +1,11 @@
 import { z } from 'zod'
 
-import { type EntryType, isEntryType, parseEntryName } from '../core/naming'
+import { parseEntryName } from '../core/naming'
+import { FieldsSchema } from '../core/payload'
 import type { EntrySummary, EntryValue } from './types'
 
 const SummaryShape = {
   name: z.string().transform((name) => parseEntryName(name)),
-  type: z.string().refine(isEntryType),
   tier: z.string(),
   rev: z.number().int(),
   tags: z.array(z.string()),
@@ -18,26 +18,20 @@ export const EntryValueSchema = z.object({
   ...SummaryShape,
   id: z.string(),
   created: z.string(),
-  fields: z.record(z.string(), z.string()),
+  fields: FieldsSchema,
   env: z.string().optional(),
   origin: z.string().optional(),
   trustedWriter: z.boolean().optional(),
 })
 
-const entryType = (type: string): EntryType => {
-  if (isEntryType(type)) return type
-  throw new TypeError(`unknown entry type ${type}`)
-}
-
 export function toSummaryValue(parsed: z.infer<typeof EntrySummarySchema>): EntrySummary {
-  return { ...parsed, type: entryType(parsed.type) }
+  return parsed
 }
 
 export function toEntryValue(parsed: z.infer<typeof EntryValueSchema>): EntryValue {
-  const { env, origin, type, trustedWriter, ...rest } = parsed
+  const { env, origin, trustedWriter, ...rest } = parsed
   return {
     ...rest,
-    type: entryType(type),
     ...(env === undefined ? {} : { env }),
     ...(origin === undefined ? {} : { origin }),
     ...(trustedWriter === undefined ? {} : { trustedWriter }),

@@ -30,7 +30,11 @@ it('finds the project vault from a nested directory and reads it with the keys k
   const { layout: created, owner } = await initLocalVault(join(project, '.typevault'), await machineFounder(), env)
   const writer = await Vault.open(created, [owner], env)
   await new Admin(writer).addTier('member')
-  const input = { name: parseEntryName('openai'), type: 'api_key', fields: { key: 'sk-x' }, tier: 'member' } as const
+  const input = {
+    name: parseEntryName('openai'),
+    fields: { key: { type: 'secret' as const, value: 'sk-x' } },
+    tier: 'member',
+  } as const
   await writer.put(input, signerOf(owner))
 
   // when it is looked up from a nested directory
@@ -39,7 +43,7 @@ it('finds the project vault from a nested directory and reads it with the keys k
 
   // then it is the same vault and the entry reads back
   expect(layout).toMatchObject({ scope: 'local', vault: created.vault, root: created.root })
-  expect(found?.payload.fields).toEqual({ key: 'sk-x' })
+  expect(found?.payload.fields).toEqual({ key: { type: 'secret' as const, value: 'sk-x' } })
 })
 
 it('never falls back to the global vault without -g', async () => {

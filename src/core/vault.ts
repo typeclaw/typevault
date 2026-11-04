@@ -18,7 +18,7 @@ import { assertNoSymlinks, atomicWrite, fsyncDir } from './fsx'
 import { heldMembers, Keyring, unwrapOwner } from './keyring'
 import type { Layout } from './layout'
 import { withLock } from './lock'
-import type { EntryName, EntryType } from './naming'
+import type { EntryName, Field } from './naming'
 import type { EntryPayload } from './payload'
 import { RevisionMarks } from './revisions'
 import { type Tiers, loadState, reach, type VaultState } from './state'
@@ -40,8 +40,7 @@ export type PutOptions = { readonly ifRev?: number; readonly base?: EntryBase }
 
 export type EntryInput = {
   readonly name: EntryName
-  readonly type: EntryType
-  readonly fields: Readonly<Record<string, string>>
+  readonly fields: Readonly<Record<string, Field>>
   readonly tier: string
   readonly env?: string
   readonly origin?: string
@@ -59,7 +58,7 @@ function parseJson(bytes: Uint8Array): unknown {
   }
 }
 
-const sameFields = (a: Readonly<Record<string, string>>, b: Readonly<Record<string, string>>): boolean =>
+const sameFields = (a: Readonly<Record<string, Field>>, b: Readonly<Record<string, Field>>): boolean =>
   JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort())
 
 /**
@@ -211,7 +210,6 @@ export class Vault {
     const payload: EntryPayload = {
       v: 1,
       name: input.name,
-      type: input.type,
       fields: input.fields,
       tags: input.tags ?? found?.payload.tags ?? [],
       created: prior?.created ?? now,

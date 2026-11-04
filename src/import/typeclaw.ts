@@ -11,8 +11,8 @@ export function parseTypeclaw(text: string): ImportResult {
       .filter(({ name }) => name.startsWith(PREFIX) && name.length > PREFIX.length)
       .map(({ name, value }) => ({
         title: name.slice(PREFIX.length),
-        type: 'password',
-        fields: { password: value },
+        preset: 'api_key',
+        fields: { $default: value },
         ...(isUsableEnvName(name) ? { env: name } : {}),
       })),
   )

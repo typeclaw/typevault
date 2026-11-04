@@ -14,8 +14,8 @@ async function submit(url: string, payloadName: string): Promise<void> {
   const payload = {
     v: 1,
     name: payloadName,
-    type: 'api_key',
-    fields: { key: 'sk-web-1' },
+
+    fields: { key: { type: 'secret' as const, value: 'sk-web-1' } },
     tags: [],
     created: now,
     rotated: now,
@@ -33,16 +33,16 @@ test('returns the fields typed on the page', async () => {
   // given
   let code = ''
   // when
-  const fields = await promptFields({ name, type: 'api_key', tier: undefined }, (url, shown) => {
+  const fields = await promptFields({ name, preset: 'api_key', tier: undefined }, (url, shown) => {
     code = shown
     void submit(url, name)
   })
   // then
-  expect(fields).toEqual({ key: 'sk-web-1' })
+  expect(fields).toEqual({ key: { type: 'secret' as const, value: 'sk-web-1' } })
   expect(code).toMatch(/^[A-Z2-9]{6}$/)
 })
 
 test('rejects a submission for another entry', async () => {
-  const fields = promptFields({ name, type: 'api_key', tier: 'default' }, (url) => void submit(url, 'tv://stripe'))
+  const fields = promptFields({ name, preset: 'api_key', tier: 'default' }, (url) => void submit(url, 'tv://stripe'))
   await expect(fields).rejects.toMatchObject({ code: 'tampered' })
 })

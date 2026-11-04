@@ -67,20 +67,25 @@ test('op import reads every listed item and maps login, note, API, SSH, and tags
   const result = await read1Password({ via: 'op', accounts: ['example'], vaults: ['Work'] }, { runOp })
 
   // then
-  expect(result.entries.map((entry) => [String(entry.name), entry.type, entry.fields])).toEqual([
+  expect(result.entries.map((entry) => [String(entry.name), entry.fields])).toEqual([
     [
       'github/work',
-      'password',
       {
-        username: 'user@example.com',
-        password: 'hunter2',
-        totp: 'otpauth://totp/Example?secret=SEED',
-        url: 'https://example.com/login',
+        username: { type: 'text', value: 'user@example.com' },
+        password: { type: 'secret', value: 'hunter2' },
+        totp: { type: 'totp', value: 'otpauth://totp/Example?secret=SEED' },
+        url: { type: 'text', value: 'https://example.com/login' },
       },
     ],
-    ['memo/work', 'note', { text: 'private note' }],
-    ['api/work', 'api_key', { key: 'fake-key', 'Webhook Secret': 'whsec' }],
-    ['ssh/work', 'ssh', { private_key: 'fake-openssh', public_key: 'fake-public' }],
+    ['memo/work', { $default: { type: 'secret', value: 'private note' } }],
+    [
+      'api/work',
+      { $default: { type: 'secret', value: 'fake-key' }, 'Webhook Secret': { type: 'secret', value: 'whsec' } },
+    ],
+    [
+      'ssh/work',
+      { private_key: { type: 'secret', value: 'fake-openssh' }, public_key: { type: 'text', value: 'fake-public' } },
+    ],
   ])
   expect(result.entries[0]?.tags).toEqual(['agent'])
   expect(result.entries[0]?.origin).toBe('https://example.com')
@@ -132,14 +137,14 @@ test('op import with a tag imports whole items for the tag and only the named fi
     [
       'github/work',
       {
-        username: 'user@example.com',
-        password: 'hunter2',
-        totp: 'otpauth://totp/Example?secret=SEED',
-        url: 'https://example.com/login',
+        username: { type: 'text', value: 'user@example.com' },
+        password: { type: 'secret', value: 'hunter2' },
+        totp: { type: 'totp', value: 'otpauth://totp/Example?secret=SEED' },
+        url: { type: 'text', value: 'https://example.com/login' },
       },
       ['agent'],
     ],
-    ['api/work', { 'Webhook Secret': 'whsec' }, ['work']],
+    ['api/work', { 'Webhook Secret': { type: 'secret', value: 'whsec' } }, ['work']],
   ])
   expect(result.warnings).toEqual([
     'API: no single field "Missing" to import',
@@ -185,7 +190,7 @@ test('op import prefers the exact field name and refuses an ambiguous one', asyn
   const result = await read1Password({ via: 'op', tags: ['agent'] }, { runOp })
 
   // then
-  expect(result.entries.map((entry) => entry.fields)).toEqual([{ password: 'hunter2' }])
+  expect(result.entries.map((entry) => entry.fields)).toEqual([{ password: { type: 'secret', value: 'hunter2' } }])
   expect(result.warnings).toEqual(['GitHub: no single field "region" to import'])
 })
 
@@ -346,20 +351,25 @@ test('sdk import maps desktop-app items and skips unreadable ones', async () => 
 
   // then
   expect(accounts).toEqual(['Example'])
-  expect(result.entries.map((entry) => [String(entry.name), entry.type, entry.fields])).toEqual([
+  expect(result.entries.map((entry) => [String(entry.name), entry.fields])).toEqual([
     [
       'github/work',
-      'password',
       {
-        username: 'user@example.com',
-        password: 'hunter2',
-        totp: 'otpauth://totp/Example?secret=SEED',
-        url: 'https://example.com/login',
+        username: { type: 'text', value: 'user@example.com' },
+        password: { type: 'secret', value: 'hunter2' },
+        totp: { type: 'totp', value: 'otpauth://totp/Example?secret=SEED' },
+        url: { type: 'text', value: 'https://example.com/login' },
       },
     ],
-    ['memo/work', 'note', { text: 'private note' }],
-    ['api/work', 'api_key', { key: 'fake-key', 'Webhook Secret': 'whsec' }],
-    ['ssh/work', 'ssh', { private_key: 'fake-private', public_key: 'fake-public' }],
+    ['memo/work', { $default: { type: 'secret', value: 'private note' } }],
+    [
+      'api/work',
+      { $default: { type: 'secret', value: 'fake-key' }, 'Webhook Secret': { type: 'secret', value: 'whsec' } },
+    ],
+    [
+      'ssh/work',
+      { private_key: { type: 'secret', value: 'fake-private' }, public_key: { type: 'text', value: 'fake-public' } },
+    ],
   ])
   expect(result.warnings).toEqual([
     'skipped unsupported 1Password item category',
@@ -404,7 +414,7 @@ test('sdk import with a tag fetches items carrying the tag or a <tag>/<field> ta
   expect(requested).toEqual([['0', '1']])
   expect(result.entries.map((entry) => [String(entry.name), entry.fields, entry.tags])).toEqual([
     ['github/work', {}, ['agent']],
-    ['api/work', { 'Webhook Secret': 'whsec' }, []],
+    ['api/work', { 'Webhook Secret': { type: 'secret', value: 'whsec' } }, []],
   ])
 })
 
@@ -458,8 +468,8 @@ test('sdk import reads every account given and finds a vault in any of them', as
   // then
   expect(connected).toEqual(['Work', 'Home'])
   expect(result.entries.map((entry) => [String(entry.name), entry.fields])).toEqual([
-    ['memo/work', { text: 'work note' }],
-    ['memo/personal', { text: 'home note' }],
+    ['memo/work', { $default: { type: 'secret', value: 'work note' } }],
+    ['memo/personal', { $default: { type: 'secret', value: 'home note' } }],
   ])
 })
 

@@ -64,21 +64,32 @@ test('1PUX maps login, password, secure note, API, SSH, and tags without unsuppo
       { ...item('001'), state: 'archived' },
     ]),
   )
-  expect(result.entries.map((entry) => [String(entry.name), entry.type, entry.fields])).toEqual([
+  expect(result.entries.map((entry) => [String(entry.name), entry.fields])).toEqual([
     [
       'github/work',
-      'password',
       {
-        username: 'user@example.com',
-        password: 'hunter2',
-        url: 'https://example.com/path?secret=hidden',
-        totp: 'otpauth://totp/Example?secret=SEED',
+        username: { type: 'text', value: 'user@example.com' },
+        password: { type: 'secret', value: 'hunter2' },
+        url: { type: 'text', value: 'https://example.com/path?secret=hidden' },
+        totp: { type: 'totp', value: 'otpauth://totp/Example?secret=SEED' },
       },
     ],
-    ['github/work-2', 'password', { password: 'second', url: 'https://example.com/path?secret=hidden' }],
-    ['memo/work', 'note', { text: 'private note' }],
-    ['api/work', 'api_key', { key: 'fake-key', 'Webhook Secret': 'whsec' }],
-    ['ssh/work', 'ssh', { private_key: 'fake-private', public_key: 'fake-public' }],
+    [
+      'github/work-2',
+      {
+        password: { type: 'secret', value: 'second' },
+        url: { type: 'text', value: 'https://example.com/path?secret=hidden' },
+      },
+    ],
+    ['memo/work', { $default: { type: 'secret', value: 'private note' } }],
+    [
+      'api/work',
+      { $default: { type: 'secret', value: 'fake-key' }, 'Webhook Secret': { type: 'secret', value: 'whsec' } },
+    ],
+    [
+      'ssh/work',
+      { private_key: { type: 'secret', value: 'fake-private' }, public_key: { type: 'text', value: 'fake-public' } },
+    ],
   ])
   expect(result.entries[0]?.origin).toBe('https://example.com')
   expect(result.entries[0]?.tags).toEqual(['work', 'agent'])
@@ -94,7 +105,7 @@ test('1PUX omits missing containers and ignores non-web origins', () => {
   const result = parse1Password(bytes)
   expect<string | undefined>(result.entries[0]?.name).toBe('github')
   expect(result.entries[0]?.origin).toBeUndefined()
-  expect(result.entries[0]?.fields).toEqual({ url: 'javascript:alert(1)' })
+  expect(result.entries[0]?.fields).toEqual({ url: { type: 'text', value: 'javascript:alert(1)' } })
 })
 
 test.each([
