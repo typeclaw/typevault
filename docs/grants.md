@@ -13,7 +13,9 @@ Live and sealed grants, ceilings, asking a human for a secret, and SDK options.
 
 A sealed grant can write, within its tiers and `--only`, until its certificate expires by the **reader's** clock.
 A daemon (every minute) or `typevault doctor --fix` adopts those writes by re-signing them. Writes nobody adopts
-before expiry stop being trusted; the owner can still keep them with `typevault doctor --fix --adopt-expired`.
+before expiry stop being trusted, and `doctor --fix` lists them. The holder keeps the signing key and picks each write's
+timestamp, so nothing proves such a write came before the expiry: the owner keeps one only by naming it, with
+`typevault doctor --fix --adopt-expired <name,...>`.
 
 ```sh
 typevault grant --tier member --only 'tv://github/*' --ttl 30m --label ci:deploy

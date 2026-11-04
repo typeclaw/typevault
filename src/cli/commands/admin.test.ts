@@ -1,6 +1,14 @@
-import { afterEach, beforeEach, expect, it } from 'bun:test'
+import { afterEach, beforeEach, expect, it, setSystemTime } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+
+import { issueSealedGrant, readSealedGrant, sealedSigningSecret } from '../../access/sealed'
+import { Admin } from '../../core/admin'
+import { createIdentity, writeIdentity } from '../../core/identity'
+import { founderOf, initVault } from '../../core/init'
+import { layoutOf } from '../../core/layout'
+import { parseEntryName } from '../../core/naming'
+import { Vault } from '../../core/vault'
 
 const CLI = join(import.meta.dir, '..', 'index.ts')
 const PASSWORD = 'correct horse battery staple'
@@ -64,6 +72,38 @@ it('keeps a human-owned vault locked until its owner unlocks it, and locks it ag
   succeeds(await cli(['lock'], owner))
   expect((await cli(['ls'], owner)).stderr).toContain('the vault is locked')
 })
+
+it.each(['github/late', 'TV://GitHub/Late', 'typevault://github/late'])(
+  'keeps an expired sealed write only when doctor --adopt-expired names it (as %p)',
+  async (named) => {
+    // given a machine-owned vault holding a write from a sealed grant that expired an hour ago
+    const root = join(base, 'm')
+    const { identity } = await createIdentity('owner', 'machine')
+    writeIdentity({ TYPEVAULT_DIR: root }, identity)
+    const vault = await Vault.open(layoutOf(root), [(await initVault(root, founderOf(identity))).owner], {})
+    await new Admin(vault).addTier('member')
+    setSystemTime(Date.now() - 3_600_000)
+    try {
+      const grant = { tiers: ['member'], only: [], ttlMs: 60_000, label: 'ci' }
+      const bundle = await readSealedGrant(await issueSealedGrant(vault, grant))
+      await vault.put(
+        { name: parseEntryName('github/late'), fields: { key: { type: 'secret', value: 'x' } }, tier: 'member' },
+        { ref: { kind: 'cert', cert: bundle.write.cert }, signSecret: sealedSigningSecret(bundle) },
+      )
+    } finally {
+      setSystemTime()
+    }
+    const env = { PATH: owner['PATH'] ?? '', TYPEVAULT_DIR: root }
+
+    // when the owner runs doctor --fix without naming it, then naming it
+    const skipped = await cli(['doctor', '--fix'], env)
+    const adopted = succeeds(await cli(['doctor', '--fix', '--adopt-expired', named], env))
+
+    // then it is listed and left alone, then adopted
+    expect(skipped.stdout).toContain('expired sealed write: github/late')
+    expect(adopted.stdout).toContain('adopted sealed write: github/late')
+  },
+)
 
 it('refuses to unlock with the wrong password', async () => {
   const run = await cli(['unlock', '--vault-password-stdin'], owner, 'wrong\n')
