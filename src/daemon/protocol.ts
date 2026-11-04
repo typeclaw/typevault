@@ -34,6 +34,7 @@ export const DeriveBody = z.object({
 })
 export const RequestBody = z.object({ name, preset, tier: z.string().optional(), reason: z.string().min(1).max(500) })
 export const WaitBody = z.object({ id: z.string() })
+export const AttachBody = z.object({ vault: z.string() })
 export const GrantBody = z.object({
   tiers: tiers.min(1),
   only,

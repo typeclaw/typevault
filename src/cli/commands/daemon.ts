@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { machineKeys } from '../../access/keys'
 import { parseTtl } from '../../access/scope'
 import { decodeSecretKey } from '../../core/crypto'
+import { localLayout } from '../../core/layout'
 import { isDaemonAlive } from '../../daemon/client'
 import { startDaemon } from '../../daemon/daemon'
 import { ensureDaemon, stopDaemon } from '../../daemon/spawn'
@@ -21,6 +22,14 @@ export const daemon = defineCommand({
       args: {
         'key-stdin': { type: 'boolean', description: 'Read an unlocked member key from stdin (used by unlock)' },
         ttl: { type: 'string', description: 'Stop after this long, e.g. 8h (used by unlock)' },
+        vault: {
+          type: 'string',
+          description: 'The project vault to serve, instead of the one found here (used by unlock)',
+        },
+        'source-lock': {
+          type: 'string',
+          description: 'Serve only while the daemon holding this lock runs (used to share a session with a worktree)',
+        },
       },
       async run({ args }) {
         const env = process.env
@@ -28,15 +37,18 @@ export const daemon = defineCommand({
         const publicUrl = env['TYPEVAULT_PUBLIC_URL']
         const fromStdin = args['key-stdin'] === true
         const ttlMs = args.ttl === undefined ? undefined : parseTtl(args.ttl)
+        const sourceLock = args['source-lock']
         const running = await startDaemon({
-          layout: layoutFrom(env),
+          layout: args.vault === undefined ? layoutFrom(env) : localLayout(args.vault, env),
           env,
           keys: fromStdin ? [decodeSecretKey(await readStdin())] : machineKeys(env),
           prompt: {
             ...(promptPort === undefined ? {} : { port: promptPort }),
             ...(publicUrl === undefined ? {} : { publicUrl }),
           },
-          ...(fromStdin ? { session: { ttlMs: ttlMs ?? DEFAULT_SESSION_MS } } : {}),
+          ...(fromStdin
+            ? { session: { ttlMs: ttlMs ?? DEFAULT_SESSION_MS, ...(sourceLock === undefined ? {} : { sourceLock }) } }
+            : {}),
         })
         note(`typevault daemon ready (admin sockets: ${running.ceilings.map((c) => c.name).join(', ') || 'none'})`)
         const { promise, resolve } = Promise.withResolvers<void>()
