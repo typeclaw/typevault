@@ -81,6 +81,7 @@ typevault unlock                                 # once per session (8h by defau
 
 # With one tier, set needs no --tier
 printf '%s' "$OPENAI_KEY" | typevault set tv://openai --type api_key --stdin
+typevault set tv://anthropic --type api_key        # from a terminal: type it in a one-time local page (--web)
 typevault set tv://github/bot --type password --field username=bot --stdin < password.txt
 echo '{"access_token":"…","refresh_token":"…"}' | typevault set tv://google --type oauth --stdin-json
 
