@@ -9,6 +9,7 @@ import { adoptCertWrites } from '../core/adopt'
 import type { SecretKey } from '../core/crypto'
 import { fromBase64 } from '../core/encoding'
 import { sealEntry, signCiphertext, signerAuthority, signerOf } from '../core/entries'
+import { TypeVaultError } from '../core/errors'
 import { createIdentity } from '../core/identity'
 import { type Founder, founderOf, initVault } from '../core/init'
 import { layoutOf } from '../core/layout'
@@ -570,11 +571,24 @@ describe('sealed grants', () => {
     expect(await vault.find(n('github/bot'))).toBeDefined()
   })
 
-  it('refuses to remove an entry renamed out of its --only since the grant was issued', async () => {
-    const access = new SealedAccess(await readSealedGrant(await issue()), layoutOf(root), {})
-    await vault.move(n('github/bot'), n('aws/bot'), signerOf(owner))
-    await expect(access.remove(n('github/bot'))).rejects.toMatchObject({ code: 'denied' })
-    expect(await vault.find(n('aws/bot'))).toBeDefined()
+  it('never touches an entry renamed out of its --only since the grant was issued', async () => {
+    // given a grant issued for github/bot, which the owner then renames to aws/bot
+    const bundle = await readSealedGrant(await issue())
+    const moved = await vault.move(n('github/bot'), n('aws/bot'), signerOf(owner))
+
+    // when the holder, its bundle revision rewritten to the renamed file's, removes and then rewrites github/bot
+    for (const id of [bundle.entries.find((entry) => entry.name === 'github/bot')?.id, moved.envelope.id]) {
+      const entries = bundle.entries.map((entry) =>
+        entry.name === 'github/bot' ? { ...entry, id: id ?? '', rev: moved.envelope.rev } : entry,
+      )
+      const access = new SealedAccess({ ...bundle, entries }, layoutOf(root), {})
+      await expect(access.remove(n('github/bot'))).rejects.toBeInstanceOf(TypeVaultError)
+      await access.set({ name: n('github/bot'), fields: { password: { type: 'secret' as const, value: 'pwned' } } })
+    }
+
+    // then aws/bot keeps its value
+    const reopened = await Vault.open(layoutOf(root), [owner], {})
+    expect((await reopened.find(n('aws/bot')))?.payload.fields['password']?.value).toBe('hunter2-bot')
   })
 
   const certSigner = async (ttlMs: number) => {
@@ -600,6 +614,100 @@ describe('sealed grants', () => {
         await certSigner(-1),
       ),
     ).rejects.toMatchObject({ code: 'denied' })
+  })
+
+  it('never touches an entry outside its tiers through a rewritten bundle id', async () => {
+    // given a holder who points its bundle copy of github/bot at the trusted-tier stripe file
+    const target = (await vault.find(n('stripe')))?.envelope.id ?? ''
+    const bundle = await readSealedGrant(await issue())
+    const entries = bundle.entries.map((entry) => (entry.name === 'github/bot' ? { ...entry, id: target } : entry))
+    const access = new SealedAccess({ ...bundle, entries }, layoutOf(root), {})
+
+    // when it writes and removes through that entry
+    await access.set({ name: n('github/bot'), fields: { password: { type: 'secret' as const, value: 'pwned' } } })
+    await expect(access.remove(n('github/bot'))).rejects.toMatchObject({ code: 'denied' })
+
+    // then stripe is untouched
+    const reopened = await Vault.open(layoutOf(root), [owner], {})
+    expect((await reopened.find(n('stripe')))?.payload.fields['password']?.value).toBe('sk_live_x')
+  })
+
+  it("reports a certificate write planted under another tier's entry id", async () => {
+    const target = (await vault.find(n('stripe')))?.envelope.id ?? ''
+    const payload = (await vault.find(n('github/bot')))?.payload
+    if (payload === undefined) throw new Error('missing github/bot')
+    const forged = await sealEntry(
+      { id: target, tier: 'member', rev: 2, at: new Date().toISOString(), payload },
+      vault.state,
+      await certSigner(60_000),
+    )
+    writeFileSync(join(root, 'vault', 'entries', `${target}.json`), JSON.stringify(forged))
+
+    expect((await vault.scan()).problems).toContainEqual({
+      file: `${target}.json`,
+      reason: 'entry id does not belong to tier "member"',
+    })
+  })
+
+  it('never touches an entry outside its tiers with the bundle scope and tier rewritten too', async () => {
+    // given a holder who also rewrites its scope and github/bot's tier and revision to match the trusted stripe file
+    const target = await vault.find(n('stripe'))
+    if (target === undefined) throw new Error('missing stripe')
+    const bundle = await readSealedGrant(await issue())
+    const forged = { id: target.envelope.id, tier: 'trusted', rev: target.envelope.rev }
+    const entries = bundle.entries.map((entry) => (entry.name === 'github/bot' ? { ...entry, ...forged } : entry))
+    const scope = { tiers: ['trusted'], only: [] }
+    const access = new SealedAccess({ ...bundle, scope, entries }, layoutOf(root), {})
+
+    // when it writes and removes through that entry
+    const fields = { password: { type: 'secret' as const, value: 'pwned' } }
+    await expect(access.set({ name: n('github/bot'), fields })).rejects.toMatchObject({ code: 'denied' })
+    await expect(access.remove(n('github/bot'))).rejects.toMatchObject({ code: 'denied' })
+
+    // then stripe is untouched
+    const reopened = await Vault.open(layoutOf(root), [owner], {})
+    expect((await reopened.find(n('stripe')))?.payload.fields['password']?.value).toBe('sk_live_x')
+  })
+
+  it('never replaces a same-tier entry outside its --only through a rewritten bundle id', async () => {
+    // given a member-tier entry outside github/*, and a holder pointing github/bot at its file
+    const victim = await vault.put(
+      { name: n('aws/root'), fields: { key: { type: 'secret' as const, value: 'aws-original' } }, tier: 'member' },
+      signerOf(owner),
+    )
+    const bundle = await readSealedGrant(await issue())
+    const forged = { id: victim.envelope.id, rev: victim.envelope.rev }
+    const entries = bundle.entries.map((entry) => (entry.name === 'github/bot' ? { ...entry, ...forged } : entry))
+    const access = new SealedAccess({ ...bundle, entries }, layoutOf(root), {})
+
+    // when it writes and removes through that entry
+    await access.set({ name: n('github/bot'), fields: { password: { type: 'secret' as const, value: 'pwned' } } })
+    await expect(access.remove(n('github/bot'))).rejects.toMatchObject({ code: 'denied' })
+
+    // then aws/root is untouched and nothing looks tampered
+    const reopened = await Vault.open(layoutOf(root), [owner], {})
+    expect((await reopened.find(n('aws/root')))?.payload.fields['key']?.value).toBe('aws-original')
+    expect((await reopened.scan()).problems).toEqual([])
+  })
+
+  it('reports a certificate write planted over a same-tier entry it was not issued', async () => {
+    const victim = await vault.put(
+      { name: n('aws/root'), fields: { key: { type: 'secret' as const, value: 'aws-original' } }, tier: 'member' },
+      signerOf(owner),
+    )
+    const payload = (await vault.find(n('github/bot')))?.payload
+    if (payload === undefined) throw new Error('missing github/bot')
+    const forged = await sealEntry(
+      { id: victim.envelope.id, tier: 'member', rev: 2, at: new Date().toISOString(), payload },
+      vault.state,
+      await certSigner(60_000),
+    )
+    writeFileSync(join(root, 'vault', 'entries', `${victim.envelope.id}.json`), JSON.stringify(forged))
+
+    expect((await vault.scan()).problems).toContainEqual({
+      file: `${victim.envelope.id}.json`,
+      reason: 'github/bot took over an entry its writing grant was not issued',
+    })
   })
 
   it('honors an expired certificate only when the owner explicitly adopts', async () => {

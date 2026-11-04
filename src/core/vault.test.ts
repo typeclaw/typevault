@@ -230,6 +230,16 @@ describe('integrity', () => {
     expect((await vault.put(stripe, signerOf(owner), { ifRev: 1 })).envelope.rev).toBe(2)
   })
 
+  it('moves an entry to another tier under a new id, leaving no copy behind', async () => {
+    const vault = await open([owner])
+    const before = await vault.put(stripe, signerOf(owner))
+    const after = await vault.put({ ...stripe, tier: 'trusted' }, signerOf(owner))
+    const { entries, problems } = await vault.scan()
+    expect(after.envelope.id).not.toBe(before.envelope.id)
+    expect(entries.map((entry) => entry.envelope.tier)).toEqual(['trusted'])
+    expect(problems).toEqual([])
+  })
+
   it('serializes concurrent writes from one process', async () => {
     const vault = await open([owner])
     const names = ['a', 'b', 'c', 'd'].map((name) => ({ ...stripe, name: parseEntryName(name) }))

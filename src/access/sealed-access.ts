@@ -77,11 +77,15 @@ export class SealedAccess implements Access {
   async set(input: SetInput): Promise<EntrySummary> {
     const bundle = this.#live()
     const vault = await this.#vault()
-    const tier = input.tier ?? bundle.scope.tiers[0]
+    const prior = bundle.entries.find((value) => value.name === input.name)
+    const tier = input.tier ?? prior?.tier ?? bundle.scope.tiers[0]
     if (tier === undefined || !allowsEntry([bundle.scope], vault.state, tier, input.name)) {
       throw new TypeVaultError('denied', `this grant cannot write ${input.name} in tier "${tier ?? '?'}"`)
     }
-    const prior = bundle.entries.find((value) => value.name === input.name)
+    // Blind writes can't remove the old copy (that takes reading it), so moving tiers would leave two.
+    if (prior !== undefined && prior.tier !== tier) {
+      throw new TypeVaultError('denied', `${input.name} is in tier "${prior.tier}"; a sealed grant cannot move it`)
+    }
     const { ifRev } = input
     const stored = await vault.put(
       entryInputOf(input, tier),
@@ -103,7 +107,8 @@ export class SealedAccess implements Access {
   /**
    * The bundle is holder-editable (whoever holds the grant can re-seal it), so only the issuer-signed
    * certificate bounds what may be deleted: its tiers, `--only` and expiry, checked against the file on disk.
-   * The entry must still be the revision this grant carried, or one this grant's certificate wrote since.
+   * The entry must still be the revision this grant carried (of an id its certificate lists), or one this grant's
+   * certificate wrote since.
    */
   async remove(name: EntryName, _tier?: string): Promise<void> {
     const entry = this.#entry(name)
@@ -113,7 +118,7 @@ export class SealedAccess implements Access {
       entry.id,
       (envelope) =>
         envelope.tier === entry.tier &&
-        (envelope.rev === entry.rev ||
+        ((cert.ids.includes(envelope.id) && envelope.rev === entry.rev) ||
           (envelope.signer.kind === 'cert' && envelope.signer.cert.signPublic === cert.signPublic)) &&
         allowsEntry([{ tiers: cert.tiers, only: cert.only }], vault.state, envelope.tier, name) &&
         signerAuthority({ kind: 'cert', cert }, envelope.tier, vault.state, new Date().toISOString()) !== undefined,

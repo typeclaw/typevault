@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { seal, type SecretKey, sign, unseal, verifySignature } from './crypto'
+import { seal, type SecretKey, sha256Hex, sign, unseal, verifySignature } from './crypto'
 import { canonicalJson, fromBase64, type Json, toBase64, utf8 } from './encoding'
 import { TypeVaultError } from './errors'
 import type { Keyring } from './keyring'
@@ -18,6 +18,8 @@ export const CertSchema = z.object({
   tiers: z.array(z.string()),
   /** Name patterns the holder may write; empty means any name in its tiers. */
   only: z.array(z.string()),
+  /** Ids of the entries the grant was issued with: the only existing files it may replace or remove. */
+  ids: z.array(z.string()),
   exp: z.iso.datetime(),
   issuer: IssuerSchema,
   sig: z.string(),
@@ -25,7 +27,7 @@ export const CertSchema = z.object({
 const SignerSchema = z.union([IssuerSchema, z.object({ kind: z.literal('cert'), cert: CertSchema })])
 export const EnvelopeSchema = z.object({
   v: z.literal(1),
-  id: z.string().regex(/^[0-9a-f]{32}$/),
+  id: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*\.[0-9a-f]{32}$/),
   tier: z.string(),
   gen: z.number().int().positive(),
   rev: z.number().int().positive(),
@@ -74,12 +76,23 @@ function assertNever(value: never): never {
   throw new TypeVaultError('invalid', `unexpected value ${JSON.stringify(value)}`)
 }
 
+/**
+ * The id a certificate writes a new entry under. Bound to the certificate and the name, so a holder can never aim a
+ * write at another entry's file: names are encrypted, so ids alone can't show which file holds what.
+ */
+export const certEntryId = (cert: Cert, tier: string, name: string): string =>
+  `${tier}.${sha256Hex(utf8(`${cert.sig}\n${name}`)).slice(0, 32)}`
+
+export const certMayHold = (cert: Cert, id: string, tier: string, name: string): boolean =>
+  cert.ids.includes(id) || id === certEntryId(cert, tier, name)
+
 const certBytes = (cert: Omit<Cert, 'sig'>): Uint8Array =>
   utf8(
     canonicalJson({
       signPublic: cert.signPublic,
       tiers: cert.tiers,
       only: cert.only,
+      ids: cert.ids,
       exp: cert.exp,
       issuer: cert.issuer,
     }),
@@ -162,6 +175,8 @@ export type VerifyOptions = { readonly acceptExpiredCerts?: boolean }
 export function verifyEnvelope(envelope: Envelope, state: VaultState, options: VerifyOptions = {}): string | undefined {
   const tier = state.tiers[envelope.tier]
   if (tier === undefined) return `unknown tier "${envelope.tier}"`
+  // The id names its tier, so a file can only ever be replaced by a write its tier's signers could make.
+  if (!envelope.id.startsWith(`${envelope.tier}.`)) return `entry id does not belong to tier "${envelope.tier}"`
   if (tier.gen !== envelope.gen) return `stale generation ${envelope.gen} (current ${tier.gen})`
   if (Date.parse(envelope.at) > Date.now() + CLOCK_SKEW_MS) return 'timestamp is in the future'
   const signPublic = signerAuthority(
@@ -182,6 +197,9 @@ export async function openEntry(envelope: Envelope, keyring: Keyring): Promise<E
   const { signer } = envelope
   if (signer.kind === 'cert' && signer.cert.only.length > 0 && !matchesOnly(payload.name, signer.cert.only)) {
     throw new TypeVaultError('tampered', `${payload.name} is outside the writing grant's --only`)
+  }
+  if (signer.kind === 'cert' && !certMayHold(signer.cert, envelope.id, envelope.tier, payload.name)) {
+    throw new TypeVaultError('tampered', `${payload.name} took over an entry its writing grant was not issued`)
   }
   return payload
 }

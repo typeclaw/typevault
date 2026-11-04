@@ -22,7 +22,7 @@ $TYPEVAULT_DIR/
   identity.json     # this device's identity (0600), never commit
   trust.json        # the owner key this machine trusts
   vault/            # ciphertext and wrapped keys only, safe to commit
-    entries/        # one signed file per entry, opaque names
+    entries/        # one signed file per entry, named <tier>.<random id>
     tiers/          # tier keys wrapped to the owner, including tiers and members
     owner/          # the owner key wrapped to each owner member
     members/        # each person's member key, sealed by their password and Secret Key
