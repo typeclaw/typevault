@@ -5,10 +5,12 @@ import { join } from 'node:path'
 import { issueSealedGrant, readSealedGrant, sealedSigningSecret } from '../../access/sealed'
 import { Admin } from '../../core/admin'
 import { createIdentity, writeIdentity } from '../../core/identity'
-import { founderOf, initVault } from '../../core/init'
-import { layoutOf } from '../../core/layout'
+import { founderOf, initGlobalVault } from '../../core/init'
+import { globalLayout } from '../../core/layout'
 import { parseEntryName } from '../../core/naming'
 import { Vault } from '../../core/vault'
+
+const envIn = (dir: string) => ({ TYPEVAULT_DIR: join(dir, 'vault'), XDG_CONFIG_HOME: dir })
 
 const CLI = join(import.meta.dir, '..', 'index.ts')
 const PASSWORD = 'correct horse battery staple'
@@ -79,8 +81,12 @@ it.each(['github/late', 'TV://GitHub/Late', 'typevault://github/late'])(
     // given a machine-owned vault holding a write from a sealed grant that expired an hour ago
     const root = join(base, 'm')
     const { identity } = await createIdentity('owner', 'machine')
-    writeIdentity({ TYPEVAULT_DIR: root }, identity)
-    const vault = await Vault.open(layoutOf(root), [(await initVault(root, founderOf(identity))).owner], {})
+    writeIdentity(envIn(root), identity)
+    const vault = await Vault.open(
+      globalLayout(envIn(root)),
+      [(await initGlobalVault(founderOf(identity), envIn(root))).owner],
+      {},
+    )
     await new Admin(vault).addTier('member')
     setSystemTime(Date.now() - 3_600_000)
     try {
@@ -93,7 +99,7 @@ it.each(['github/late', 'TV://GitHub/Late', 'typevault://github/late'])(
     } finally {
       setSystemTime()
     }
-    const env = { PATH: owner['PATH'] ?? '', TYPEVAULT_DIR: root }
+    const env = { PATH: owner['PATH'] ?? '', ...envIn(root) }
 
     // when the owner runs doctor --fix without naming it, then naming it
     const skipped = await cli(['doctor', '--fix'], env)

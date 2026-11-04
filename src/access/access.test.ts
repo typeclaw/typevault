@@ -11,8 +11,8 @@ import { fromBase64 } from '../core/encoding'
 import { sealEntry, signCiphertext, signerAuthority, signerOf } from '../core/entries'
 import { TypeVaultError } from '../core/errors'
 import { createIdentity } from '../core/identity'
-import { type Founder, founderOf, initVault } from '../core/init'
-import { layoutOf } from '../core/layout'
+import { type Founder, founderOf, initGlobalVault } from '../core/init'
+import { globalLayout } from '../core/layout'
 import { withLock } from '../core/lock'
 import { parseEntryName, type Field } from '../core/naming'
 import { Vault } from '../core/vault'
@@ -20,6 +20,8 @@ import { envFor, explicitNames, resolveEnvRefs } from './env'
 import { ScopedVault } from './scoped'
 import { issueSealedGrant, readSealedGrant, type SealedBundle, sealedSigningSecret } from './sealed'
 import { SealedAccess } from './sealed-access'
+
+const envIn = (dir: string) => ({ TYPEVAULT_DIR: join(dir, 'vault'), XDG_CONFIG_HOME: dir })
 
 const machineFounder = async (): Promise<Founder> => founderOf((await createIdentity('owner', 'machine')).identity)
 
@@ -30,8 +32,8 @@ const n = parseEntryName
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'typevault-access-'))
-  owner = (await initVault(root, await machineFounder())).owner
-  vault = await Vault.open(layoutOf(root), [owner], {})
+  owner = (await initGlobalVault(await machineFounder(), envIn(root))).owner
+  vault = await Vault.open(globalLayout(envIn(root)), [owner], {})
   const admin = new Admin(vault)
   await admin.addTier('member')
   await admin.addTier('trusted')
@@ -119,10 +121,10 @@ describe('ScopedVault', () => {
     const fresh = mkdtempSync(join(tmpdir(), 'typevault-access-stale-'))
     try {
       // given a client opened while `default` was the only tier
-      const { owner: key } = await initVault(fresh, await machineFounder())
-      const admin = new Admin(await Vault.open(layoutOf(fresh), [key], {}))
+      const { owner: key } = await initGlobalVault(await machineFounder(), envIn(fresh))
+      const admin = new Admin(await Vault.open(globalLayout(envIn(fresh)), [key], {}))
       await admin.addTier('default')
-      const client = new ScopedVault(await Vault.open(layoutOf(fresh), [key], {}), [], { mode: 'direct' })
+      const client = new ScopedVault(await Vault.open(globalLayout(envIn(fresh)), [key], {}), [], { mode: 'direct' })
 
       // when another handle adds a second tier before the client writes
       await admin.addTier('other')
@@ -138,7 +140,7 @@ describe('ScopedVault', () => {
   it('infers the only tier a direct key holder can open, ignoring tiers it cannot reach', async () => {
     const memberKey = await vault.keyring.unlock('member')
     if (memberKey === undefined) throw new Error('no member key')
-    const direct = new ScopedVault(await Vault.open(layoutOf(root), [memberKey], {}), [], { mode: 'direct' })
+    const direct = new ScopedVault(await Vault.open(globalLayout(envIn(root)), [memberKey], {}), [], { mode: 'direct' })
     const stored = await direct.set({ name: n('openai'), fields: { key: { type: 'secret' as const, value: 'sk-x' } } })
     expect(stored.tier).toBe('member')
   })
@@ -146,7 +148,11 @@ describe('ScopedVault', () => {
   it('points to `tier add` when the vault has no tier yet', async () => {
     const fresh = mkdtempSync(join(tmpdir(), 'typevault-access-empty-'))
     try {
-      const empty = await Vault.open(layoutOf(fresh), [(await initVault(fresh, await machineFounder())).owner], {})
+      const empty = await Vault.open(
+        globalLayout(envIn(fresh)),
+        [(await initGlobalVault(await machineFounder(), envIn(fresh))).owner],
+        {},
+      )
       const write = new ScopedVault(empty, [], { mode: 'direct' }).set({
         name: n('openai'),
 
@@ -494,7 +500,7 @@ describe('sealed grants', () => {
     issueSealedGrant(vault, { tiers: ['member'], only: ['github/*'], ttlMs, label: 'ci:deploy' })
 
   it('carries exactly the granted entries', async () => {
-    const access = new SealedAccess(await readSealedGrant(await issue()), layoutOf(root), {})
+    const access = new SealedAccess(await readSealedGrant(await issue()), globalLayout(envIn(root)), {})
     expect((await access.values([])).map((value) => value.fields['password']?.value)).toEqual(
       expect.arrayContaining(['hunter2-bot', 'hunter2-me']),
     )
@@ -502,33 +508,33 @@ describe('sealed grants', () => {
   })
 
   it('writes entries that readers accept through the certificate', async () => {
-    const access = new SealedAccess(await readSealedGrant(await issue()), layoutOf(root), {})
+    const access = new SealedAccess(await readSealedGrant(await issue()), globalLayout(envIn(root)), {})
     await access.set({ name: n('github/bot'), fields: { password: { type: 'secret' as const, value: 'rotated' } } })
-    const stored = await (await Vault.open(layoutOf(root), [owner], {})).find(n('github/bot'))
+    const stored = await (await Vault.open(globalLayout(envIn(root)), [owner], {})).find(n('github/bot'))
     expect(stored?.payload.fields).toEqual({ password: { type: 'secret' as const, value: 'rotated' } })
     expect(stored?.envelope.signer.kind).toBe('cert')
   })
 
   it('cannot write outside its tiers', async () => {
-    const access = new SealedAccess(await readSealedGrant(await issue()), layoutOf(root), {})
+    const access = new SealedAccess(await readSealedGrant(await issue()), globalLayout(envIn(root)), {})
     await expect(
       access.set({ name: n('github/x'), fields: { text: { type: 'secret' as const, value: 'x' } }, tier: 'trusted' }),
     ).rejects.toMatchObject({ code: 'denied' })
   })
 
   it('refuses to work once expired', async () => {
-    const access = new SealedAccess(await readSealedGrant(await issue(-1)), layoutOf(root), {})
+    const access = new SealedAccess(await readSealedGrant(await issue(-1)), globalLayout(envIn(root)), {})
     await expect(access.list()).rejects.toMatchObject({ code: 'expired' })
   })
 
   it('removes an entry the certificate covers', async () => {
-    const access = new SealedAccess(await readSealedGrant(await issue()), layoutOf(root), {})
+    const access = new SealedAccess(await readSealedGrant(await issue()), globalLayout(envIn(root)), {})
     await access.remove(n('github/bot'))
     expect(await vault.find(n('github/bot'))).toBeUndefined()
   })
 
   it('removes an entry its own certificate rewrote after the grant was issued', async () => {
-    const access = new SealedAccess(await readSealedGrant(await issue()), layoutOf(root), {})
+    const access = new SealedAccess(await readSealedGrant(await issue()), globalLayout(envIn(root)), {})
     await access.set({ name: n('github/bot'), fields: { password: { type: 'secret' as const, value: 'rotated' } } })
     await access.remove(n('github/bot'))
     expect(await vault.find(n('github/bot'))).toBeUndefined()
@@ -545,7 +551,7 @@ describe('sealed grants', () => {
       scope: { tiers: ['trusted'], only: [] },
       entries: [{ ...bundle.entries[0]!, name: n(target), id, tier, rev }],
     }
-    return new SealedAccess(forged, layoutOf(root), {}).remove(n(target))
+    return new SealedAccess(forged, globalLayout(envIn(root)), {}).remove(n(target))
   }
 
   it('refuses to remove an entry outside its certificate tiers, whatever the bundle claims', async () => {
@@ -581,13 +587,13 @@ describe('sealed grants', () => {
       const entries = bundle.entries.map((entry) =>
         entry.name === 'github/bot' ? { ...entry, id: id ?? '', rev: moved.envelope.rev } : entry,
       )
-      const access = new SealedAccess({ ...bundle, entries }, layoutOf(root), {})
+      const access = new SealedAccess({ ...bundle, entries }, globalLayout(envIn(root)), {})
       await expect(access.remove(n('github/bot'))).rejects.toBeInstanceOf(TypeVaultError)
       await access.set({ name: n('github/bot'), fields: { password: { type: 'secret' as const, value: 'pwned' } } })
     }
 
     // then aws/bot keeps its value
-    const reopened = await Vault.open(layoutOf(root), [owner], {})
+    const reopened = await Vault.open(globalLayout(envIn(root)), [owner], {})
     expect((await reopened.find(n('aws/bot')))?.payload.fields['password']?.value).toBe('hunter2-bot')
   })
 
@@ -621,14 +627,14 @@ describe('sealed grants', () => {
     const target = (await vault.find(n('stripe')))?.envelope.id ?? ''
     const bundle = await readSealedGrant(await issue())
     const entries = bundle.entries.map((entry) => (entry.name === 'github/bot' ? { ...entry, id: target } : entry))
-    const access = new SealedAccess({ ...bundle, entries }, layoutOf(root), {})
+    const access = new SealedAccess({ ...bundle, entries }, globalLayout(envIn(root)), {})
 
     // when it writes and removes through that entry
     await access.set({ name: n('github/bot'), fields: { password: { type: 'secret' as const, value: 'pwned' } } })
     await expect(access.remove(n('github/bot'))).rejects.toMatchObject({ code: 'denied' })
 
     // then stripe is untouched
-    const reopened = await Vault.open(layoutOf(root), [owner], {})
+    const reopened = await Vault.open(globalLayout(envIn(root)), [owner], {})
     expect((await reopened.find(n('stripe')))?.payload.fields['password']?.value).toBe('sk_live_x')
   })
 
@@ -657,7 +663,7 @@ describe('sealed grants', () => {
     const forged = { id: target.envelope.id, tier: 'trusted', rev: target.envelope.rev }
     const entries = bundle.entries.map((entry) => (entry.name === 'github/bot' ? { ...entry, ...forged } : entry))
     const scope = { tiers: ['trusted'], only: [] }
-    const access = new SealedAccess({ ...bundle, scope, entries }, layoutOf(root), {})
+    const access = new SealedAccess({ ...bundle, scope, entries }, globalLayout(envIn(root)), {})
 
     // when it writes and removes through that entry
     const fields = { password: { type: 'secret' as const, value: 'pwned' } }
@@ -665,7 +671,7 @@ describe('sealed grants', () => {
     await expect(access.remove(n('github/bot'))).rejects.toMatchObject({ code: 'denied' })
 
     // then stripe is untouched
-    const reopened = await Vault.open(layoutOf(root), [owner], {})
+    const reopened = await Vault.open(globalLayout(envIn(root)), [owner], {})
     expect((await reopened.find(n('stripe')))?.payload.fields['password']?.value).toBe('sk_live_x')
   })
 
@@ -678,14 +684,14 @@ describe('sealed grants', () => {
     const bundle = await readSealedGrant(await issue())
     const forged = { id: victim.envelope.id, rev: victim.envelope.rev }
     const entries = bundle.entries.map((entry) => (entry.name === 'github/bot' ? { ...entry, ...forged } : entry))
-    const access = new SealedAccess({ ...bundle, entries }, layoutOf(root), {})
+    const access = new SealedAccess({ ...bundle, entries }, globalLayout(envIn(root)), {})
 
     // when it writes and removes through that entry
     await access.set({ name: n('github/bot'), fields: { password: { type: 'secret' as const, value: 'pwned' } } })
     await expect(access.remove(n('github/bot'))).rejects.toMatchObject({ code: 'denied' })
 
     // then aws/root is untouched and nothing looks tampered
-    const reopened = await Vault.open(layoutOf(root), [owner], {})
+    const reopened = await Vault.open(globalLayout(envIn(root)), [owner], {})
     expect((await reopened.find(n('aws/root')))?.payload.fields['key']?.value).toBe('aws-original')
     expect((await reopened.scan()).problems).toEqual([])
   })

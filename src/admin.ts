@@ -27,7 +27,7 @@ export type GrantRequest = {
 }
 
 export type AdminOptions = {
-  /** A global-style typevault root. Defaults to `TYPEVAULT_DIR`; without one the vault is chosen like the CLI's. */
+  /** The global vault's directory. Defaults to `TYPEVAULT_DIR`; without one the vault is chosen like the CLI's. */
   readonly dir?: string
   /** Use the global vault instead of the project's, like the CLI's `-g`. Defaults to `TYPEVAULT_GLOBAL`. */
   readonly global?: boolean

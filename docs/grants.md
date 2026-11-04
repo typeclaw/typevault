@@ -56,8 +56,8 @@ is never written to logs or shown to the model.
 
 ## SDK options
 
-`createClient` takes `grant` (default `TYPEVAULT_GRANT`), `dir` and `env`; `dir` (default `TYPEVAULT_DIR`) selects a
-global-style vault, and without it the vault is chosen like the CLI's. Without a grant it
+`createClient` takes `grant` (default `TYPEVAULT_GRANT`), `dir` and `env`; `dir` (default `TYPEVAULT_DIR`) selects the
+global vault's directory, and without it the vault is chosen like the CLI's. Without a grant it
 refuses unless you pass `direct: true`, which reads through the unlocked session, or loads a machine member's key
 into your process; keep that to issuers.
 `createAdmin` takes `dir`, `ceiling` and `env`, and offers `grant`, `list` and `revoke`. Both take `global: true` to use

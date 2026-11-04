@@ -12,14 +12,16 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-import { type Layout, layoutOf } from '../core/layout'
+import { globalLayout, type Layout } from '../core/layout'
 import { anchorAudit, appendAudit, readAudit, verifyAudit } from './log'
 
+let base: string
 let layout: Layout
 beforeEach(() => {
-  layout = layoutOf(mkdtempSync(join(tmpdir(), 'typevault-audit-')))
+  base = mkdtempSync(join(tmpdir(), 'typevault-audit-'))
+  layout = globalLayout({ TYPEVAULT_DIR: join(base, 'vault'), XDG_CONFIG_HOME: base })
 })
-afterEach(() => rmSync(layout.root, { recursive: true, force: true }))
+afterEach(() => rmSync(base, { recursive: true, force: true }))
 
 const read = (entries: readonly string[]) =>
   appendAudit(layout, { action: 'read', mode: 'live', label: 'session:a', entries })

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import type { Subprocess } from 'bun'
 
-import { layoutOf, type Layout } from '../core/layout'
+import { globalLayout, type Layout } from '../core/layout'
 import { startBackground, stopDaemon } from './spawn'
 
 const LOCK_MODULE = join(import.meta.dir, '..', 'core', 'lock.ts')
@@ -78,7 +78,7 @@ let standIns: Subprocess[] = []
 beforeEach(() => {
   // Short root: unix socket paths are limited to ~104 bytes.
   root = mkdtempSync('/tmp/tvp-')
-  layout = layoutOf(root)
+  layout = globalLayout({ TYPEVAULT_DIR: join(root, 'vault'), XDG_CONFIG_HOME: root })
   mkdirSync(layout.run, { recursive: true })
 })
 

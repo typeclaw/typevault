@@ -21,7 +21,7 @@ export {
 export type ClientOptions = {
   /** A live (`tvl1.…`), sealed (`tvg1:…`) or `@path` grant. Defaults to `TYPEVAULT_GRANT`. */
   readonly grant?: string
-  /** A global-style typevault root. Defaults to `TYPEVAULT_DIR`; without one the vault is chosen like the CLI's. */
+  /** The global vault's directory. Defaults to `TYPEVAULT_DIR`; without one the vault is chosen like the CLI's. */
   readonly dir?: string
   /** Use the global vault instead of the project's, like the CLI's `-g`. Defaults to `TYPEVAULT_GLOBAL`. */
   readonly global?: boolean

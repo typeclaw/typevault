@@ -8,10 +8,12 @@ import type { SecretKey } from './crypto'
 import { doctor } from './doctor'
 import { sealEntry, signerOf } from './entries'
 import { createIdentity } from './identity'
-import { type Founder, founderOf, initVault } from './init'
-import { layoutOf } from './layout'
+import { type Founder, founderOf, initGlobalVault } from './init'
+import { globalLayout } from './layout'
 import { parseEntryName } from './naming'
 import { Vault } from './vault'
+
+const envIn = (dir: string) => ({ TYPEVAULT_DIR: join(dir, 'vault'), XDG_CONFIG_HOME: dir })
 
 const machineFounder = async (): Promise<Founder> => founderOf((await createIdentity('owner', 'machine')).identity)
 
@@ -22,8 +24,8 @@ const name = parseEntryName('openai')
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'typevault-doctor-'))
-  owner = (await initVault(root, await machineFounder())).owner
-  vault = await Vault.open(layoutOf(root), [owner], {})
+  owner = (await initGlobalVault(await machineFounder(), envIn(root))).owner
+  vault = await Vault.open(globalLayout(envIn(root)), [owner], {})
   await new Admin(vault).addTier('team')
 })
 afterEach(() => rmSync(root, { recursive: true, force: true }))

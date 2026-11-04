@@ -12,7 +12,7 @@ import type { SecretKey } from '../core/crypto'
 import { TypeVaultError } from '../core/errors'
 import { atomicWrite } from '../core/fsx'
 import { type Identity, readIdentity, sealedCopyPath, unlockIdentity } from '../core/identity'
-import { findLocalVault, type Layout, layoutOf, localLayout, resolveRoot } from '../core/layout'
+import { findLocalVault, globalLayout, type Layout, localLayout } from '../core/layout'
 import { Vault } from '../core/vault'
 import { callDaemon, isDaemonAlive } from '../daemon/client'
 import { LiveAccess } from '../daemon/live-access'
@@ -29,8 +29,8 @@ export const wantsGlobal = (env: Env): boolean => isSet(env['TYPEVAULT_GLOBAL'])
 
 /** The selected vault, or undefined when no project vault is found from `cwd`. Never falls back to the global one. */
 export function findLayout(env: Env, cwd: string = process.cwd()): Layout | undefined {
-  if (wantsGlobal(env)) return layoutOf(resolveRoot(env))
-  const dir = findLocalVault(cwd)
+  if (wantsGlobal(env)) return globalLayout(env)
+  const dir = findLocalVault(cwd, env)
   return dir === undefined ? undefined : localLayout(dir, env)
 }
 
