@@ -1,7 +1,16 @@
 import { afterEach, beforeEach, expect, it } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { type Layout, layoutOf } from '../core/layout'
 import { anchorAudit, appendAudit, readAudit, verifyAudit } from './log'
@@ -27,6 +36,45 @@ it('detects an edited record', async () => {
   await read(['openai'])
   writeFileSync(layout.auditLog, readFileSync(layout.auditLog, 'utf8').replace('openai', 'stripe'))
   expect(verifyAudit(layout)).toEqual({ ok: false, reason: 'record 2 was modified' })
+})
+
+it('refuses to anchor through a symlinked anchors file', async () => {
+  await read(['github/bot'])
+  const outside = join(layout.root, 'outside.txt')
+  writeFileSync(outside, 'mine\n')
+  mkdirSync(dirname(layout.anchorsFile), { recursive: true })
+  symlinkSync(outside, layout.anchorsFile)
+  await expect(anchorAudit(layout)).rejects.toThrow('is a symlink')
+  expect(readFileSync(outside, 'utf8')).toBe('mine\n')
+})
+
+it('refuses to anchor through a symlinked anchors directory', async () => {
+  await read(['github/bot'])
+  const outside = join(layout.root, 'outside')
+  mkdirSync(outside)
+  mkdirSync(layout.vault, { recursive: true })
+  symlinkSync(outside, dirname(layout.anchorsFile))
+  await expect(anchorAudit(layout)).rejects.toThrow('is a symlink')
+  expect(readdirSync(outside)).toEqual([])
+})
+
+it('refuses to anchor through a dangling anchors-file symlink', async () => {
+  await read(['github/bot'])
+  const outside = join(layout.root, 'outside.txt')
+  mkdirSync(dirname(layout.anchorsFile), { recursive: true })
+  symlinkSync(outside, layout.anchorsFile)
+  await expect(anchorAudit(layout)).rejects.toThrow('is a symlink')
+  expect(existsSync(outside)).toBe(false)
+})
+
+it('refuses to anchor through a symlinked vault', async () => {
+  await read(['github/bot'])
+  const outside = join(layout.root, 'outside')
+  mkdirSync(outside)
+  rmSync(layout.vault, { recursive: true, force: true })
+  symlinkSync(outside, layout.vault)
+  await expect(anchorAudit(layout)).rejects.toThrow('is a symlink')
+  expect(readdirSync(outside)).toEqual([])
 })
 
 it('detects a rewritten log that no longer matches its anchor', async () => {

@@ -1,11 +1,11 @@
 import { appendFileSync, closeSync, existsSync, fsyncSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, relative } from 'node:path'
 
 import { z } from 'zod'
 
 import { sha256Hex } from '../core/crypto'
 import { canonicalJson, type Json, utf8 } from '../core/encoding'
-import { ensureDir } from '../core/fsx'
+import { assertNoSymlinks, ensureDir } from '../core/fsx'
 import type { Layout } from '../core/layout'
 import { withLock } from '../core/lock'
 
@@ -74,6 +74,8 @@ export function readAudit(layout: Layout): readonly AuditRecord[] {
 }
 
 function writeAnchor(layout: Layout, last: AuditRecord): void {
+  // The anchors live in the committed vault: a pulled symlink there must not redirect this append.
+  assertNoSymlinks(dirname(layout.vault), relative(dirname(layout.vault), layout.anchorsFile))
   ensureDir(dirname(layout.anchorsFile))
   appendLine(layout.anchorsFile, JSON.stringify({ seq: last.seq, hash: last.hash, at: last.at }))
 }

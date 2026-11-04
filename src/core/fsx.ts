@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, renameSync, writeSync } from 'node:fs'
+import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, renameSync, writeSync } from 'node:fs'
 import { basename, dirname, join, sep } from 'node:path'
 
 import { randomHex } from './crypto'
@@ -42,7 +42,9 @@ export function assertNoSymlinks(base: string, rel: string): void {
   let path = base
   for (const part of rel.split(sep).filter((segment) => segment !== '')) {
     path = join(path, part)
-    if (!existsSync(path)) return
-    if (lstatSync(path).isSymbolicLink()) throw new TypeVaultError('tampered', `${path} is a symlink`)
+    // lstat, not exists: a dangling symlink reads as missing yet a write through it creates its target.
+    const stat = lstatSync(path, { throwIfNoEntry: false })
+    if (stat === undefined) return
+    if (stat.isSymbolicLink()) throw new TypeVaultError('tampered', `${path} is a symlink`)
   }
 }
