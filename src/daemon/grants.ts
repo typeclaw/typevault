@@ -41,6 +41,9 @@ const PREFIX = 'tvl1'
  */
 export const SESSION_CEILING = ':session'
 
+/** Every request under a grant checks each link of its chain, so derivation may not nest without bound. */
+export const MAX_CHAIN = 8
+
 /**
  * Live grants, persisted (hashed) so a daemon restart doesn't cut sessions off.
  * A token is `tvl1.<id>.<secret>`; only sha256(secret) is stored.
@@ -62,6 +65,14 @@ export class GrantStore {
 
   issue(request: GrantRequest): { readonly token: string; readonly record: GrantRecord } {
     const parent = request.parent === undefined ? undefined : this.#records.find((r) => r.id === request.parent)
+    let links = 1
+    for (let link = parent; link !== undefined; links++) {
+      const parentId = link.parent
+      link = parentId === undefined ? undefined : this.#records.find((r) => r.id === parentId)
+    }
+    if (links > MAX_CHAIN) {
+      throw new TypeVaultError('invalid', `a grant can be derived at most ${MAX_CHAIN - 1} levels deep`)
+    }
     const requestedExp = Date.now() + request.ttlMs
     const exp = parent === undefined ? requestedExp : Math.min(requestedExp, Date.parse(parent.exp))
     const secret = randomToken(32)
