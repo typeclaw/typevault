@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>TypeVault key hierarchy</title>
+    <link rel="stylesheet" href="diagram.css" />
+    <style>
+      .grid {
+        display: grid;
+        grid-template-columns: 110px 210px 210px 190px;
+        justify-content: space-between;
+        row-gap: 48px;
+        align-items: stretch;
+      }
+      .row,
+      .where {
+        align-self: center;
+      }
+      .row {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .where {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .entries {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .entry {
+        padding: 6px 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="canvas">
+      <div class="grid">
+        <div class="row">Unlock</div>
+        <div class="box" id="bob-unlock">
+          <h3>bob (person)</h3>
+          <p>password + Secret Key</p>
+        </div>
+        <div class="box" id="ci-unlock">
+          <h3>ci (machine)</h3>
+          <p>no password: its key file or <code>TYPEVAULT_KEY</code></p>
+        </div>
+        <div class="where">Stays on the device</div>
+
+        <div class="row">Member keys</div>
+        <div class="box key" id="bob-key"><h3>bob's key</h3></div>
+        <div class="box key" id="ci-key"><h3>ci's key</h3></div>
+        <div class="where">A person's sits in <code>members/</code>, sealed by password and Secret Key</div>
+
+        <div class="row">Tier keys</div>
+        <div class="box key" id="trusted"><h3>trusted</h3></div>
+        <div class="box key" id="default"><h3>default</h3></div>
+        <div class="where"><code>tiers/</code>, wrapped to each member and including tier</div>
+
+        <div class="row">Entries</div>
+        <div class="entries" id="trusted-entries">
+          <div class="box entry"><code>tv://stripe</code></div>
+        </div>
+        <div class="entries" id="default-entries">
+          <div class="box entry"><code>tv://openai</code></div>
+          <div class="box entry"><code>tv://github/bot</code></div>
+        </div>
+        <div class="where"><code>entries/</code>, age-encrypted to their tier and signed</div>
+      </div>
+      <p class="caption">
+        bob reaches every entry; ci reaches only <code>default</code>. Every file on the right can be committed.
+      </p>
+    </div>
+    <script type="module">
+      import { link, draw } from './links.js'
+      link('bob-unlock', 'b', 'bob-key', 't', 'unseals')
+      link('ci-unlock', 'b', 'ci-key', 't', 'loads')
+      link('bob-key', 'b', 'trusted', 't', 'unwraps')
+      link('ci-key', 'b', 'default', 't', 'unwraps')
+      link('trusted', 'r', 'default', 'l', 'includes', { lift: 12 })
+      link('trusted', 'b', 'trusted-entries', 't', 'decrypts', { cls: 'key' })
+      link('default', 'b', 'default-entries', 't', 'decrypts', { cls: 'key' })
+      draw()
+    </script>
+  </body>
+</html>
