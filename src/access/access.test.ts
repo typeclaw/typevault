@@ -732,7 +732,7 @@ describe('sealed grants', () => {
     expect((await vault.find(n('github/new')))?.envelope.signer.kind).toBe('tier')
   })
 
-  it('adopts a write whose certificate expired only when the owner names it', async () => {
+  it('adopts a write whose certificate expired only when the owner pins it', async () => {
     // given a certificate write nobody adopted before the certificate expired
     const signer = await certSigner(60_000)
     await vault.put(
@@ -741,16 +741,45 @@ describe('sealed grants', () => {
     )
     setSystemTime(Date.parse(signer.ref.cert.exp) + 1_000)
     try {
-      // when the owner adopts without naming it, its holder-chosen timestamp doesn't get it adopted
-      expect(await adoptCertWrites(vault)).toEqual({ adopted: [], expired: ['github/late'] })
+      // when the owner adopts without pinning it, its holder-chosen timestamp doesn't get it adopted
+      const listed = await adoptCertWrites(vault)
+      expect(listed).toMatchObject({ adopted: [], expired: [{ name: 'github/late', rev: 1 }] })
       expect(await vault.find(n('github/late'))).toBeUndefined()
 
-      // then naming it adopts it
-      expect(await adoptCertWrites(vault, { expired: [n('github/late')] })).toEqual({
-        adopted: ['github/late'],
-        expired: [],
-      })
+      // then pinning the listed write adopts it
+      const pin = { name: n('github/late'), digest: listed.expired[0]?.digest ?? '' }
+      expect(await adoptCertWrites(vault, { expired: [pin] })).toEqual({ adopted: ['github/late'], expired: [] })
       expect((await vault.find(n('github/late')))?.envelope.signer.kind).toBe('tier')
+    } finally {
+      setSystemTime()
+    }
+  })
+
+  it('does not adopt a forgery that replaced the expired write the owner pinned', async () => {
+    // given an expired certificate write the owner reviewed and pinned
+    const signer = await certSigner(60_000)
+    const write = (value: string) =>
+      vault.put(
+        { name: n('github/late'), fields: { text: { type: 'secret' as const, value } }, tier: 'member' },
+        signer,
+      )
+    await write('honest')
+    setSystemTime(Date.parse(signer.ref.cert.exp) + 1_000)
+    try {
+      const honest = (await adoptCertWrites(vault)).expired[0]
+      const pin = { name: n('github/late'), digest: honest?.digest ?? '' }
+
+      // when the holder overwrites it after expiry with a backdated write under the same name
+      setSystemTime(Date.parse(signer.ref.cert.exp) - 1_000)
+      await write('forged')
+      setSystemTime(Date.parse(signer.ref.cert.exp) + 1_000)
+
+      // then the pin no longer matches, and the forgery is listed under a different digest
+      const adoption = await adoptCertWrites(vault, { expired: [pin] })
+      expect(adoption.adopted).toEqual([])
+      expect(adoption.expired).toMatchObject([{ name: 'github/late', rev: 2 }])
+      expect(adoption.expired[0]?.digest).not.toBe(honest?.digest)
+      expect(await vault.find(n('github/late'))).toBeUndefined()
     } finally {
       setSystemTime()
     }

@@ -81,7 +81,7 @@ it('keeps a human-owned vault locked until its owner unlocks it, and locks it ag
 })
 
 it.each(['github/late', 'TV://GitHub/Late', 'typevault://github/late'])(
-  'keeps an expired sealed write only when doctor --adopt-expired names it (as %p)',
+  'keeps an expired sealed write only when doctor --adopt-expired pins it (as %p)',
   async (named) => {
     // given a machine-owned vault holding a write from a sealed grant that expired an hour ago
     const root = join(base, 'm')
@@ -106,12 +106,15 @@ it.each(['github/late', 'TV://GitHub/Late', 'typevault://github/late'])(
     }
     const env = { PATH: owner['PATH'] ?? '', ...envIn(root) }
 
-    // when the owner runs doctor --fix without naming it, then naming it
+    // when the owner runs doctor --fix without pinning it, then by name alone, then with the digest it listed
     const skipped = await cli(['doctor', '--fix'], env)
-    const adopted = succeeds(await cli(['doctor', '--fix', '--adopt-expired', named], env))
+    const nameOnly = await cli(['doctor', '--fix', '--adopt-expired', named], env)
+    const digest = /--adopt-expired github\/late@([0-9a-f]{16})/.exec(skipped.stdout)?.[1]
+    const adopted = succeeds(await cli(['doctor', '--fix', '--adopt-expired', `${named}@${digest}`], env))
 
-    // then it is listed and left alone, then adopted
-    expect(skipped.stdout).toContain('expired sealed write: github/late')
+    // then it is listed with its revision and left alone, a bare name is refused, then it is adopted
+    expect(skipped.stdout).toContain('expired sealed write: github/late rev 1 at ')
+    expect(nameOnly.stderr).toContain('--adopt-expired expects <name>@<digest>')
     expect(adopted.stdout).toContain('adopted sealed write: github/late')
   },
 )

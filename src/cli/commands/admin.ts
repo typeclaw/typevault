@@ -5,7 +5,7 @@ import { defineCommand } from 'citty'
 
 import { verifyAudit } from '../../audit/log'
 import { Admin } from '../../core/admin'
-import { adoptCertWrites } from '../../core/adopt'
+import { adoptCertWrites, type ExpiredPin } from '../../core/adopt'
 import { doctor as runDoctor } from '../../core/doctor'
 import { TypeVaultError } from '../../core/errors'
 import { founderOf, initGlobalVault, initLocalVault } from '../../core/init'
@@ -95,6 +95,14 @@ export const tier = defineCommand({
   },
 })
 
+function parseExpiredPin(input: string): ExpiredPin {
+  const at = input.lastIndexOf('@')
+  const digest = at === -1 ? '' : input.slice(at + 1)
+  if (!/^[0-9a-f]{16}$/.test(digest))
+    throw new TypeVaultError('invalid', `--adopt-expired expects <name>@<digest> as doctor lists it, got "${input}"`)
+  return { name: parseEntryName(input.slice(0, at)), digest }
+}
+
 function printRotation(tierName: string, affected: readonly string[]): void {
   print(`rotated ${tierName}`)
   if (affected.length === 0) return
@@ -174,17 +182,17 @@ export const doctor = defineCommand({
     'adopt-expired': {
       type: 'string',
       description:
-        'Comma-separated names of sealed-grant writes to keep although their certificate expired before adoption (nothing proves when they were written)',
+        'Comma-separated <name>@<digest> of sealed-grant writes to keep although their certificate expired before adoption, as `doctor --fix` lists them (nothing proves when they were written)',
     },
   },
   async run({ args }) {
     const vault = await openDirect(process.env)
     if (args.fix === true) {
-      const adoption = await adoptCertWrites(vault, { expired: csv(args['adopt-expired'] ?? '').map(parseEntryName) })
+      const adoption = await adoptCertWrites(vault, { expired: csv(args['adopt-expired'] ?? '').map(parseExpiredPin) })
       for (const name of adoption.adopted) print(`adopted sealed write: ${name}`)
-      for (const name of adoption.expired)
+      for (const write of adoption.expired)
         print(
-          `expired sealed write: ${name} (its certificate expired before adoption; keep it with \`--adopt-expired ${name}\` only if you know it was written in time)`,
+          `expired sealed write: ${write.name} rev ${write.rev} at ${write.at} (its certificate expired before adoption; keep this exact write with \`--adopt-expired ${write.name}@${write.digest}\` only if you know it was written in time)`,
         )
     }
     const report = await runDoctor(vault, args.fix === true)
