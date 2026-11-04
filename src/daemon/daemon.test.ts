@@ -18,6 +18,7 @@ import { parseEntryName } from '../core/naming'
 import { Vault } from '../core/vault'
 import { callDaemon } from './client'
 import { type RunningDaemon, startDaemon } from './daemon'
+import { MAX_CHAIN } from './grants'
 import { LiveAccess } from './live-access'
 
 // Unix socket paths are limited to ~104 bytes (108 on Windows), too short under the default temp dir on macOS and
@@ -170,6 +171,26 @@ describe('live grants', () => {
     await expect(parent.values(many)).rejects.toMatchObject({ code: 'invalid' })
     await expect(parent.values(['a'.repeat(257)])).rejects.toMatchObject({ code: 'invalid' })
     expect(await parent.values([...many.slice(0, 99), 'a'.repeat(256)])).toEqual([])
+  })
+
+  it('refuses a grant or derive with too many or too long tiers', async () => {
+    const many = Array.from({ length: 101 }, () => 'member')
+    await expect(grant('default', { tiers: many })).rejects.toMatchObject({ code: 'invalid' })
+    await expect(grant('default', { tiers: ['a'.repeat(257)] })).rejects.toMatchObject({ code: 'invalid' })
+    const { token } = await grant('default', { tiers: ['member'] })
+    const parent = new LiveAccess(layout.agentSocket, token)
+    await expect(parent.call('/v1/derive', { tiers: many }, Token)).rejects.toMatchObject({ code: 'invalid' })
+    expect((await parent.call('/v1/derive', { tiers: many.slice(0, 100) }, Token)).token).toStartWith('tvl1.')
+  })
+
+  it(`refuses to derive a grant more than ${MAX_CHAIN - 1} levels deep`, async () => {
+    let { token } = await grant('default', { tiers: ['member'] })
+    for (let depth = 1; depth < MAX_CHAIN; depth++) {
+      ;({ token } = await new LiveAccess(layout.agentSocket, token).call('/v1/derive', {}, Token))
+    }
+    const deepest = new LiveAccess(layout.agentSocket, token)
+    expect((await deepest.list()).length).toBe(2)
+    await expect(deepest.call('/v1/derive', {}, Token)).rejects.toMatchObject({ code: 'invalid' })
   })
 
   it('keeps a capped socket away from grants it did not issue and from the audit trail', async () => {
