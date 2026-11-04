@@ -35,8 +35,11 @@ export type ResolvedGrant = { readonly record: GrantRecord; readonly chain: Scop
 
 const PREFIX = 'tvl1'
 
-/** The ceiling name marking an unlocked session's grant (and grants derived from it). */
-export const SESSION_CEILING = 'session'
+/**
+ * The ceiling name marking an unlocked session's grant (and grants derived from it). It is no valid ceiling name,
+ * so no admin socket owns the session: a ceiling named `session` can neither list nor revoke it.
+ */
+export const SESSION_CEILING = ':session'
 
 /**
  * Live grants, persisted (hashed) so a daemon restart doesn't cut sessions off.
