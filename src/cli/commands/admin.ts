@@ -10,6 +10,7 @@ import { doctor as runDoctor } from '../../core/doctor'
 import { TypeVaultError } from '../../core/errors'
 import { founderOf, initLocalVault, initVault } from '../../core/init'
 import { type Layout, LOCAL_VAULT_DIR, layoutOf, localLayout, resolveRoot } from '../../core/layout'
+import { parseEntryName } from '../../core/naming'
 import { Vault } from '../../core/vault'
 import { stopDaemon } from '../../daemon/spawn'
 import { openAdmin, openDirect, openPublic, wantsGlobal } from '../context'
@@ -170,15 +171,21 @@ export const doctor = defineCommand({
   args: {
     fix: { type: 'boolean' },
     'adopt-expired': {
-      type: 'boolean',
-      description: 'Also keep sealed-grant writes whose certificate expired before adoption',
+      type: 'string',
+      description:
+        'Comma-separated names of sealed-grant writes to keep although their certificate expired before adoption (nothing proves when they were written)',
     },
   },
   async run({ args }) {
     const vault = await openDirect(process.env)
-    if (args.fix === true)
-      for (const name of await adoptCertWrites(vault, { expired: args['adopt-expired'] === true }))
-        print(`adopted sealed write: ${name}`)
+    if (args.fix === true) {
+      const adoption = await adoptCertWrites(vault, { expired: csv(args['adopt-expired'] ?? '').map(parseEntryName) })
+      for (const name of adoption.adopted) print(`adopted sealed write: ${name}`)
+      for (const name of adoption.expired)
+        print(
+          `expired sealed write: ${name} (its certificate expired before adoption; keep it with \`--adopt-expired ${name}\` only if you know it was written in time)`,
+        )
+    }
     const report = await runDoctor(vault, args.fix === true)
     for (const problem of report.problems) print(`problem: ${problem.file}: ${problem.reason}`)
     for (const file of report.mergesResolved) print(`merged: ${file}`)

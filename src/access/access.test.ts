@@ -614,8 +614,32 @@ describe('sealed grants', () => {
       { name: n('github/new'), fields: { text: { type: 'secret' as const, value: 'hi' } }, tier: 'member' },
       await certSigner(60_000),
     )
-    expect(await adoptCertWrites(vault)).toEqual(['github/new'])
+    expect(await adoptCertWrites(vault)).toEqual({ adopted: ['github/new'], expired: [] })
     expect((await vault.find(n('github/new')))?.envelope.signer.kind).toBe('tier')
+  })
+
+  it('adopts a write whose certificate expired only when the owner names it', async () => {
+    // given a certificate write nobody adopted before the certificate expired
+    const signer = await certSigner(60_000)
+    await vault.put(
+      { name: n('github/late'), fields: { text: { type: 'secret' as const, value: 'hi' } }, tier: 'member' },
+      signer,
+    )
+    setSystemTime(Date.parse(signer.ref.cert.exp) + 1_000)
+    try {
+      // when the owner adopts without naming it, its holder-chosen timestamp doesn't get it adopted
+      expect(await adoptCertWrites(vault)).toEqual({ adopted: [], expired: ['github/late'] })
+      expect(await vault.find(n('github/late'))).toBeUndefined()
+
+      // then naming it adopts it
+      expect(await adoptCertWrites(vault, { expired: [n('github/late')] })).toEqual({
+        adopted: ['github/late'],
+        expired: [],
+      })
+      expect((await vault.find(n('github/late')))?.envelope.signer.kind).toBe('tier')
+    } finally {
+      setSystemTime()
+    }
   })
 
   it('keeps a write trusted only through an expired certificate from moving the revision marks', async () => {
