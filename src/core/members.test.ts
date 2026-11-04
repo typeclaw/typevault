@@ -80,6 +80,21 @@ it("keeps ciphertext from before a member joined out of the member's reach", asy
   await expect(unseal([tierKey.identity], fromBase64(before.payload))).rejects.toMatchObject({ code: 'denied' })
 })
 
+it("keeps an included tier's ciphertext from before the include out of the includer's reach", async () => {
+  // given a member of one tier, and an entry in another tier, as git history keeps it
+  const key = await addMachine('ci', ['trusted'])
+  const before = await put('openai', 'member')
+
+  // when its tier starts including the other
+  await admin.include('trusted', 'member')
+
+  // then the included tier was rotated, and the key it now reaches can't open the old ciphertext
+  const tierKey = await (await open([key])).keyring.unlock('member')
+  if (tierKey === undefined) throw new Error('includer does not reach the included tier')
+  expect(tierKey.role).toMatchObject({ kind: 'tier', gen: 2 })
+  await expect(unseal([tierKey.identity], fromBase64(before.payload))).rejects.toMatchObject({ code: 'denied' })
+})
+
 it('locks a removed member out and lists what it could read for rotation', async () => {
   // given a member that could read one entry
   await put('openai', 'member')
@@ -148,6 +163,6 @@ it('keeps other members reading after a removal rotates tiers they share', async
 
   // then the other still reads both tiers at their new generations
   const vault = await open([staying])
-  expect(vault.state.tiers['member']?.gen).toBe(4)
+  expect(vault.state.tiers['member']?.gen).toBe(5)
   expect((await vault.scan()).entries.map((entry): string => entry.payload.name).sort()).toEqual(['openai', 'stripe'])
 })
