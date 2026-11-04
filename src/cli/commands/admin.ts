@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { defineCommand } from 'citty'
@@ -6,9 +7,11 @@ import { verifyAudit } from '../../audit/log'
 import { Admin } from '../../core/admin'
 import { adoptCertWrites } from '../../core/adopt'
 import { doctor as runDoctor } from '../../core/doctor'
+import { TypeVaultError } from '../../core/errors'
 import { founderOf, initLocalVault, initVault } from '../../core/init'
-import { LOCAL_VAULT_DIR, resolveRoot } from '../../core/layout'
+import { type Layout, LOCAL_VAULT_DIR, layoutOf, localLayout, resolveRoot } from '../../core/layout'
 import { Vault } from '../../core/vault'
+import { stopDaemon } from '../../daemon/spawn'
 import { openAdmin, openDirect, openPublic, wantsGlobal } from '../context'
 import { csv, note, print, table } from '../output'
 import { ensureIdentity, identityArgs } from './members'
@@ -20,6 +23,7 @@ export const init = defineCommand({
     const env = process.env
     const founder = founderOf(await ensureIdentity(env, args))
     const global = wantsGlobal(env)
+    await stopStaleDaemon(global ? layoutOf(resolveRoot(env)) : localLayout(join(process.cwd(), LOCAL_VAULT_DIR), env))
     const { layout, owner } = global
       ? await initVault(resolveRoot(env), founder)
       : await initLocalVault(join(process.cwd(), LOCAL_VAULT_DIR), founder, env)
@@ -31,6 +35,14 @@ export const init = defineCommand({
     note('next: typevault set <name> --type ... --stdin (more tiers: typevault tier add <name>)')
   },
 })
+
+/** A daemon still running here served a vault that no longer exists; a new vault can't start beside it. */
+async function stopStaleDaemon(layout: Layout): Promise<void> {
+  if (existsSync(layout.ownerFile)) return
+  await stopDaemon(layout).catch((error: unknown) => {
+    if (!(error instanceof TypeVaultError && error.code === 'not_found')) throw error
+  })
+}
 
 /** Created by `init` so `set` and `grant` work before any tier design; as the only tier, `set` picks it. */
 const STARTER_TIER = 'default'
