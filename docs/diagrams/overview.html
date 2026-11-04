@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>TypeVault overview</title>
+    <link rel="stylesheet" href="diagram.css" />
+    <style>
+      .grid {
+        display: grid;
+        grid-template-columns: 250px 250px 250px;
+        justify-content: space-between;
+        row-gap: 64px;
+        align-items: center;
+      }
+      #run {
+        margin-top: 12px;
+        background: var(--box);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="canvas">
+      <div class="grid">
+        <div></div>
+        <div class="box" id="human">
+          <h3>You</h3>
+          <p><code>typevault unlock</code> once, with your password and Secret Key</p>
+        </div>
+        <div></div>
+
+        <div class="box dashed" id="agent">
+          <h3>Agent session</h3>
+          <p>Holds a grant, never a key: <code>TYPEVAULT_GRANT</code></p>
+          <div class="box" id="run">
+            <code>typevault run -- ./deploy.sh</code>
+            <p>Secrets arrive as env vars; output comes back redacted</p>
+          </div>
+        </div>
+        <div class="box accent" id="daemon">
+          <h3>Daemon</h3>
+          <ul>
+            <li>holds the unlocked keys</li>
+            <li>checks each grant's tiers, names and TTL</li>
+            <li>revokes instantly, with derived grants</li>
+          </ul>
+        </div>
+        <div class="box" id="vault">
+          <h3><code>.typevault/</code> in git</h3>
+          <ul>
+            <li>entries, age-encrypted and signed</li>
+            <li>tier keys, wrapped to members</li>
+            <li>member keys, sealed</li>
+            <li>owner-signed manifests</li>
+          </ul>
+          <span class="tag safe">no key in the clear</span>
+        </div>
+
+        <div class="box" id="issuer">
+          <h3>Issuer</h3>
+          <p>You, TypeClaw or CI. Mints grants up to the owner-signed ceiling of its admin socket</p>
+        </div>
+        <div></div>
+        <div class="box" id="audit">
+          <h3>Audit log</h3>
+          <p>Every read, with its label and reason; hash-chained and anchored in git</p>
+        </div>
+      </div>
+      <p class="caption">
+        The model sees a grant and redacted output. Keys stay in the daemon; values go only to the program that needs
+        them.
+      </p>
+    </div>
+    <script type="module">
+      import { link, draw } from './links.js'
+      link('human', 'b', 'daemon', 't', 'your key, for 8h')
+      link('agent', 'r', 'daemon', 'l', 'read', { shift: -24, lift: 12 })
+      link('daemon', 'l', 'agent', 'r', 'values', { shift: 24, lift: -12, cls: 'accent' })
+      link('daemon', 'r', 'vault', 'l', 'decrypt', { lift: 12 })
+      link('issuer', 't', 'agent', 'b', 'hands over a grant')
+      link('issuer', 'r', 'daemon', 'b', 'mint grant', { toShift: -50, labelAt: 0.3 })
+      link('daemon', 'b', 'audit', 'l', 'every read', { shift: 50, toShift: 0, labelAt: 0.7 })
+      draw()
+    </script>
+  </body>
+</html>

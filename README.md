@@ -5,6 +5,11 @@ grant allows. Every read leaves a trail, and values stay out of model context.
 
 [![npm version](https://img.shields.io/npm/v/typevault?color=cb3837&logo=npm)](https://www.npmjs.com/package/typevault) [![MIT license](https://img.shields.io/badge/license-MIT-blue)](#license)
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/overview-dark.png">
+  <img alt="An agent session reads through the daemon with a grant; the daemon holds the unlocked keys, decrypts the vault committed in git and logs every read" src="docs/diagrams/overview-light.png">
+</picture>
+
 ## Grants, not keys: agents never hold the vault
 
 - **Short-lived grants**: an agent gets a grant scoped to tiers, entry patterns and a TTL; a daemon holds the keys, serves values and audits every read
@@ -26,6 +31,11 @@ grant allows. Every read leaves a trail, and values stay out of model context.
 - **Unlock once, agents keep working**: `typevault unlock` hands your key to the daemon for a while; agents read through it without ever seeing a password or a key, and `typevault lock` ends it
 - **Machines need no password**: CI and agent hosts join as machine members, each with its own key and only the tiers it needs
 - **Rotation on every membership change**: adding or removing a member rotates every tier they reach, so nobody opens history from before they joined
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/keys-dark.png">
+  <img alt="A person's password and Secret Key unseal their member key, which unwraps tier keys; a tier key unwraps the tiers it includes and decrypts its entries" src="docs/diagrams/keys-light.png">
+</picture>
 
 ## Git-friendly: commit the vault; no key is stored in the clear
 
@@ -191,6 +201,15 @@ In `run`, TOTP fields carry the current code; `otp [ref]` prints a selected TOTP
 
 ### What `run` loads
 
+```mermaid
+flowchart LR
+  agent[Agent] -- "typevault run -- ./deploy.sh" --> load["Load entries and tv:// references"]
+  daemon[Daemon] -- "values, through the grant" --> load
+  load -- "env vars, never PATH, NODE_OPTIONS, ..." --> child["./deploy.sh"]
+  child -- "stdout, stderr" --> redact[Redact values]
+  redact -- "masked output" --> transcript[Agent's transcript]
+```
+
 A lower tier can write entries a higher tier reads, so `run` only loads, in bulk, entries from the tiers the
 caller holds directly. An entry from an included tier is loaded only when `--only` names it exactly
 (`--only tv://github/bot`, not `--only 'tv://github/*'`). Two entries setting the same variable is an error, and variables that
@@ -216,6 +235,22 @@ A reference names its entry exactly, so it resolves anything your grant reaches,
 variables (`PATH`, `NODE_OPTIONS`, ...) are refused, and a reference naming a variable an entry also sets is an error.
 
 ## Grants
+
+```mermaid
+sequenceDiagram
+  participant I as Issuer
+  participant D as Daemon
+  participant A as Agent
+  I->>D: grant --tier member --only 'tv://github/*' --ttl 30m --label ci:deploy
+  Note over I,D: through its admin socket, never above its ceiling
+  D-->>I: live grant (tvl1.…)
+  I->>A: TYPEVAULT_GRANT
+  A->>D: read tv://github/bot, with a reason
+  D->>D: check tiers, names and TTL, then log the read
+  D-->>A: value, into run's child only
+  I->>D: grant revoke --label ci:deploy
+  A-xD: the next read is refused, as are reads with derived grants
+```
 
 |                  | Live (default)                | Sealed (`--sealed`)            |
 | ---------------- | ----------------------------- | ------------------------------ |
@@ -257,6 +292,22 @@ Processes under one OS user that can reach the same socket share its ceiling; pe
 
 ```sh
 typevault request resend --preset api_key --reason "send the weekly digest"
+```
+
+```mermaid
+sequenceDiagram
+  participant A as Agent
+  participant D as Daemon
+  actor H as Human
+  participant B as Browser
+  A->>D: request resend --preset api_key --reason "…"
+  D-->>A: one-time URL and match code
+  A->>H: URL and match code
+  H->>B: opens the URL, checks the code, enters the value
+  B->>B: encrypts to the tier
+  B->>D: ciphertext only, safe through tunnels and proxies
+  D->>D: decrypts, checks it is the requested entry, re-encrypts, signs, stores
+  D-->>A: stored as tv://resend, the value never comes back
 ```
 
 It prints a one-time URL and a match code to give the human, then waits until they submit. The daemon serves the page
