@@ -20,11 +20,15 @@ export class RevisionMarks {
     this.#marks = existsSync(path) ? MarksSchema.parse(JSON.parse(readFileSync(path, 'utf8'))) : {}
   }
 
-  /** False when `rev` is older than a revision already seen for `id`; otherwise records it. */
+  /** False when `rev` is older than a revision already seen for `id`. */
+  allows(id: string, rev: number): boolean {
+    return rev >= (this.#marks[id] ?? 0)
+  }
+
+  /** Like `allows`, and records `rev` when it is. */
   accept(id: string, rev: number): boolean {
-    const seen = this.#marks[id] ?? 0
-    if (rev < seen) return false
-    if (rev > seen) {
+    if (!this.allows(id, rev)) return false
+    if (rev > (this.#marks[id] ?? 0)) {
       this.#marks[id] = rev
       this.#dirty = true
     }

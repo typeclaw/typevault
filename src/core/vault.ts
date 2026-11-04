@@ -158,7 +158,13 @@ export class Vault {
           problems.push({ file, reason })
           continue
         }
-        if (!marks.accept(parsed.data.id, parsed.data.rev)) {
+        // Accepting expired certificates must not move the marks: a backdated high revision nobody adopts would
+        // otherwise lock out the trusted one.
+        const current =
+          options.acceptExpiredCerts === true
+            ? marks.allows(parsed.data.id, parsed.data.rev)
+            : marks.accept(parsed.data.id, parsed.data.rev)
+        if (!current) {
           problems.push({ file, reason: `revision ${parsed.data.rev} was replaced or deleted on this machine` })
           continue
         }

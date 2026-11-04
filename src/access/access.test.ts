@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { afterEach, beforeEach, describe, expect, it, setSystemTime } from 'bun:test'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -7,7 +7,8 @@ import { readAudit } from '../audit/log'
 import { Admin } from '../core/admin'
 import { adoptCertWrites } from '../core/adopt'
 import type { SecretKey } from '../core/crypto'
-import { sealEntry, signerAuthority, signerOf } from '../core/entries'
+import { fromBase64 } from '../core/encoding'
+import { sealEntry, signCiphertext, signerAuthority, signerOf } from '../core/entries'
 import { createIdentity } from '../core/identity'
 import { type Founder, founderOf, initVault } from '../core/init'
 import { layoutOf } from '../core/layout'
@@ -615,6 +616,35 @@ describe('sealed grants', () => {
     )
     expect(await adoptCertWrites(vault)).toEqual(['github/new'])
     expect((await vault.find(n('github/new')))?.envelope.signer.kind).toBe('tier')
+  })
+
+  it('keeps a write trusted only through an expired certificate from moving the revision marks', async () => {
+    // given a trusted entry replaced by a backdated high revision under an expired certificate
+    const original = await vault.put(
+      { name: n('github/kept'), fields: { text: { type: 'secret' as const, value: 'hi' } }, tier: 'member' },
+      signerOf(owner),
+    )
+    const file = join(vault.layout.entries, `${original.envelope.id}.json`)
+    const trusted = readFileSync(file, 'utf8')
+    const signer = await certSigner(60_000)
+    const draft = { id: original.envelope.id, tier: 'member', rev: 1000, at: new Date().toISOString() }
+    writeFileSync(
+      file,
+      JSON.stringify(signCiphertext(draft, fromBase64(original.envelope.payload), vault.state, signer)),
+    )
+    setSystemTime(Date.parse(signer.ref.cert.exp) + 1_000)
+    try {
+      // when a scan that accepts expired certificates sees it, and the owner restores the trusted file
+      expect((await vault.scan({ acceptExpiredCerts: true })).entries.map((entry) => entry.envelope.rev)).toContain(
+        1000,
+      )
+      writeFileSync(file, trusted)
+
+      // then the trusted revision still reads
+      expect((await vault.find(n('github/kept')))?.envelope.rev).toBe(original.envelope.rev)
+    } finally {
+      setSystemTime()
+    }
   })
 
   it('records the issue in the audit trail without values', async () => {
