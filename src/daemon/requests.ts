@@ -29,7 +29,7 @@ export type RequestInput = {
   readonly reason: string
 }
 
-const matchCode = (): string =>
+export const matchCode = (): string =>
   [...crypto.getRandomValues(new Uint8Array(6))].map((byte) => CODE_ALPHABET[byte % CODE_ALPHABET.length]).join('')
 
 type Pending = { readonly owner: string; readonly stored: Promise<EntryName> }
