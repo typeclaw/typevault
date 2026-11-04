@@ -10,6 +10,8 @@ export const ensureDir = (path: string, mode = 0o755): void => {
 }
 
 export function fsyncDir(path: string): void {
+  // Windows can't open a directory as a file; NTFS journals the rename itself.
+  if (process.platform === 'win32') return
   const fd = openSync(path, 'r')
   try {
     fsyncSync(fd)

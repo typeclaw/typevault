@@ -87,7 +87,8 @@ async function serve(options: DaemonOptions, release: () => void): Promise<Runni
   }
   const listen = (path: string, fetch: (request: Request) => Promise<Response>) => {
     const server = Bun.serve({ unix: path, fetch, maxRequestBodySize: 1 << 20 })
-    chmodSync(path, 0o600)
+    // Windows sockets take the run directory's ACL; chmod there only toggles read-only.
+    if (process.platform !== 'win32') chmodSync(path, 0o600)
     return server
   }
   const servers = [

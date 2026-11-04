@@ -231,7 +231,8 @@ it('refuses a prompt submission for a different entry than the one requested', a
   })
 })
 
-it('keeps sockets private to the owner', async () => {
+// Windows sockets take the run directory's ACL and have no Unix mode to check.
+it.skipIf(process.platform === 'win32')('keeps sockets private to the owner', async () => {
   const { mode } = await Bun.file(join(layout.run, 'agent.sock')).stat()
   expect(mode & 0o777).toBe(0o600)
 })
