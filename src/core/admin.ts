@@ -112,19 +112,25 @@ export class Admin {
     })
   }
 
-  /** Drops an include, then rotates the included tier so the old wrap stops working. */
+  /**
+   * Drops an include and rotates the included tier in one transaction: a crash leaves both or neither, never a
+   * dropped include whose old wrap still opens the included tier.
+   */
   async exclude(tier: string, included: string): Promise<readonly string[]> {
+    let affected: readonly string[] = []
     await this.#mutate(async (state, txn) => {
       const holder = state.tiers[tier]
       if (holder === undefined || !holder.includes.includes(included)) {
         throw new TypeVaultError('not_found', `"${tier}" does not include "${included}"`)
       }
-      const meta = state.tiers[included]
-      txn.remove(wrapPath(included, meta?.gen ?? 0, { kind: 'tier', tier, gen: holder.gen }))
       const updated = { ...holder, includes: holder.includes.filter((name) => name !== included) }
-      txn.put('tiers.json', tiersDoc({ ...state.tiers, [tier]: updated }, this.#owner, state.seqs.tiers + 1))
+      // Rotating removes the included tier's old generation, the dropped wrap with it, and rewrites tiers.json.
+      const context = { vault: this.#vault, owner: this.#owner, txn, exposed: true }
+      affected = await rotateTiers({ ...context, state: { ...state, tiers: { ...state.tiers, [tier]: updated } } }, [
+        included,
+      ])
     })
-    return this.rotate(included)
+    return affected
   }
 
   /** New key generation for `name`. Returns the names of every entry it could reach, now flagged for rotation. */

@@ -266,6 +266,20 @@ describe('rotation', () => {
     expect(await (await open([trustedKey])).find(stripe.name)).toBeUndefined()
   })
 
+  it('drops the include and rotates in one transaction', async () => {
+    // given
+    const before = (await open([owner])).state
+
+    // when
+    await admin.exclude('trusted', 'member')
+
+    // then a crash can't land the dropped include without the rotation: both share one tiers.json change
+    const after = (await open([owner])).state
+    expect(after.seqs.tiers).toBe(before.seqs.tiers + 1)
+    expect(after.tiers['trusted']?.includes).not.toContain('member')
+    expect(after.tiers['member']?.gen).toBe((before.tiers['member']?.gen ?? 0) + 1)
+  })
+
   it('refuses an include that would form a cycle', async () => {
     await expect(admin.include('guest', 'trusted')).rejects.toMatchObject({ code: 'invalid' })
   })
