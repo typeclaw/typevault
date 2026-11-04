@@ -6,9 +6,10 @@ import { join } from 'node:path'
 import { readAudit } from '../audit/log'
 import { Admin } from '../core/admin'
 import { adoptCertWrites } from '../core/adopt'
-import { decodeSecretKey, type SecretKey } from '../core/crypto'
+import type { SecretKey } from '../core/crypto'
 import { signerAuthority, signerOf } from '../core/entries'
-import { initVault } from '../core/init'
+import { createIdentity } from '../core/identity'
+import { type Founder, founderOf, initVault } from '../core/init'
 import { layoutOf } from '../core/layout'
 import { parseEntryName } from '../core/naming'
 import { Vault } from '../core/vault'
@@ -17,6 +18,8 @@ import { ScopedVault } from './scoped'
 import { issueSealedGrant, readSealedGrant, sealedSigningSecret } from './sealed'
 import { SealedAccess } from './sealed-access'
 
+const machineFounder = async (): Promise<Founder> => founderOf((await createIdentity('owner', 'machine')).identity)
+
 let root: string
 let owner: SecretKey
 let vault: Vault
@@ -24,7 +27,7 @@ const n = parseEntryName
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'typevault-access-'))
-  owner = await initVault(root)
+  owner = (await initVault(root, await machineFounder())).owner
   vault = await Vault.open(layoutOf(root), [owner], {})
   const admin = new Admin(vault)
   await admin.addTier('member')
@@ -103,7 +106,7 @@ describe('ScopedVault', () => {
     const fresh = mkdtempSync(join(tmpdir(), 'typevault-access-stale-'))
     try {
       // given a client opened while `default` was the only tier
-      const key = await initVault(fresh)
+      const { owner: key } = await initVault(fresh, await machineFounder())
       const admin = new Admin(await Vault.open(layoutOf(fresh), [key], {}))
       await admin.addTier('default')
       const client = new ScopedVault(await Vault.open(layoutOf(fresh), [key], {}), [], { mode: 'direct' })
@@ -120,7 +123,8 @@ describe('ScopedVault', () => {
   })
 
   it('infers the only tier a direct key holder can open, ignoring tiers it cannot reach', async () => {
-    const memberKey = decodeSecretKey(await new Admin(vault).exportKey('member'))
+    const memberKey = await vault.keyring.unlock('member')
+    if (memberKey === undefined) throw new Error('no member key')
     const direct = new ScopedVault(await Vault.open(layoutOf(root), [memberKey], {}), [], { mode: 'direct' })
     const stored = await direct.set({ name: n('openai'), type: 'api_key', fields: { key: 'sk-x' } })
     expect(stored.tier).toBe('member')
@@ -129,7 +133,7 @@ describe('ScopedVault', () => {
   it('points to `tier add` when the vault has no tier yet', async () => {
     const fresh = mkdtempSync(join(tmpdir(), 'typevault-access-empty-'))
     try {
-      const empty = await Vault.open(layoutOf(fresh), [await initVault(fresh)], {})
+      const empty = await Vault.open(layoutOf(fresh), [(await initVault(fresh, await machineFounder())).owner], {})
       const write = new ScopedVault(empty, [], { mode: 'direct' }).set({
         name: n('openai'),
         type: 'api_key',

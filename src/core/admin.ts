@@ -1,15 +1,18 @@
-import { encodeSecretKey, generateSecretKey, publicKeyOf, seal, type SecretKey } from './crypto'
+import { encodeSecretKey, generateSecretKey, type PublicKey, publicKeyOf, seal, type SecretKey } from './crypto'
 import { utf8 } from './encoding'
 import { signerOf } from './entries'
 import { TypeVaultError } from './errors'
-import { wrapPath } from './keyring'
+import { ownerWrapPath, wrapPath } from './keyring'
 import { withLock } from './lock'
-import { rotateTier } from './rotate'
+import { rotateTiers } from './rotate'
 import {
   ceilingsDoc,
+  type MemberKind,
+  membersDoc,
   type Tier,
   tiersDoc,
   includersOf,
+  parseMemberName,
   parseTierName,
   reach,
   signersDoc,
@@ -18,7 +21,17 @@ import {
 import { commitTxn, Txn } from './txn'
 import type { Vault } from './vault'
 
-/** Owner-only changes to tiers, signers and ceilings. Each one lands as a single transaction. */
+export type NewMember = PublicKey & {
+  readonly kind: MemberKind
+  readonly owner: boolean
+  readonly tiers: readonly string[]
+}
+
+/** Every tier `tiers` reach: rotating all of them keeps old generations out of a member's hands. */
+const reachOf = (state: VaultState, tiers: readonly string[]): readonly string[] =>
+  [...new Set(tiers.flatMap((tier) => [...reach(state.tiers, tier)]))].sort()
+
+/** Owner-only changes to tiers, members, signers and ceilings. Each one lands as a single transaction. */
 export class Admin {
   readonly #vault: Vault
   readonly #owner: SecretKey
@@ -65,6 +78,11 @@ export class Admin {
       if (state.tiers[name] === undefined) throw new TypeVaultError('not_found', `no tier "${name}"`)
       if (includersOf(state.tiers, name).length > 0)
         throw new TypeVaultError('conflict', `other tiers include "${name}"`)
+      const holders = Object.entries(state.members).filter(([, member]) => member.tiers.includes(name))
+      if (holders.length > 0) {
+        const names = holders.map(([member]) => member).join(', ')
+        throw new TypeVaultError('conflict', `members still hold "${name}": ${names}`)
+      }
       const { entries } = await this.#vault.scan()
       if (entries.some((entry) => entry.envelope.tier === name)) {
         throw new TypeVaultError('conflict', `tier "${name}" still has entries`)
@@ -113,7 +131,48 @@ export class Admin {
   async rotate(name: string): Promise<readonly string[]> {
     let affected: readonly string[] = []
     await this.#mutate(async (state, txn) => {
-      affected = await rotateTier({ vault: this.#vault, owner: this.#owner, state, txn }, name)
+      affected = await rotateTiers({ vault: this.#vault, owner: this.#owner, state, txn, exposed: true }, [name])
+    })
+    return affected
+  }
+
+  /**
+   * Lists a member and wraps the owner key (for owners) and their tiers' keys to them. Every tier they reach is
+   * rotated in the same transaction, so they can open neither older ciphertext in git history nor entries deleted
+   * before they joined.
+   */
+  addMember(rawName: string, member: NewMember): Promise<void> {
+    const name = parseMemberName(rawName)
+    return this.#mutate(async (state, txn) => {
+      if (state.members[name] !== undefined) throw new TypeVaultError('conflict', `member "${name}" already exists`)
+      const unknown = member.tiers.find((tier) => state.tiers[tier] === undefined)
+      if (unknown !== undefined) throw new TypeVaultError('not_found', `no tier "${unknown}"`)
+      const { kind, recipient, signPublic, owner, tiers } = member
+      const members = { ...state.members, [name]: { kind, recipient, signPublic, owner, tiers: [...tiers] } }
+      if (owner) txn.put(ownerWrapPath(name), await seal([recipient], utf8(encodeSecretKey(this.#owner))))
+      txn.put('members.json', membersDoc(members, this.#owner, state.seqs.members + 1))
+      const context = { vault: this.#vault, owner: this.#owner, state: { ...state, members }, txn, exposed: false }
+      await rotateTiers(context, reachOf(state, tiers))
+    })
+  }
+
+  /**
+   * Drops a member and rotates every tier they reached, in one transaction: a crash leaves both or neither, never a
+   * removed member whose keys still open new ciphertext. Returns the entries they could read, now flagged for
+   * rotation: what they already decrypted can only be revoked at each secret's source.
+   */
+  async removeMember(name: string): Promise<readonly string[]> {
+    let affected: readonly string[] = []
+    await this.#mutate(async (state, txn) => {
+      const member = state.members[name]
+      if (member === undefined) throw new TypeVaultError('not_found', `no member "${name}"`)
+      // Every entry is also sealed to the owner key, which can't be rotated yet: a former owner would keep reading.
+      if (member.owner) throw new TypeVaultError('invalid', `"${name}" is an owner; removing an owner is not supported`)
+      const { [name]: _removed, ...rest } = state.members
+      txn.remove(`members/${name}.key`)
+      txn.put('members.json', membersDoc(rest, this.#owner, state.seqs.members + 1))
+      const context = { vault: this.#vault, owner: this.#owner, state: { ...state, members: rest }, txn, exposed: true }
+      affected = await rotateTiers(context, reachOf(state, member.tiers))
     })
     return affected
   }
@@ -149,16 +208,6 @@ export class Admin {
       const { [name]: _removed, ...rest } = state.ceilings
       txn.put('ceilings.json', ceilingsDoc(rest, this.#owner, state.seqs.ceilings + 1))
     })
-  }
-
-  async exportKey(tier: string): Promise<string> {
-    const key = await this.#vault.keyring.unlock(tier)
-    if (key === undefined) throw new TypeVaultError('not_found', `no tier "${tier}"`)
-    return encodeSecretKey(key)
-  }
-
-  exportOwnerKey(): string {
-    return encodeSecretKey(this.#owner)
   }
 
   get signer(): ReturnType<typeof signerOf> {

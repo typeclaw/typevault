@@ -18,14 +18,33 @@ export type Tier = {
 export type Signer = { readonly signPublic: string; readonly tiers: readonly string[] }
 export type Tiers = Readonly<Record<string, Tier>>
 
-/** Everything public about a vault. Tiers, signers and ceilings are signed by the owner key. */
-export type ManifestSeqs = { readonly tiers: number; readonly signers: number; readonly ceilings: number }
+/** A person (unlocks with a password) or a machine (holds its key directly). */
+export type MemberKind = 'human' | 'machine'
+export type Member = {
+  readonly kind: MemberKind
+  readonly recipient: string
+  readonly signPublic: string
+  /** Owners get the owner key wrapped to them. */
+  readonly owner: boolean
+  /** Tiers whose key is wrapped to this member. */
+  readonly tiers: readonly string[]
+}
+export type Members = Readonly<Record<string, Member>>
+
+/** Everything public about a vault. Tiers, members, signers and ceilings are signed by the owner key. */
+export type ManifestSeqs = {
+  readonly tiers: number
+  readonly members: number
+  readonly signers: number
+  readonly ceilings: number
+}
 
 export type VaultState = {
   readonly owner: PublicKey
   /** Each manifest's sequence number: every signed change bumps it, and a lower one is a rollback. */
   readonly seqs: ManifestSeqs
   readonly tiers: Tiers
+  readonly members: Members
   readonly signers: Readonly<Record<string, Signer>>
   readonly ceilings: Readonly<Record<string, string>>
 }
@@ -36,10 +55,27 @@ export function parseTierName(name: string): string {
   return name
 }
 
+export function parseMemberName(name: string): string {
+  if (!TIER_NAME.test(name)) throw new TypeVaultError('invalid', `invalid member name "${name}" (use [a-z0-9-])`)
+  return name
+}
+
 const PublicKeySchema = z.object({ recipient: z.string().startsWith('age1'), signPublic: z.string() })
 const TierSchema = PublicKeySchema.extend({ includes: z.array(z.string()), gen: z.number().int().positive() })
 const seq = z.number().int().positive()
 const TiersBody = z.object({ v: z.literal(1), seq, tiers: z.record(z.string(), TierSchema) })
+const MembersBody = z.object({
+  v: z.literal(1),
+  seq,
+  members: z.record(
+    z.string(),
+    PublicKeySchema.extend({
+      kind: z.enum(['human', 'machine']),
+      owner: z.boolean(),
+      tiers: z.array(z.string()),
+    }),
+  ),
+})
 const SignersBody = z.object({
   v: z.literal(1),
   seq,
@@ -52,6 +88,8 @@ export const signedDoc = (body: Json, key: SecretKey): string =>
   `${JSON.stringify({ body, sig: sign(key.signSecret, utf8(canonicalJson(body))) }, null, 2)}\n`
 
 export const tiersDoc = (tiers: Tiers, key: SecretKey, seq: number): string => signedDoc({ v: 1, seq, tiers }, key)
+export const membersDoc = (members: Members, key: SecretKey, seq: number): string =>
+  signedDoc({ v: 1, seq, members }, key)
 export const signersDoc = (signers: VaultState['signers'], key: SecretKey, seq: number): string =>
   signedDoc({ v: 1, seq, signers }, key)
 export const ceilingsDoc = (ceilings: VaultState['ceilings'], key: SecretKey, seq: number): string =>
@@ -88,12 +126,14 @@ export function loadState(layout: Layout, env: Readonly<Record<string, string | 
   const owner = PublicKeySchema.parse(JSON.parse(fromUtf8(readFileSync(layout.ownerFile))))
   checkTrust(layout, owner, env)
   const tiers = readSigned(layout.tiersFile, TiersBody, owner)
+  const members = readSigned(layout.membersFile, MembersBody, owner)
   const signers = readSigned(layout.signersFile, SignersBody, owner)
   const ceilings = readSigned(layout.ceilingsFile, CeilingsBody, owner)
   // An older, still validly signed manifest from git history would resurrect removed signers or ceilings.
   const marks = new RevisionMarks(layout.revisionsFile)
   for (const [name, doc] of [
     ['tiers', tiers],
+    ['members', members],
     ['signers', signers],
     ['ceilings', ceilings],
   ] as const) {
@@ -107,8 +147,9 @@ export function loadState(layout: Layout, env: Readonly<Record<string, string | 
   marks.save()
   return {
     owner,
-    seqs: { tiers: tiers.seq, signers: signers.seq, ceilings: ceilings.seq },
+    seqs: { tiers: tiers.seq, members: members.seq, signers: signers.seq, ceilings: ceilings.seq },
     tiers: tiers.tiers,
+    members: members.members,
     signers: signers.signers,
     ceilings: ceilings.ceilings,
   }

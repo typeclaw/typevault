@@ -33,9 +33,7 @@ export type ConnectWriter = (account: string) => Promise<SdkWriter>
 
 export const EXPORT_TAG = 'typevault'
 
-/** The default item title. Owner and tier titles never collide, even for a tier named "owner". */
-export const defaultTitle = (role: { kind: 'owner' } | { kind: 'tier'; tier: string }, vaultId: string): string =>
-  role.kind === 'owner' ? `TypeVault owner ${vaultId}` : `TypeVault tier ${role.tier} ${vaultId}`
+export const identityTitle = (name: string): string => `TypeVault identity ${name}`
 
 /** Stores `item` in 1Password and returns the transport used. Archives replaced items only after the new one exists. */
 export async function export1Password(

@@ -6,15 +6,27 @@ import { ceiling, doctor, tier, init, key, signer } from './commands/admin'
 import { daemon } from './commands/daemon'
 import { get, ls, mv, otp, rm, set, whoami } from './commands/entries'
 import { audit, grant } from './commands/grant'
+import { identity, joinCommand, lock, member, passwd, unlock } from './commands/members'
 import { importCommand, redact, request, run, scrub } from './commands/run'
+import { readPasswordsFromStdin } from './password'
 
 const main = defineCommand({
   meta: { name: 'typevault', description: 'A CLI-first secrets vault for agents' },
   args: {
     global: { type: 'boolean', alias: 'g', description: 'Use the global vault instead of the project vault' },
+    'vault-password-stdin': {
+      type: 'boolean',
+      description: 'Read your TypeVault password(s) from stdin, one per line (for scripts)',
+    },
   },
   subCommands: {
     init,
+    join: joinCommand,
+    member,
+    identity,
+    unlock,
+    lock,
+    passwd,
     tier,
     ceiling,
     signer,
@@ -41,9 +53,12 @@ const main = defineCommand({
 const argv = process.argv.slice(2)
 const split = argv.includes('--') ? argv.indexOf('--') : argv.length
 const isGlobalFlag = (arg: string): boolean => arg === '-g' || arg === '--global'
-// -g applies to every command, so it is taken out here; anything after `--` belongs to the child of `run`.
+const PASSWORD_STDIN = '--vault-password-stdin'
+// -g and --vault-password-stdin apply to every command, so they are taken out here; anything after `--` belongs to
+// the child of `run`.
 if (argv.slice(0, split).some(isGlobalFlag)) process.env['TYPEVAULT_GLOBAL'] = '1'
-const ownArgs = argv.slice(0, split).filter((arg) => !isGlobalFlag(arg))
+if (argv.slice(0, split).includes(PASSWORD_STDIN)) readPasswordsFromStdin()
+const ownArgs = argv.slice(0, split).filter((arg) => !isGlobalFlag(arg) && arg !== PASSWORD_STDIN)
 const rawArgs = [...ownArgs, ...argv.slice(split)]
 const wantsUsage = ownArgs.length === 0 || ownArgs.some((arg) => arg === '--help' || arg === '-h')
 

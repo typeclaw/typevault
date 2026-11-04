@@ -35,6 +35,9 @@ export type ResolvedGrant = { readonly record: GrantRecord; readonly chain: Scop
 
 const PREFIX = 'tvl1'
 
+/** The ceiling name marking an unlocked session's grant (and grants derived from it). */
+export const SESSION_CEILING = 'session'
+
 /**
  * Live grants, persisted (hashed) so a daemon restart doesn't cut sessions off.
  * A token is `tvl1.<id>.<secret>`; only sha256(secret) is stored.

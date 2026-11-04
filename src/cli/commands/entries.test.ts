@@ -40,7 +40,7 @@ beforeEach(async () => {
   project = join(base, 'project')
   mkdirSync(project)
   env = { PATH: process.env['PATH'] ?? '', XDG_CONFIG_HOME: join(base, 'config') }
-  expect((await cli(['init'])).code).toBe(0)
+  expect((await cli(['init', '--machine'])).code).toBe(0)
   const fields = JSON.stringify({ username: 'alice', password: PASSWORD, PIN })
   expect((await cli(['set', 'tv://svc', '--type', 'password', '--stdin-json'], fields)).code).toBe(0)
 })

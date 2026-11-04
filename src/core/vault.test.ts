@@ -4,14 +4,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { Admin } from './admin'
-import { decodeSecretKey, seal, type SecretKey } from './crypto'
+import { seal, type SecretKey } from './crypto'
 import { utf8 } from './encoding'
 import { signerOf } from './entries'
 import { TypeVaultError } from './errors'
-import { initVault } from './init'
+import { createIdentity } from './identity'
+import { type Founder, founderOf, initVault } from './init'
 import { layoutOf } from './layout'
 import { parseEntryName } from './naming'
 import { Vault } from './vault'
+
+const machineFounder = async (): Promise<Founder> => founderOf((await createIdentity('owner', 'machine')).identity)
 
 let root: string
 let owner: SecretKey
@@ -19,7 +22,11 @@ let admin: Admin
 
 const env = {}
 const open = (keys: readonly SecretKey[]): Promise<Vault> => Vault.open(layoutOf(root), keys, env)
-const keyOf = async (tier: string): Promise<SecretKey> => decodeSecretKey(await admin.exportKey(tier))
+const keyOf = async (tier: string): Promise<SecretKey> => {
+  const key = await (await open([owner])).keyring.unlock(tier)
+  if (key === undefined) throw new Error(`no key for ${tier}`)
+  return key
+}
 const stripe = {
   name: parseEntryName('stripe'),
   type: 'api_key',
@@ -29,7 +36,7 @@ const stripe = {
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'typevault-'))
-  owner = await initVault(root)
+  owner = (await initVault(root, await machineFounder())).owner
   admin = new Admin(await open([owner]))
   await admin.addTier('guest')
   await admin.addTier('member')

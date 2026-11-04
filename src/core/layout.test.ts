@@ -4,16 +4,17 @@ import { join } from 'node:path'
 
 import { z } from 'zod'
 
-import { loadLocalKeys } from '../access/keys'
+import { machineKeys } from '../access/keys'
 import { anchorAudit, appendAudit, verifyAudit } from '../audit/log'
 import { callDaemon } from '../daemon/client'
 import { startDaemon } from '../daemon/daemon'
 import { LiveAccess } from '../daemon/live-access'
 import { Admin } from './admin'
-import { decodeSecretKey, type SecretKey } from './crypto'
+import { encodeSecretKey, type SecretKey } from './crypto'
 import { signerOf } from './entries'
-import { initLocalVault } from './init'
-import { type Layout, openLocalLayout } from './layout'
+import { createIdentity } from './identity'
+import { type Founder, founderOf, initLocalVault } from './init'
+import { type Layout, localLayout } from './layout'
 import { parseEntryName } from './naming'
 import { Vault } from './vault'
 
@@ -27,38 +28,39 @@ beforeEach(() => {
 })
 afterEach(() => rmSync(base, { recursive: true, force: true }))
 
-const ownerOf = (layout: Layout): SecretKey => decodeSecretKey(readFileSync(layout.ownerKey, 'utf8'))
+const machineFounder = async (): Promise<Founder> => founderOf((await createIdentity('owner', 'machine')).identity)
 
 it('rejects a project vault whose owner was replaced, even with a key from the environment', async () => {
-  // given a project vault this checkout trusts, and a collaborator's key in TYPEVAULT_KEY
-  const project = await initLocalVault(join(base, 'project', '.typevault'), env)
-  const keyEnv = { ...env, TYPEVAULT_KEY: readFileSync(project.ownerKey, 'utf8').trim() }
+  // given a project vault this checkout trusts, and a member's key in TYPEVAULT_KEY
+  const member = await createIdentity('owner', 'machine')
+  const project = (await initLocalVault(join(base, 'project', '.typevault'), founderOf(member.identity), env)).layout
+  const keyEnv = { ...env, TYPEVAULT_KEY: encodeSecretKey(member.key) }
 
   // when the owner and its signed manifests are replaced by another vault's
-  const other = await initLocalVault(join(base, 'other', '.typevault'), env)
-  for (const file of ['owner.json', 'tiers.json', 'signers.json', 'ceilings.json']) {
+  const other = (await initLocalVault(join(base, 'other', '.typevault'), await machineFounder(), env)).layout
+  for (const file of ['owner.json', 'tiers.json', 'members.json', 'signers.json', 'ceilings.json']) {
     copyFileSync(join(other.vault, file), join(project.vault, file))
   }
-  const layout = openLocalLayout(project.vault, keyEnv)
+  const layout = localLayout(project.vault, keyEnv)
 
   // then opening it is refused instead of trusting the new owner
-  await expect(Vault.open(layout, loadLocalKeys(layout, keyEnv), keyEnv)).rejects.toMatchObject({ code: 'tampered' })
+  await expect(Vault.open(layout, machineKeys(keyEnv), keyEnv)).rejects.toMatchObject({ code: 'tampered' })
 })
 
 describe('two clones of one project vault', () => {
   let first: Layout
   let second: Layout
+  let owner: SecretKey
 
   beforeEach(async () => {
-    first = await initLocalVault(join(base, 'a', '.typevault'), env)
-    await new Admin(await Vault.open(first, [ownerOf(first)], env)).addTier('member')
+    ;({ layout: first, owner } = await initLocalVault(join(base, 'a', '.typevault'), await machineFounder(), env))
+    await new Admin(await Vault.open(first, [owner], env)).addTier('member')
     cpSync(first.vault, join(base, 'b', '.typevault'), { recursive: true })
-    second = openLocalLayout(join(base, 'b', '.typevault'), env)
+    second = localLayout(join(base, 'b', '.typevault'), env)
   })
 
   it('share keys but each run a daemon over their own files', async () => {
     // given each clone holding a different entry
-    const owner = ownerOf(second)
     for (const [layout, name] of [
       [first, 'alpha'],
       [second, 'beta'],
@@ -71,7 +73,7 @@ describe('two clones of one project vault', () => {
     }
 
     // when both daemons run at once
-    const daemons = await Promise.all([first, second].map((layout) => startDaemon({ layout, env })))
+    const daemons = await Promise.all([first, second].map((layout) => startDaemon({ layout, env, keys: [owner] })))
     try {
       const names = await Promise.all(
         [first, second].map(async (layout) => {

@@ -28,7 +28,7 @@ Install: `bun add -g typevault`
 ## Look around
 
 ```sh
-typevault whoami                 # how this process reaches the vault (grant or local keys) and which vault
+typevault whoami                 # how this process reaches the vault (grant, unlocked session or machine key)
 typevault ls                     # entries your grant reaches
 typevault ls --json
 ```
@@ -62,8 +62,8 @@ typevault run --only 'tv://openai,tv://stripe' -- bun run deploy
   first: `typevault run -- sh -c 'curl -H "Authorization: Bearer $OPENAI_KEY" ...'`.
 - TOTP fields hold the current code, never the seed.
 - `run` loads every entry from the tiers you hold directly. An entry from an included tier loads only when `--only`
-  names it exactly (no globs). In direct mode (no grant) the owner holds no tier directly, so name what you need
-  with `--only`.
+  names it exactly (no globs). Without a grant, a person's session loads only the tiers that member holds
+  directly (an owner holds none), so name what you need with `--only`.
 - Variables like `PATH`, `LD_*`, `NODE_OPTIONS`, `GIT_*`, `HTTPS_PROXY` are never set from the vault, and the child
   never sees `TYPEVAULT_*`.
 
@@ -103,7 +103,7 @@ serves the page).
 
 ## Import (owner)
 
-Run these only when the user asks; they write with local keys, not a grant.
+Run these only when the user asks; they open the owner's key, so a person types their password.
 
 ```sh
 typevault import 1password --account Acme --tier default             # straight from the 1Password app; the user approves in 1Password
@@ -116,7 +116,8 @@ KeePass reads its password from `--password-stdin`.
 
 ## Grants (owner or issuer)
 
-An agent should hold a grant, not keys. Without `TYPEVAULT_GRANT`, the CLI uses local keys (direct mode).
+An agent should hold a grant, not keys. Without `TYPEVAULT_GRANT`, the CLI reads through the user's unlocked session,
+or with a machine member's own key.
 
 `typevault grant` prints the token, and a token is a credential: a sealed one carries the secrets themselves and can't
 be revoked. Never let it reach output; capture it into a variable, or a sealed one into a `0600` file.
@@ -137,6 +138,8 @@ grants start the daemon automatically.
 ## Troubleshooting
 
 - **No vault found**: you're outside a project. Run `typevault init` there, or use `-g` for the global vault.
+- **The vault is locked**: ask the user to run `typevault unlock` in their terminal. Never ask for their password,
+  and never pipe one with `--vault-password-stdin`.
 - **Entry not listed**: your grant doesn't reach its tier. Ask the owner for a grant that does; don't work around
   it.
 - **Same variable set by two entries**: narrow with `--only`.

@@ -1,35 +1,48 @@
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-import { encodeSecretKey, generateSecretKey, type PublicKey, publicKeyOf, type SecretKey } from './crypto'
+import { encodeSecretKey, generateSecretKey, type PublicKey, publicKeyOf, seal, type SecretKey } from './crypto'
+import { utf8 } from './encoding'
 import { TypeVaultError } from './errors'
 import { atomicWrite, ensureDir } from './fsx'
+import { type Identity, type MemberPublic, memberPublicOfIdentity, sealedCopyPath } from './identity'
+import { ownerWrapPath } from './keyring'
 import { type Layout, layoutOf, localLayout } from './layout'
-import { ceilingsDoc, tiersDoc, signersDoc } from './state'
+import { ceilingsDoc, membersDoc, parseMemberName, signersDoc, tiersDoc } from './state'
 
 type Env = Readonly<Record<string, string | undefined>>
+
+/** The first member, who becomes the owner. A human's password-sealed key is committed beside the vault. */
+export type Founder = { readonly name: string; readonly member: MemberPublic; readonly sealedKey?: string }
+
+export const founderOf = (identity: Identity): Founder => ({
+  name: identity.name,
+  member: memberPublicOfIdentity(identity),
+  ...(identity.kind === 'human' ? { sealedKey: identity.sealedKey } : {}),
+})
+
+export type Created = { readonly layout: Layout; readonly owner: SecretKey }
 
 /** Ignores everything in the vault directory except `vault/`, the only part that is safe to commit. */
 const ROOT_GITIGNORE = '/*\n!/vault/\n!/.gitignore\n'
 
-/** Creates an empty global vault and its owner key. The owner key is the recovery path; keep a copy offline. */
-export async function initVault(root: string): Promise<SecretKey> {
+/**
+ * Creates an empty global vault owned by `founder`. The owner key is never written down in the clear: it exists only
+ * wrapped to owner members, so the founder's password and Secret Key are the recovery path.
+ */
+export async function initVault(root: string, founder: Founder): Promise<Created> {
   const layout = layoutOf(root)
   refuseExisting(layout.ownerFile, root)
-  const ownerKey = await generateSecretKey({ kind: 'owner' })
-  await writeVault(layout, ownerKey, await publicKeyOf(ownerKey))
+  const owner = await writeVault(layout, founder)
   atomicWrite(join(layout.root, '.gitignore'), ROOT_GITIGNORE)
-  return ownerKey
+  return { layout, owner }
 }
 
-/** Creates an empty project vault at `dir` (all of it safe to commit); its keys go under the typevault root. */
-export async function initLocalVault(dir: string, env: Env = process.env): Promise<Layout> {
+/** Creates an empty project vault at `dir`, all of it safe to commit. */
+export async function initLocalVault(dir: string, founder: Founder, env: Env = process.env): Promise<Created> {
   refuseExisting(join(dir, 'owner.json'), dir)
-  const ownerKey = await generateSecretKey({ kind: 'owner' })
-  const owner = await publicKeyOf(ownerKey)
-  const layout = localLayout(dir, owner.signPublic, env)
-  await writeVault(layout, ownerKey, owner)
-  return layout
+  const layout = localLayout(dir, env)
+  return { layout, owner: await writeVault(layout, founder) }
 }
 
 function refuseExisting(ownerFile: string, where: string): void {
@@ -43,14 +56,24 @@ function refuseExisting(ownerFile: string, where: string): void {
   }
 }
 
-async function writeVault(layout: Layout, ownerKey: SecretKey, owner: PublicKey): Promise<void> {
-  for (const dir of [layout.keys, layout.tierKeys, layout.audit, layout.run]) ensureDir(dir, 0o700)
+async function writeVault(layout: Layout, founder: Founder): Promise<SecretKey> {
+  const name = parseMemberName(founder.name)
+  const ownerKey = await generateSecretKey({ kind: 'owner' })
+  const owner: PublicKey = await publicKeyOf(ownerKey)
+  const { kind, recipient, signPublic } = founder.member
+  for (const dir of [layout.audit, layout.run]) ensureDir(dir, 0o700)
   ensureDir(layout.entries)
-  atomicWrite(layout.ownerKey, `${encodeSecretKey(ownerKey)}\n`, 0o600)
   atomicWrite(layout.tiersFile, tiersDoc({}, ownerKey, 1))
+  atomicWrite(
+    layout.membersFile,
+    membersDoc({ [name]: { kind, recipient, signPublic, owner: true, tiers: [] } }, ownerKey, 1),
+  )
   atomicWrite(layout.signersFile, signersDoc({}, ownerKey, 1))
   atomicWrite(layout.ceilingsFile, ceilingsDoc({}, ownerKey, 1))
+  atomicWrite(join(layout.vault, ownerWrapPath(name)), await seal([recipient], utf8(encodeSecretKey(ownerKey))))
+  if (founder.sealedKey !== undefined) atomicWrite(sealedCopyPath(layout, name), founder.sealedKey)
   atomicWrite(layout.trustFile, JSON.stringify({ ownerSignPublic: owner.signPublic }), 0o600)
   // owner.json last: its presence is what marks the directory as an initialized vault.
   atomicWrite(layout.ownerFile, `${JSON.stringify({ v: 1, ...owner }, null, 2)}\n`)
+  return ownerKey
 }

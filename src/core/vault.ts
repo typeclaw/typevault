@@ -15,7 +15,7 @@ import {
 } from './entries'
 import { TypeVaultError } from './errors'
 import { assertNoSymlinks, atomicWrite, fsyncDir } from './fsx'
-import { Keyring } from './keyring'
+import { heldMembers, Keyring, unwrapOwner } from './keyring'
 import type { Layout } from './layout'
 import { withLock } from './lock'
 import type { EntryName, EntryType } from './naming'
@@ -86,22 +86,29 @@ export class Vault {
   readonly layout: Layout
   readonly #keys: readonly SecretKey[]
   readonly #env: Env
+  readonly #member: string | undefined
   #state: VaultState
   #keyring: Keyring
 
-  private constructor(layout: Layout, keys: readonly SecretKey[], env: Env) {
+  private constructor(layout: Layout, keys: readonly SecretKey[], env: Env, state: VaultState, member?: string) {
     this.layout = layout
     this.#keys = keys
     this.#env = env
-    this.#state = loadState(layout, env)
-    this.#keyring = new Keyring(layout, this.#state, keys)
+    this.#member = member
+    this.#state = state
+    this.#keyring = new Keyring(layout, state, keys)
   }
 
+  /** Opens the vault with `keys`. An owner member's key also brings the owner key it unwraps. */
   static async open(layout: Layout, keys: readonly SecretKey[], env: Env = process.env): Promise<Vault> {
     if (existsSync(layout.txnDir) && readdirSync(layout.txnDir).length > 0) {
       await withLock(layout.lockFile, 'exclusive', async () => recoverTxns(layout))
     }
-    return new Vault(layout, keys, env)
+    const state = loadState(layout, env)
+    const owner = await unwrapOwner(layout, state, keys)
+    const [member] = await heldMembers(state, keys)
+    const all = owner === undefined || keys.includes(owner) ? keys : [...keys, owner]
+    return new Vault(layout, all, env, state, member?.name)
   }
 
   get state(): VaultState {
@@ -114,6 +121,11 @@ export class Vault {
 
   get keys(): readonly SecretKey[] {
     return this.#keys
+  }
+
+  /** The member this process acts as, when it holds a member key the vault lists. */
+  get member(): string | undefined {
+    return this.#member
   }
 
   /** Re-reads owner-signed state; call after another process may have changed it. */
