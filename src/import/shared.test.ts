@@ -7,18 +7,29 @@ test('entry collection drops empty and unusable fields and resolves collisions o
     {
       title: 'Crème / GitHub',
       container: 'Work / Team',
-      type: 'api_key',
+      preset: 'api_key',
       fields: { key: 'hunter2', password: 'wrong' },
     },
-    { title: 'Creme GitHub', container: 'Work Team', type: 'api_key', fields: { key: 'second', 'a=b': 'bad' } },
-    { title: 'Creme GitHub', container: 'Work Team', type: 'note', fields: { text: 'third', key: 'wrong', empty: '' } },
-    { title: '!!!', type: 'ssh', fields: { private_key: 'fake-private', public_key: '', other: undefined } },
+    { title: 'Creme GitHub', container: 'Work Team', preset: 'api_key', fields: { key: 'second', 'a=b': 'bad' } },
+    {
+      title: 'Creme GitHub',
+      container: 'Work Team',
+      preset: 'note',
+      fields: { $default: 'third', key: 'wrong', empty: '' },
+    },
+    { title: '!!!', preset: 'ssh', fields: { private_key: 'fake-private', public_key: '', other: undefined } },
   ])
   expect(result.entries.map((entry) => [String(entry.name), entry.fields])).toEqual([
-    ['creme-github/work-team', { key: 'hunter2', password: 'wrong' }],
-    ['creme-github/work-team-2', { key: 'second' }],
-    ['creme-github/work-team-3', { text: 'third', key: 'wrong' }],
-    ['item', { private_key: 'fake-private' }],
+    [
+      'creme-github/work-team',
+      { key: { type: 'secret', value: 'hunter2' }, password: { type: 'secret', value: 'wrong' } },
+    ],
+    ['creme-github/work-team-2', { key: { type: 'secret', value: 'second' } }],
+    [
+      'creme-github/work-team-3',
+      { $default: { type: 'secret', value: 'third' }, key: { type: 'secret', value: 'wrong' } },
+    ],
+    ['item', { private_key: { type: 'secret', value: 'fake-private' } }],
   ])
   expect(result.warnings).toHaveLength(3)
   expect(result.warnings.join()).toContain('creme-github/work-team-2: skipped a field with an unusable name')

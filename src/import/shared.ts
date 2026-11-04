@@ -1,14 +1,23 @@
 import { z } from 'zod'
 
 import { TypeVaultError } from '../core/errors'
-import { isFieldName, parseEntryName, slugifySegment, type EntryType } from '../core/naming'
+import {
+  isFieldName,
+  parseEntryName,
+  slugifySegment,
+  PRESETS,
+  type Preset,
+  type Field,
+  type FieldType,
+  fieldStrings,
+} from '../core/naming'
 import type { ImportedEntry, ImportResult } from './types'
 
 export type ImportItem = {
   readonly title: string
   readonly container?: string
-  readonly type: EntryType
-  readonly fields: Readonly<Record<string, string | undefined>>
+  readonly preset: Preset
+  readonly fields: Readonly<Record<string, string | Field | undefined>>
   readonly url?: string
   readonly tags?: readonly string[]
   readonly env?: string
@@ -26,17 +35,36 @@ export function collectEntries(items: readonly ImportItem[], warnings: readonly 
     while (used.has(name)) name = `${base}-${suffix++}`
     used.add(name)
     if (name !== base) messages.push(`name collision: "${base}" renamed to "${name}"`)
-    const fields: Record<string, string> = {}
+    const fields: Record<string, Field> = {}
     for (const [field, value] of Object.entries(item.fields)) {
-      if (value === undefined || value === '') continue
-      if (isFieldName(field)) fields[field] = value
-      else messages.push(`${name}: skipped a field with an unusable name`)
+      if (
+        value === undefined ||
+        value === '' ||
+        (typeof value !== 'string' && fieldStrings(value).every((part) => part === ''))
+      )
+        continue
+      if (isFieldName(field)) {
+        if (typeof value === 'string') {
+          const types: Readonly<Record<string, FieldType>> = PRESETS[item.preset].fields
+          const type = types[field] ?? 'secret'
+          switch (type) {
+            case 'secret':
+            case 'text':
+            case 'totp':
+              fields[field] = { type, value }
+              break
+            case 'oauth':
+              throw new TypeVaultError('invalid', 'OAuth import requires typed fields')
+            default:
+              throw new TypeVaultError('invalid', `unexpected field type ${type satisfies never}`)
+          }
+        } else fields[field] = value
+      } else messages.push(`${name}: skipped a field with an unusable name`)
     }
     const url = item.url === undefined ? null : URL.parse(item.url)
     const origin = url && (url.protocol === 'http:' || url.protocol === 'https:') ? url.origin : undefined
     entries.push({
       name: parseEntryName(name),
-      type: item.type,
       fields,
       tags: item.tags ?? [],
       ...(origin === undefined ? {} : { origin }),
@@ -51,14 +79,24 @@ export function collectEntries(items: readonly ImportItem[], warnings: readonly 
  * in a template field is skipped, so an API credential's `credential` doesn't land twice.
  */
 export function withCustomFields(
-  mapped: Readonly<Record<string, string | undefined>>,
-  labeled: readonly (readonly [label: string, value: string | undefined])[],
-): Record<string, string | undefined> {
-  const used = new Set(Object.values(mapped))
-  const custom: Record<string, string> = {}
+  mapped: Readonly<Record<string, string | Field | undefined>>,
+  labeled: readonly (readonly [label: string, value: string | Field | undefined])[],
+): Record<string, string | Field | undefined> {
+  const used = new Set(
+    Object.values(mapped).flatMap((value) =>
+      value === undefined ? [] : typeof value === 'string' ? [value] : fieldStrings(value),
+    ),
+  )
+  const custom: Record<string, string | Field> = {}
   for (const [label, value] of labeled) {
     const field = label.trim()
-    if (field === '' || value === undefined || value === '' || used.has(value)) continue
+    if (
+      field === '' ||
+      value === undefined ||
+      value === '' ||
+      (typeof value === 'string' ? used.has(value) : fieldStrings(value).every((part) => used.has(part)))
+    )
+      continue
     if (Object.hasOwn(mapped, field) || Object.hasOwn(custom, field)) continue
     custom[field] = value
   }

@@ -85,11 +85,11 @@ it(
     const alice = actor('alice')
     await ok(alice, withPassword('init', '--name', 'alice'), line('a'))
     await ok(alice, withPassword('unlock'), line('a'))
-    await ok(alice, ['set', 'tv://openai', '--type', 'api_key', '--stdin'], 'sk-live-1')
+    await ok(alice, ['set', 'tv://openai', '--preset', 'api_key', '--stdin'], 'sk-live-1')
     await ok(alice, ['lock'])
 
     // when her agent (no terminal) runs a command while the vault is locked, it is told to ask her
-    const check = ['run', '--only', 'tv://openai', '--', 'sh', '-c', 'test "$OPENAI_KEY" = sk-live-1 && echo match']
+    const check = ['run', '--only', 'tv://openai', '--', 'sh', '-c', 'test "$OPENAI" = sk-live-1 && echo match']
     expect(await fails(alice, check)).toContain('ask a human to run `typevault unlock`')
 
     // then once she unlocks, the agent's command gets the value and never prints it
@@ -111,7 +111,7 @@ it(
     const alice = actor('alice')
     await ok(alice, withPassword('init', '--name', 'alice'), line('a'))
     await ok(alice, withPassword('unlock'), line('a'))
-    await ok(alice, ['set', 'tv://openai', '--type', 'api_key', '--stdin'], 'sk-live-1')
+    await ok(alice, ['set', 'tv://openai', '--preset', 'api_key', '--stdin'], 'sk-live-1')
     const token = (await ok(alice, ['grant', '--tier', 'default', '--label', 'agent:a'])).stdout.trim()
     const agent = { ...alice, TYPEVAULT_GRANT: token }
 
@@ -133,7 +133,7 @@ it(
     const bob = actor('bob')
     await ok(alice, withPassword('init', '--name', 'alice'), line('a'))
     await ok(alice, withPassword('unlock'), line('a'))
-    await ok(alice, ['set', 'tv://openai', '--type', 'api_key', '--stdin'], 'sk-live-1')
+    await ok(alice, ['set', 'tv://openai', '--preset', 'api_key', '--stdin'], 'sk-live-1')
 
     // when bob joins with his own password and alice adds him
     const joined = await ok(bob, withPassword('join', '--name', 'bob'), line('b'))
@@ -147,7 +147,7 @@ it(
     // and once removed, what he could read is flagged and he can't open anything written after
     const removed = await ok(alice, withPassword('member', 'rm', 'bob'), line('a'))
     expect(removed.stderr).toContain('openai')
-    await ok(alice, ['set', 'tv://stripe', '--type', 'api_key', '--stdin'], 'sk-live-2')
+    await ok(alice, ['set', 'tv://stripe', '--preset', 'api_key', '--stdin'], 'sk-live-2')
     expect(JSON.parse((await ok(bob, ['ls', '--json'])).stdout)).toEqual([])
   },
   SCENARIO_MS,
@@ -160,7 +160,7 @@ it(
     const laptop = actor('laptop')
     const init = await ok(laptop, withPassword('init', '--name', 'alice'), line('a'))
     await ok(laptop, withPassword('unlock'), line('a'))
-    await ok(laptop, ['set', 'tv://openai', '--type', 'api_key', '--stdin'], 'sk-live-1')
+    await ok(laptop, ['set', 'tv://openai', '--preset', 'api_key', '--stdin'], 'sk-live-1')
 
     // when a second device with only the checkout restores her identity
     const desktop = actor('desktop')
@@ -197,8 +197,8 @@ it(
     await ok(alice, withPassword('tier', 'add', 'agents'), line('a'))
     await ok(alice, withPassword('ceiling', 'set', 'host', 'agents'), line('a'))
     await ok(alice, withPassword('unlock'), line('a'))
-    await ok(alice, ['set', 'tv://openai', '--type', 'api_key', '--tier', 'agents', '--stdin'], 'sk-agent-1')
-    await ok(alice, ['set', 'tv://stripe', '--type', 'api_key', '--tier', 'default', '--stdin'], 'sk-live-2')
+    await ok(alice, ['set', 'tv://openai', '--preset', 'api_key', '--tier', 'agents', '--stdin'], 'sk-agent-1')
+    await ok(alice, ['set', 'tv://stripe', '--preset', 'api_key', '--tier', 'default', '--stdin'], 'sk-live-2')
 
     // when a host joins as a machine and alice adds it to the agents tier
     const host = actor('host', { TYPEVAULT_CEILING: 'host' })
@@ -223,7 +223,7 @@ it(
     const alice = actor('alice')
     await ok(alice, withPassword('init', '--name', 'alice'), line('a'))
     await ok(alice, withPassword('unlock'), line('a'))
-    await ok(alice, ['set', 'tv://openai', '--type', 'api_key', '--stdin'], 'sk-old')
+    await ok(alice, ['set', 'tv://openai', '--preset', 'api_key', '--stdin'], 'sk-old')
     writeFileSync(join(runDir('alice'), 'grants.json'), OLD_FORMAT_GRANTS)
 
     // when the vault is deleted and created again in the same place
@@ -254,3 +254,15 @@ it(
   },
   SCENARIO_MS,
 )
+
+it('stores OAuth JSON from stdin as the preset input field', async () => {
+  const machine = actor('machine')
+  await ok(machine, ['init', '--machine'])
+  const credentials = { access_token: 'test-access-token', refresh_token: 'test-refresh-token' }
+
+  await ok(machine, ['set', 'tv://google', '--preset', 'oauth', '--stdin'], JSON.stringify(credentials))
+
+  const stored = await ok(machine, ['get', 'tv://google', '--json', '--reveal'])
+  expect(JSON.parse(stored.stdout)).toEqual({ $default: { type: 'oauth', value: credentials } })
+  expect((await ok(machine, ['get', 'tv://google#refresh_token', '--reveal'])).stdout).toBe('test-refresh-token\n')
+})

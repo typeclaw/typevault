@@ -2,14 +2,18 @@ import { generateX25519Identity, identityToRecipient } from 'age-encryption'
 
 import { unseal } from '../core/crypto'
 import { TypeVaultError } from '../core/errors'
-import type { EntryName, EntryType } from '../core/naming'
+import type { EntryName, Field, Preset } from '../core/naming'
 import { decodePayload } from '../core/payload'
 import { matchCode } from '../daemon/requests'
 import { startPromptServer } from '../prompt'
 
 const TTL_MS = 10 * 60_000
 
-export type WebEntry = { readonly name: EntryName; readonly type: EntryType; readonly tier: string | undefined }
+export type WebEntry = {
+  readonly name: EntryName
+  readonly preset?: Preset | undefined
+  readonly tier: string | undefined
+}
 
 /**
  * Collects an entry's fields on the local one-time page. The page encrypts to a throwaway key held only by this
@@ -18,14 +22,14 @@ export type WebEntry = { readonly name: EntryName; readonly type: EntryType; rea
 export async function promptFields(
   entry: WebEntry,
   show: (url: string, code: string) => void,
-): Promise<Record<string, string>> {
+): Promise<Record<string, Field>> {
   const identity = await generateX25519Identity()
   const server = await startPromptServer()
   try {
     const code = matchCode()
     const handle = server.open({
       name: entry.name,
-      type: entry.type,
+      ...(entry.preset === undefined ? {} : { preset: entry.preset }),
       tier: entry.tier ?? 'your default tier',
       reason: `Store ${entry.name} from your terminal`,
       requester: 'typevault set',
@@ -35,7 +39,7 @@ export async function promptFields(
     })
     show(handle.url, code)
     const payload = decodePayload(await unseal([identity], await handle.done))
-    if (payload.name !== entry.name || payload.type !== entry.type) {
+    if (payload.name !== entry.name) {
       throw new TypeVaultError('tampered', 'the submitted secret does not match this entry')
     }
     return { ...payload.fields }

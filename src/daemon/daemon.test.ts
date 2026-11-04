@@ -41,15 +41,15 @@ beforeEach(async () => {
   await admin.include('trusted', 'member')
   await admin.setCeiling('bot', 'member')
   await vault.put(
-    { name: n('github/bot'), type: 'password', fields: { password: 'hunter2-bot' }, tier: 'member' },
+    { name: n('github/bot'), fields: { password: { type: 'secret' as const, value: 'hunter2-bot' } }, tier: 'member' },
     signerOf(owner),
   )
   await vault.put(
-    { name: n('openai'), type: 'api_key', fields: { key: 'sk-test-openai' }, tier: 'member' },
+    { name: n('openai'), fields: { key: { type: 'secret' as const, value: 'sk-test-openai' } }, tier: 'member' },
     signerOf(owner),
   )
   await vault.put(
-    { name: n('stripe'), type: 'api_key', fields: { key: 'sk_live_x' }, tier: 'trusted' },
+    { name: n('stripe'), fields: { key: { type: 'secret' as const, value: 'sk_live_x' } }, tier: 'trusted' },
     signerOf(owner),
   )
   daemon = await startDaemon({ layout, env: { TYPEVAULT_DIR: layout.root }, keys: [owner] })
@@ -65,7 +65,9 @@ describe('live grants', () => {
     const { token } = await grant('default', { tiers: ['member'], label: 'session:abc' })
     const access = new LiveAccess(layout.agentSocket, token)
     expect((await access.list()).map((e): string => e.name).sort()).toEqual(['github/bot', 'openai'])
-    expect((await access.get(n('openai'))).fields).toEqual({ key: 'sk-test-openai' })
+    expect((await access.get(n('openai'))).fields).toEqual({
+      key: { type: 'secret' as const, value: 'sk-test-openai' },
+    })
     expect(readAudit(layout).at(-1)).toMatchObject({
       action: 'read',
       mode: 'live',
@@ -115,7 +117,7 @@ describe('secret prompt', () => {
     const access = new LiveAccess(layout.agentSocket, token)
     const opened = await access.call(
       '/v1/request',
-      { name: 'resend', type: 'api_key', reason: 'send mail' },
+      { name: 'resend', preset: 'api_key', reason: 'send mail' },
       z.object({ id: z.string(), url: z.string(), code: z.string() }),
     )
     const vault = await Vault.open(layout, [owner], {})
@@ -124,8 +126,8 @@ describe('secret prompt', () => {
     const payload = {
       v: 1,
       name: 'resend',
-      type: 'api_key',
-      fields: { key: 're_test_1' },
+
+      fields: { key: { type: 'secret' as const, value: 're_test_1' } },
       tags: [],
       created: now,
       rotated: now,
@@ -139,7 +141,7 @@ describe('secret prompt', () => {
     expect(posted.status).toBe(204)
     const done = await access.call('/v1/request/wait', { id: opened.id }, z.object({ stored: z.string() }))
     expect(done.stored).toBe('resend')
-    expect((await access.get(n('resend'))).fields).toEqual({ key: 're_test_1' })
+    expect((await access.get(n('resend'))).fields).toEqual({ key: { type: 'secret' as const, value: 're_test_1' } })
   })
 })
 
@@ -148,7 +150,7 @@ it('refuses a prompt submission for a different entry than the one requested', a
   const access = new LiveAccess(layout.agentSocket, token)
   const opened = await access.call(
     '/v1/request',
-    { name: 'resend', type: 'api_key', reason: 'mail' },
+    { name: 'resend', preset: 'api_key', reason: 'mail' },
     z.object({ id: z.string(), url: z.string(), code: z.string() }),
   )
   const vault = await Vault.open(layout, [owner], {})
@@ -157,8 +159,8 @@ it('refuses a prompt submission for a different entry than the one requested', a
   const forged = {
     v: 1,
     name: 'openai',
-    type: 'api_key',
-    fields: { key: 'forged' },
+
+    fields: { key: { type: 'secret' as const, value: 'forged' } },
     tags: [],
     created: now,
     rotated: now,
@@ -170,7 +172,9 @@ it('refuses a prompt submission for a different entry than the one requested', a
   ).rejects.toMatchObject({
     code: 'tampered',
   })
-  expect((await vault.find(n('openai')))?.payload.fields).toEqual({ key: 'sk-test-openai' })
+  expect((await vault.find(n('openai')))?.payload.fields).toEqual({
+    key: { type: 'secret' as const, value: 'sk-test-openai' },
+  })
 })
 
 it('keeps sockets private to the owner', async () => {

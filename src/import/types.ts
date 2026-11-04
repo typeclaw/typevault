@@ -1,6 +1,6 @@
 import type { EntryPayload } from '../core/payload'
 
-export type ImportedEntry = Pick<EntryPayload, 'name' | 'type' | 'fields' | 'origin' | 'tags' | 'env'>
+export type ImportedEntry = Pick<EntryPayload, 'name' | 'fields' | 'origin' | 'tags' | 'env'>
 
 export type ImportResult = {
   readonly entries: readonly ImportedEntry[]

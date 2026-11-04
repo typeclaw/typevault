@@ -21,9 +21,9 @@ export function parseLastpass(text: string): ImportResult {
       {
         title: row['name'] ?? '',
         container: row['grouping'] ?? '',
-        type: note ? ('note' as const) : ('password' as const),
+        preset: note ? ('note' as const) : ('password' as const),
         fields: note
-          ? { text: extra }
+          ? { $default: extra }
           : { username: row['username'], password: row['password'], totp: row['totp'], url: row['url'] },
         ...(note || row['url'] === undefined ? {} : { url: row['url'] }),
       },

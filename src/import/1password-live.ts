@@ -2,7 +2,7 @@ import type { Client } from '@1password/sdk'
 import { z } from 'zod'
 
 import { TypeVaultError } from '../core/errors'
-import { findField } from '../core/naming'
+import { findField, type Field } from '../core/naming'
 import { collectEntries, parseExternal, parseJson, withCustomFields, type ImportItem } from './shared'
 import type { ImportResult } from './types'
 
@@ -38,8 +38,8 @@ export type ConnectSdk = (account: string) => Promise<SdkClient>
 
 const UNSUPPORTED = 'skipped unsupported 1Password item category'
 // Field types kept as custom fields; dates, menus, addresses and keys don't read as one string.
-const OP_TEXT_TYPES: ReadonlySet<string> = new Set(['STRING', 'CONCEALED', 'URL', 'EMAIL', 'PHONE'])
-const SDK_TEXT_TYPES: ReadonlySet<string> = new Set(['Text', 'Concealed', 'Url', 'Email', 'Phone'])
+const OP_TEXT_TYPES: ReadonlySet<string> = new Set(['STRING', 'CONCEALED', 'URL', 'EMAIL', 'PHONE', 'OTP'])
+const SDK_TEXT_TYPES: ReadonlySet<string> = new Set(['Text', 'Concealed', 'Url', 'Email', 'Phone', 'Totp'])
 
 export async function read1Password(
   options: OnePasswordOptions,
@@ -138,7 +138,23 @@ function mapOpItem(item: z.infer<typeof OpItemSchema>): Omit<ImportItem, 'title'
   // Built-in fields (username, password, notes) carry a purpose; custom ones don't.
   const labeled = item.fields
     .filter((field) => field.purpose === undefined && OP_TEXT_TYPES.has(field.type))
-    .map((field) => [field.label, field.value] as const)
+    .map(
+      (field) =>
+        [
+          field.label,
+          field.value === undefined
+            ? undefined
+            : {
+                type:
+                  field.type === 'CONCEALED'
+                    ? ('secret' as const)
+                    : field.type === 'OTP'
+                      ? ('totp' as const)
+                      : ('text' as const),
+                value: field.value,
+              },
+        ] as const,
+    )
   return { ...mapped, fields: withCustomFields(mapped.fields, labeled) }
 }
 
@@ -151,7 +167,7 @@ function mapOpTemplate(item: z.infer<typeof OpItemSchema>): Omit<ImportItem, 'ti
     case 'LOGIN':
     case 'PASSWORD':
       return {
-        type: 'password',
+        preset: 'password',
         fields: {
           username: value((field) => field.purpose === 'USERNAME'),
           password: value((field) => field.purpose === 'PASSWORD'),
@@ -161,13 +177,13 @@ function mapOpTemplate(item: z.infer<typeof OpItemSchema>): Omit<ImportItem, 'ti
         ...(url === undefined ? {} : { url }),
       }
     case 'SECURE_NOTE':
-      return { type: 'note', fields: { text: value((field) => field.purpose === 'NOTES') } }
+      return { preset: 'note', fields: { $default: value((field) => field.purpose === 'NOTES') } }
     case 'API_CREDENTIAL':
-      return { type: 'api_key', fields: { key: named(['credential', 'api key', 'api_key', 'key']) } }
+      return { preset: 'api_key', fields: { $default: named(['credential', 'api key', 'api_key', 'key']) } }
     case 'SSH_KEY': {
       const key = item.fields.find((field) => field.type === 'SSHKEY')
       return {
-        type: 'ssh',
+        preset: 'ssh',
         fields: {
           private_key: key?.ssh_formats?.openssh?.value ?? key?.value,
           public_key: named(['public_key', 'public key']),
@@ -215,7 +231,7 @@ function selectFields(
   }
   const kept = tags.filter((value) => !wanted.some((tag) => value.startsWith(`${tag}/`)))
   if (selection === 'all') return { ...mapped, tags: kept }
-  const fields: Record<string, string> = {}
+  const fields: Record<string, string | Field> = {}
   for (const wanted of selection) {
     // Resolve the name against every mapped field, empty ones included, so an empty canonical field is never
     // stood in for by a custom one that differs only in case.
@@ -309,7 +325,21 @@ function mapSdkItem(item: z.infer<typeof SdkItemSchema>): Omit<ImportItem, 'titl
   if (mapped === undefined) return undefined
   const labeled = item.fields
     .filter((field) => SDK_TEXT_TYPES.has(field.fieldType))
-    .map((field) => [field.title, field.value] as const)
+    .map(
+      (field) =>
+        [
+          field.title,
+          {
+            type:
+              field.fieldType === 'Concealed'
+                ? ('secret' as const)
+                : field.fieldType === 'Totp'
+                  ? ('totp' as const)
+                  : ('text' as const),
+            value: field.value,
+          },
+        ] as const,
+    )
   return { ...mapped, fields: withCustomFields(mapped.fields, labeled) }
 }
 
@@ -322,7 +352,7 @@ function mapSdkTemplate(item: z.infer<typeof SdkItemSchema>): Omit<ImportItem, '
     case 'Login':
     case 'Password':
       return {
-        type: 'password',
+        preset: 'password',
         fields: {
           username: named(['username']),
           password: named(['password']),
@@ -332,12 +362,12 @@ function mapSdkTemplate(item: z.infer<typeof SdkItemSchema>): Omit<ImportItem, '
         ...(url === undefined ? {} : { url }),
       }
     case 'SecureNote':
-      return { type: 'note', fields: { text: item.notes } }
+      return { preset: 'note', fields: { $default: item.notes } }
     case 'ApiCredentials':
-      return { type: 'api_key', fields: { key: named(['credential', 'api key', 'api_key', 'key']) } }
+      return { preset: 'api_key', fields: { $default: named(['credential', 'api key', 'api_key', 'key']) } }
     case 'SshKey': {
       const key = field((value) => value.fieldType === 'SshKey')
-      return { type: 'ssh', fields: { private_key: key?.value, public_key: key?.details?.content?.publicKey } }
+      return { preset: 'ssh', fields: { private_key: key?.value, public_key: key?.details?.content?.publicKey } }
     }
     default:
       return undefined

@@ -2,9 +2,10 @@ import { appendAudit, type AuditEvent, type AuditMode } from '../audit/log'
 import { signerOf } from '../core/entries'
 import { TypeVaultError } from '../core/errors'
 import { withLock } from '../core/lock'
-import { type EntryName, matchesOnly } from '../core/naming'
+import { type EntryName, type Field, matchesOnly } from '../core/naming'
 import { resolveName, type StoredEntry, type Vault } from '../core/vault'
 import { needsRefresh, refreshOAuth } from '../oauth/refresh'
+import { secretValues } from './env'
 import { allowsEntry, allowsTier, type ScopeChain } from './scope'
 import {
   type Access,
@@ -85,15 +86,40 @@ export class ScopedVault implements Access {
     return signerOf(key)
   }
 
-  /** OAuth entries past their expiry are refreshed and written back before anyone reads them. */
+  /** OAuth fields past their expiry are refreshed and written back before anyone reads them. */
   async #fresh(entry: StoredEntry): Promise<StoredEntry> {
     const now = new Date()
-    if (entry.payload.type !== 'oauth' || !needsRefresh(entry.payload.fields, now)) return entry
-    const fields = await refreshOAuth(entry.payload.fields, now)
-    const { name, type, env, origin, tags } = entry.payload
+    const fields: Record<string, Field> = { ...entry.payload.fields }
+    let changed = false
+    try {
+      for (const [name, field] of Object.entries(fields)) {
+        switch (field.type) {
+          case 'oauth':
+            if (needsRefresh(field.value, now)) {
+              fields[name] = { type: 'oauth', value: await refreshOAuth(field.value, now) }
+              changed = true
+            }
+            break
+          case 'secret':
+          case 'text':
+          case 'totp':
+            break
+          default:
+            throw new TypeVaultError('invalid', `unexpected field ${JSON.stringify(field satisfies never)}`)
+        }
+      }
+    } catch (error) {
+      // A provider may have rotated an earlier field's refresh token already: store it before failing.
+      if (changed) await this.#storeRefreshed(entry, fields)
+      throw error
+    }
+    return changed ? this.#storeRefreshed(entry, fields) : entry
+  }
+
+  async #storeRefreshed(entry: StoredEntry, fields: Readonly<Record<string, Field>>): Promise<StoredEntry> {
+    const { name, env, origin, tags } = entry.payload
     const input = {
       name,
-      type,
       fields,
       tier: entry.envelope.tier,
       tags,
@@ -106,7 +132,7 @@ export class ScopedVault implements Access {
   }
 
   #remember(value: EntryValue): EntryValue {
-    for (const field of Object.values(value.fields)) if (field !== '') this.#handedOut.add(field)
+    for (const secret of secretValues([value])) this.#handedOut.add(secret)
     return value
   }
 

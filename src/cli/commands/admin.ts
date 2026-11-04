@@ -32,7 +32,7 @@ export const init = defineCommand({
       `vault created at ${global ? layout.root : layout.vault} with tier "${STARTER_TIER}", owned by ${founder.name}`,
     )
     note(global ? 'Only vault/ is safe to commit.' : `Commit ${LOCAL_VAULT_DIR}/: it holds no key in the clear.`)
-    note('next: typevault set <name> --type ... --stdin (more tiers: typevault tier add <name>)')
+    note('next: typevault set <name> --stdin (more tiers: typevault tier add <name>)')
   },
 })
 

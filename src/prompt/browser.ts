@@ -2,12 +2,13 @@ import { Encrypter } from 'age-encryption'
 import { z } from 'zod'
 
 import { TypeVaultError } from '../core/errors'
-import { ENTRY_TYPES, parseEntryName, parseEntryType } from '../core/naming'
+import { PRESETS, parseEntryName, parsePreset, type Field, type FieldType } from '../core/naming'
+import { FieldSchema } from '../core/payload'
 import type { EntryPayload } from '../core/payload'
 
 const ViewSchema = z.object({
   name: z.string(),
-  type: z.string(),
+  preset: z.string().optional(),
   recipients: z.array(z.string()).min(1),
 })
 
@@ -28,17 +29,20 @@ const success = requiredElement('#success', HTMLElement)
 function initialize(): void {
   const data = requiredElement('#tv-data', HTMLScriptElement)
   const view = ViewSchema.parse(JSON.parse(data.textContent ?? ''))
-  const type = parseEntryType(view.type)
+  const preset =
+    view.preset === undefined
+      ? { fields: { $default: 'secret' } as const, input: '$default' }
+      : PRESETS[parsePreset(view.preset)]
   const name = parseEntryName(view.name)
   const inputs: (HTMLInputElement | HTMLTextAreaElement)[] = []
-  const publicFields = new Set(['username', 'url', 'expires_at', 'token_url', 'client_id', 'public_key', 'text'])
-  for (const field of ENTRY_TYPES[type].fields) {
-    const secret = !publicFields.has(field)
+  const types: Readonly<Record<string, FieldType>> = preset.fields
+  for (const [field, type] of Object.entries(types)) {
+    const secret = type !== 'text'
     const wrapper = document.createElement('div')
     wrapper.className = 'field'
     const label = document.createElement('label')
     label.htmlFor = `field-${field}`
-    const fieldName = field
+    const fieldName = (field === '$default' ? (type === 'oauth' ? 'OAuth JSON' : 'Secret') : field)
       .split('_')
       .map((word) => (ACRONYMS.has(word) ? word.toUpperCase() : word))
       .join(' ')
@@ -46,14 +50,17 @@ function initialize(): void {
     label.textContent = fieldName
     const row = document.createElement('div')
     row.className = 'input-row'
-    const input = ['text', 'private_key', 'public_key'].includes(field)
-      ? document.createElement('textarea')
-      : document.createElement('input')
+    const input =
+      type === 'oauth' ||
+      (field === '$default' && view.preset === 'note') ||
+      ['text', 'private_key', 'public_key'].includes(field)
+        ? document.createElement('textarea')
+        : document.createElement('input')
     input.id = label.htmlFor
     input.name = field
     input.autocomplete = 'off'
     input.spellcheck = false
-    input.required = field === ENTRY_TYPES[type].primary
+    input.required = field === preset.input
     if (!input.required) {
       const optional = document.createElement('span')
       optional.className = 'optional'
@@ -96,9 +103,22 @@ function initialize(): void {
       const payload: EntryPayload = {
         v: 1,
         name,
-        type,
         fields: Object.fromEntries(
-          inputs.filter((input) => input.value !== '').map((input) => [input.name, input.value]),
+          inputs
+            .filter((input) => input.value !== '')
+            .map((input): [string, Field] => {
+              const type = types[input.name] ?? 'secret'
+              switch (type) {
+                case 'oauth':
+                  return [input.name, FieldSchema.parse({ type, value: JSON.parse(input.value) })]
+                case 'secret':
+                case 'text':
+                case 'totp':
+                  return [input.name, { type, value: input.value }]
+                default:
+                  throw new TypeVaultError('invalid', `unexpected field type ${type satisfies never}`)
+              }
+            }),
         ),
         tags: [],
         created: now,

@@ -86,7 +86,19 @@ function mapItem(item: z.infer<typeof ItemSchema>): Omit<ImportItem, 'title'> | 
   if (mapped === undefined) return undefined
   const labeled = item.details.sections
     .flatMap((section) => section.fields)
-    .map((field) => [field.title, field.value.concealed ?? field.value.string] as const)
+    .map(
+      (field) =>
+        [
+          field.title,
+          field.value.concealed !== undefined
+            ? { type: 'secret' as const, value: field.value.concealed }
+            : field.value.totp !== undefined
+              ? { type: 'totp' as const, value: field.value.totp }
+              : field.value.string === undefined
+                ? undefined
+                : { type: 'text' as const, value: field.value.string },
+        ] as const,
+    )
   return { ...mapped, fields: withCustomFields(mapped.fields, labeled) }
 }
 
@@ -102,7 +114,7 @@ function mapTemplate(item: z.infer<typeof ItemSchema>): Omit<ImportItem, 'title'
     case '001':
     case '005':
       return {
-        type: 'password',
+        preset: 'password',
         fields: {
           username:
             item.details.loginFields.find((value) => value.designation === 'username')?.value ?? text(['username']),
@@ -113,13 +125,13 @@ function mapTemplate(item: z.infer<typeof ItemSchema>): Omit<ImportItem, 'title'
         },
       }
     case '003':
-      return { type: 'note', fields: { text: item.details.notesPlain } }
+      return { preset: 'note', fields: { $default: item.details.notesPlain } }
     case '112':
-      return { type: 'api_key', fields: { key: text(['credential', 'api key', 'api_key', 'key']) } }
+      return { preset: 'api_key', fields: { $default: text(['credential', 'api key', 'api_key', 'key']) } }
     case '114': {
       const key = sections.find((value) => value.value.sshKey !== undefined)?.value.sshKey
       return {
-        type: 'ssh',
+        preset: 'ssh',
         fields: {
           private_key: key?.metadata?.privateKey ?? key?.privateKey ?? text(['private_key', 'private key']),
           public_key: key?.publicKey ?? key?.metadata?.publicKey ?? text(['public_key', 'public key']),

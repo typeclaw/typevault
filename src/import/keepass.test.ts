@@ -61,22 +61,21 @@ beforeAll(async () => {
 
 test('KeePass maps protected login and note fields, immediate groups, origins, and excludes recycled subtrees', async () => {
   const result = await parseKeepass(fixture, 'test-password')
-  expect(result.entries.map((entry) => [entry.name, entry.type, entry.fields, entry.origin])).toEqual([
-    ['memo', 'note', { text: 'private note' }, undefined],
+  expect(result.entries.map((entry) => [entry.name, entry.fields, entry.origin])).toEqual([
+    ['memo', { $default: { type: 'secret', value: 'private note' } }, undefined],
     [
       'github/work-team',
-      'password',
       {
-        username: 'user@example.com',
-        password: 'hunter2',
-        url: 'https://example.com:8443/path?q=secret',
-        totp: 'otpauth://totp/Example?secret=SEED',
+        username: { type: 'text', value: 'user@example.com' },
+        password: { type: 'secret', value: 'hunter2' },
+        url: { type: 'text', value: 'https://example.com:8443/path?q=secret' },
+        totp: { type: 'totp', value: 'otpauth://totp/Example?secret=SEED' },
       },
       'https://example.com:8443',
     ],
-    ['github/work-team-2', 'password', { password: 'second' }, undefined],
-    ['github/work-team-3', 'password', { password: 'third' }, undefined],
-    ['local/bots', 'password', { url: 'ftp://example.com' }, undefined],
+    ['github/work-team-2', { password: { type: 'secret', value: 'second' } }, undefined],
+    ['github/work-team-3', { password: { type: 'secret', value: 'third' } }, undefined],
+    ['local/bots', { url: { type: 'text', value: 'ftp://example.com' } }, undefined],
   ])
   expect(result.entries[1]?.tags).toEqual(['agent'])
   expect(result.warnings).toHaveLength(3)
@@ -111,7 +110,7 @@ test('KeePass supports Argon2id databases and an empty but supplied password', a
   entry.fields.set('Title', 'Example')
   entry.fields.set('Password', 'hunter2')
   const result = await parseKeepass(new Uint8Array(await db.save()), '')
-  expect(result.entries[0]?.fields).toEqual({ password: 'hunter2' })
+  expect(result.entries[0]?.fields).toEqual({ password: { type: 'secret', value: 'hunter2' } })
 })
 
 test('KeePass reports missing passwords as invalid', async () => {

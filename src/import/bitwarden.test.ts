@@ -28,21 +28,24 @@ test('Bitwarden maps login, note, and SSH records with folder accounts and colli
       ],
     }),
   )
-  expect(result.entries.map((entry) => [entry.name, entry.type, entry.fields, entry.origin])).toEqual([
+  expect(result.entries.map((entry) => [entry.name, entry.fields, entry.origin])).toEqual([
     [
       'github/work-team',
-      'password',
       {
-        username: 'user@example.com',
-        password: 'hunter2',
-        totp: 'SEED',
-        url: 'https://example.com:8443/path?q=secret',
+        username: { type: 'text', value: 'user@example.com' },
+        password: { type: 'secret', value: 'hunter2' },
+        totp: { type: 'totp', value: 'SEED' },
+        url: { type: 'text', value: 'https://example.com:8443/path?q=secret' },
       },
       'https://example.com:8443',
     ],
-    ['github/work-team-2', 'note', { text: 'private note' }, undefined],
-    ['build-key', 'ssh', { private_key: 'fake-private', public_key: 'fake-public' }, undefined],
-    ['local', 'password', { url: 'ftp://example.com' }, undefined],
+    ['github/work-team-2', { $default: { type: 'secret', value: 'private note' } }, undefined],
+    [
+      'build-key',
+      { private_key: { type: 'secret', value: 'fake-private' }, public_key: { type: 'text', value: 'fake-public' } },
+      undefined,
+    ],
+    ['local', { url: { type: 'text', value: 'ftp://example.com' } }, undefined],
   ])
   expect(result.warnings).toHaveLength(3)
   expect(result.warnings.join()).toContain('"github/work-team"')

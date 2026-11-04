@@ -23,7 +23,10 @@ const put = async (name: string, tier: string): Promise<Envelope> =>
   (
     await (
       await open([owner])
-    ).put({ name: parseEntryName(name), type: 'api_key', fields: { key: `${name}-secret` }, tier }, signerOf(owner))
+    ).put(
+      { name: parseEntryName(name), fields: { key: { type: 'secret' as const, value: `${name}-secret` } }, tier },
+      signerOf(owner),
+    )
   ).envelope
 
 async function addMachine(name: string, tiers: readonly string[]): Promise<SecretKey> {

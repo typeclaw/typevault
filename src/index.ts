@@ -7,12 +7,15 @@ export { type ErrorCode, TypeVaultError } from './core/errors'
 export {
   type EntryName,
   type EntryRef,
-  type EntryType,
-  fieldsOf,
+  type FieldType,
+  type Field,
+  type Preset,
+  PRESETS,
+  defaultField,
+  resolveField,
   parseEntryName,
   parseEntryRef,
-  parseEntryType,
-  primaryField,
+  parsePreset,
 } from './core/naming'
 
 export type ClientOptions = {

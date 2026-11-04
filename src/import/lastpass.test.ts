@@ -10,15 +10,23 @@ test('LastPass maps logins and notes with grouping accounts, CSV escapes, and co
       'http://sn,,,,"line one\r\nsay ""hello""",GitHub,Work,0\r\n' +
       'ftp://example.com,,other,,,Personal,,0\r\n',
   )
-  expect(result.entries.map((entry) => [entry.name, entry.type, entry.fields, entry.origin])).toEqual([
+  expect(result.entries.map((entry) => [entry.name, entry.fields, entry.origin])).toEqual([
     [
       'github/work',
-      'password',
-      { username: 'user@example.com', password: 'hunter2', totp: 'SEED', url: 'https://example.com/a' },
+      {
+        username: { type: 'text', value: 'user@example.com' },
+        password: { type: 'secret', value: 'hunter2' },
+        totp: { type: 'totp', value: 'SEED' },
+        url: { type: 'text', value: 'https://example.com/a' },
+      },
       'https://example.com',
     ],
-    ['github/work-2', 'note', { text: 'line one\r\nsay "hello"' }, undefined],
-    ['personal', 'password', { password: 'other', url: 'ftp://example.com' }, undefined],
+    ['github/work-2', { $default: { type: 'secret', value: 'line one\r\nsay "hello"' } }, undefined],
+    [
+      'personal',
+      { password: { type: 'secret', value: 'other' }, url: { type: 'text', value: 'ftp://example.com' } },
+      undefined,
+    ],
   ])
   expect(result.warnings).toHaveLength(1)
   expect(result.warnings[0]).toContain('"github/work"')

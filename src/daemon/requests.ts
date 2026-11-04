@@ -4,7 +4,7 @@ import { appendAudit } from '../audit/log'
 import { randomToken } from '../core/crypto'
 import { unseal } from '../core/crypto'
 import { TypeVaultError } from '../core/errors'
-import type { EntryName, EntryType } from '../core/naming'
+import type { EntryName, Preset } from '../core/naming'
 import { decodePayload } from '../core/payload'
 import type { Vault } from '../core/vault'
 import { type PromptServer, startPromptServer } from '../prompt'
@@ -24,7 +24,7 @@ export type RequestSession = {
 
 export type RequestInput = {
   readonly name: EntryName
-  readonly type: EntryType
+  readonly preset?: Preset | undefined
   readonly tier?: string | undefined
   readonly reason: string
 }
@@ -67,7 +67,7 @@ export class PromptRequests {
     const code = matchCode()
     const handle = (await this.#prompt()).open({
       name: input.name,
-      type: input.type,
+      ...(input.preset === undefined ? {} : { preset: input.preset }),
       tier,
       reason: input.reason,
       requester: grant.label,
@@ -81,16 +81,11 @@ export class PromptRequests {
       const key = (await this.#vault.keyring.unlock(tier)) ?? this.#vault.keyring.owner
       if (key === undefined) throw new TypeVaultError('denied', `no key here can read tier "${tier}"`)
       const payload = decodePayload(await unseal([key.identity], ciphertext))
-      if (
-        payload.name !== input.name ||
-        payload.type !== input.type ||
-        payload.env !== undefined ||
-        payload.needsRotation !== undefined
-      ) {
+      if (payload.name !== input.name || payload.env !== undefined || payload.needsRotation !== undefined) {
         throw new TypeVaultError('tampered', 'the submitted secret does not match the request')
       }
       if (!session.isLive()) throw new TypeVaultError('denied', 'the requesting grant is no longer live')
-      await session.access.set({ name: input.name, type: input.type, fields: payload.fields, tier })
+      await session.access.set({ name: input.name, fields: payload.fields, tier })
       await appendAudit(this.#vault.layout, {
         action: 'request.stored',
         mode: 'live',

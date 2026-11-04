@@ -12,7 +12,7 @@ export function parseCsv(text: string): ImportResult {
   return collectEntries(
     records.map((row) => ({
       title: row[title] ?? '',
-      type: 'password',
+      preset: 'password',
       fields: { username: row['username'], password: row['password'], url: row['url'], totp: row['otpauth'] },
       ...(row['url'] === undefined ? {} : { url: row['url'] }),
     })),

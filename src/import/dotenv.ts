@@ -11,8 +11,8 @@ export function parseDotenv(text: string): ImportResult {
   return collectEntries(
     parseDotenvVariables(text).map(({ name, value }) => ({
       title: name,
-      type: 'api_key',
-      fields: { key: value },
+      preset: 'api_key',
+      fields: { $default: value },
       ...(isUsableEnvName(name) ? { env: name } : {}),
     })),
   )

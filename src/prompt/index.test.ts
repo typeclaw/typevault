@@ -8,7 +8,7 @@ let server: PromptServer | undefined
 
 const view: PromptView = {
   name: 'stripe',
-  type: 'api_key',
+  preset: 'api_key',
   tier: 'trusted',
   reason: '<img src=x onerror=alert(1)>',
   requester: 'test-grant',

@@ -37,11 +37,11 @@ beforeEach(async () => {
   await admin.addTier('trusted')
   await admin.include('trusted', 'member')
   await vault.put(
-    { name: n('openai'), type: 'api_key', fields: { key: 'sk-test-openai' }, tier: 'member' },
+    { name: n('openai'), fields: { key: { type: 'secret' as const, value: 'sk-test-openai' } }, tier: 'member' },
     signerOf(owner),
   )
   await vault.put(
-    { name: n('stripe'), type: 'api_key', fields: { key: 'sk_live_x' }, tier: 'trusted' },
+    { name: n('stripe'), fields: { key: { type: 'secret' as const, value: 'sk_live_x' } }, tier: 'trusted' },
     signerOf(owner),
   )
   daemon = await startDaemon({ layout: layoutOf(root), env: { TYPEVAULT_DIR: root }, keys: [owner] })
@@ -58,7 +58,9 @@ describe('sdk', () => {
     const grant = await admin.grant({ tiers: ['member'], label: 'sdk:test' })
     const client = await createClient({ grant, dir: root, env: {} })
     expect((await client.list()).map((entry): string => entry.name)).toEqual(['openai'])
-    expect((await client.get(n('openai'))).fields).toEqual({ key: 'sk-test-openai' })
+    expect((await client.get(n('openai'))).fields).toEqual({
+      key: { type: 'secret' as const, value: 'sk-test-openai' },
+    })
     const redactor = createRedactor(await client.readValues())
     expect(redactor.redact('key=sk-test-openai')).toBe('key=[redacted]')
   })
@@ -67,7 +69,9 @@ describe('sdk', () => {
     const grant = await createAdmin({ dir: root, env: {} }).grant({ tiers: ['member'], sealed: true })
     expect(grant.startsWith('tvg1:')).toBe(true)
     const client = await createClient({ grant, dir: root, env: {} })
-    expect((await client.get(n('openai'))).fields).toEqual({ key: 'sk-test-openai' })
+    expect((await client.get(n('openai'))).fields).toEqual({
+      key: { type: 'secret' as const, value: 'sk-test-openai' },
+    })
   })
 
   it('lists and revokes grants by label', async () => {
@@ -86,7 +90,10 @@ describe('sdk', () => {
     const key = await machineVault(globalRoot)
     const vault = await Vault.open(layoutOf(globalRoot), [key], {})
     await new Admin(vault).addTier('member')
-    await vault.put({ name: n('openai'), type: 'api_key', fields: { key: 'sk-global' }, tier: 'member' }, signerOf(key))
+    await vault.put(
+      { name: n('openai'), fields: { key: { type: 'secret' as const, value: 'sk-global' } }, tier: 'member' },
+      signerOf(key),
+    )
     const env = { XDG_CONFIG_HOME: config }
     // This repo dogfoods its own .typevault/, so leave it for a directory with none.
     const cwd = process.cwd()
@@ -96,7 +103,7 @@ describe('sdk', () => {
     try {
       await expect(createClient({ direct: true, env })).rejects.toMatchObject({ code: 'not_found' })
       const client = await createClient({ direct: true, global: true, env })
-      expect((await client.get(n('openai'))).fields).toEqual({ key: 'sk-global' })
+      expect((await client.get(n('openai'))).fields).toEqual({ key: { type: 'secret' as const, value: 'sk-global' } })
     } finally {
       process.chdir(cwd)
       rmSync(config, { recursive: true, force: true })
@@ -106,6 +113,6 @@ describe('sdk', () => {
   it('refuses local keys unless direct mode is asked for', async () => {
     await expect(createClient({ dir: root, env: {} })).rejects.toMatchObject({ code: 'denied' })
     const client = await createClient({ dir: root, env: {}, direct: true })
-    expect((await client.get(n('stripe'))).fields).toEqual({ key: 'sk_live_x' })
+    expect((await client.get(n('stripe'))).fields).toEqual({ key: { type: 'secret' as const, value: 'sk_live_x' } })
   })
 })

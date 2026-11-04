@@ -4,7 +4,10 @@ import { TypeVaultError } from './errors'
 import {
   deriveEnvName,
   findField,
-  isSecretField,
+  defaultField,
+  isFieldName,
+  resolveField,
+  type Field,
   matchesOnly,
   parseEntryName,
   parseEntryRef,
@@ -36,9 +39,12 @@ describe('parseEntryRef', () => {
     expect(parseEntryRef('tv://aws/prod#Secret Access Key #2').field).toBe('Secret Access Key #2')
   })
 
-  it.each(['github/bot#', 'github/bot#a=b', 'github/bot# padded'])('rejects the field in %p', (input) => {
-    expect(() => parseEntryRef(input)).toThrow(TypeVaultError)
-  })
+  it.each(['github/bot#', 'github/bot#a=b', 'github/bot# padded', 'github/bot#$default', 'github/bot#$other'])(
+    'rejects the field in %p',
+    (input) => {
+      expect(() => parseEntryRef(input)).toThrow(TypeVaultError)
+    },
+  )
 
   it.each(['tv://github/bot#password', 'typevault://github/bot#password', 'TV://GitHub/Bot#password'])(
     'accepts the %p scheme form',
@@ -60,6 +66,8 @@ describe('deriveEnvName', () => {
   it.each([
     ['github/bot', 'password', 'GITHUB_BOT_PASSWORD'],
     ['openai', 'key', 'OPENAI_KEY'],
+    ['openai', '$default', 'OPENAI'],
+    ['github/bot', '$default', 'GITHUB_BOT'],
     ['google-workspace', 'access_token', 'GOOGLE_WORKSPACE_ACCESS_TOKEN'],
     ['aws/prod', 'Secret Access Key', 'AWS_PROD_SECRET_ACCESS_KEY'],
     ['stripe', 'api-key (live)', 'STRIPE_API_KEY_LIVE'],
@@ -88,16 +96,45 @@ describe('findField', () => {
   })
 })
 
-describe('isSecretField', () => {
+describe('defaultField', () => {
   it.each([
-    ['username', false],
-    ['url', false],
-    ['password', true],
-    ['text', true],
-    ['Webhook Secret', true],
-    ['Username', true],
-  ])('treats %p as secret: %p', (field, expected) => {
-    expect(isSecretField(field)).toBe(expected)
+    [{ $default: 'a', password: 'b' }, '$default'],
+    [{ password: 'a' }, 'password'],
+  ])('resolves %p to %p', (fields, expected) => {
+    expect(defaultField(fields)).toBe(expected)
+  })
+  it('lists the fields when a bare reference is ambiguous', () => {
+    expect(() => defaultField({ username: 'a', password: 'b' }, 'github')).toThrow(
+      'github has several fields, name one: username, password',
+    )
+  })
+  it('rejects entries with no fields', () => {
+    expect(() => defaultField({})).toThrow(TypeVaultError)
+  })
+})
+describe('reserved field names', () => {
+  it.each([
+    ['$default', true],
+    ['$other', false],
+    ['$default.part', false],
+    ['custom', true],
+  ])('accepts %p: %p', (field, expected) => {
+    expect(isFieldName(field)).toBe(expected)
+  })
+})
+describe('compound fields', () => {
+  const fields: Readonly<Record<string, Field>> = {
+    session: { type: 'oauth', value: { access_token: 'token', refresh_token: 'refresh' } },
+    'session.access_token': { type: 'text', value: 'literal' },
+    plain: { type: 'secret', value: 'secret' },
+  }
+  it.each([
+    ['session.refresh_token', { type: 'secret' as const, value: 'refresh' }],
+    ['session.access_token', { type: 'text' as const, value: 'literal' }],
+    ['session.missing', undefined],
+    ['plain.part', undefined],
+  ])('resolves %p', (wanted, expected) => {
+    expect(resolveField(fields, wanted)).toEqual(expected)
   })
 })
 
