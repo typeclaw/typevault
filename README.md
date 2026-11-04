@@ -90,7 +90,7 @@ typevault tier add trusted
 typevault tier include trusted default          # trusted reaches everything default reaches
 printf '%s' "$STRIPE_KEY" | typevault set tv://stripe --type api_key --tier trusted --stdin
 
-# Hand an agent a grant instead of a key (the daemon starts automatically)
+# Hand an agent a grant instead of a key (served by your unlocked session's daemon)
 export TYPEVAULT_GRANT=$(typevault grant --tier default --label session:abc)
 
 typevault whoami                                 # live grant, sealed grant, unlocked session or machine key
@@ -113,8 +113,12 @@ lands in the wrong one. `-g` goes before `--` in `run`; `TYPEVAULT_GLOBAL=1` doe
 `TYPEVAULT_DIR` always selects the vault kept whole at that path.
 
 A project vault holds only ciphertext, wrapped keys and signed manifests, so commit `.typevault/` as is. Each checkout
-keeps its own trust pin, audit log and daemon under `~/.config/typevault/checkouts/<id>/`. A collaborator gets access
-by joining as a member, or with a grant, as with the global vault.
+keeps its own trust pin, audit log and daemon under `~/.config/typevault/checkouts/<id>/`, keyed by the checkout's
+path. A collaborator gets access by joining as a member, or with a grant, as with the global vault.
+
+To start over, delete `.typevault/` and run `typevault init` again. `init` stops this checkout's daemon and clears its
+runtime state (grants, session, revision marks), which belonged to the old vault, and pins the new owner key. The pin
+stays keyed by path, so a vault whose `owner.json` is swapped through git is still refused: only `init` re-pins.
 
 ## Members and unlocking
 
@@ -139,6 +143,11 @@ holds their Secret Key and their member key sealed by password and Secret Key; `
 sealed copy to `members/<name>.key`, so on a new device `typevault identity restore <name>` needs only the Secret Key
 and the password. Keep the Secret Key somewhere safe: `typevault identity export --to 1password --vault Backup`. A
 machine's identity holds its key directly, or the key comes from `TYPEVAULT_KEY`.
+
+`unlock` starts a daemon that holds your key until `--for` runs out (8h by default) or `typevault lock`. The vault counts
+as unlocked only while that session is running: a daemon without one (a machine member's, or one left from an older
+release) is stopped and replaced, once the password checks out. Without a grant, your CLI and your agents read through
+the session. Agents never see the password or the key, and live grants you issue work only while it runs.
 
 While a person's vault is locked, an agent's command fails with `the vault is locked: ask a human to run typevault
 unlock`; in a terminal, the command asks for the password and unlocks on the spot. Owner commands (`tier`, `member`,
@@ -300,6 +309,8 @@ typevault doctor --fix                           # verify signatures, resolve gi
 typevault audit --verify
 typevault audit --label ci:deploy --follow       # stream one grant's reads
 typevault daemon status                          # also: daemon start | stop | run (foreground)
+                                                 # a background daemon writes to run/daemon.log; a failed start quotes it.
+                                                 # it holds run/daemon.lock until its cleanup is done, so a stop waits for that
 ```
 
 `tier`, `ceiling` and `signer` each also have `ls` and `rm`.
@@ -379,7 +390,7 @@ $TYPEVAULT_DIR/
     owner.json
     audit-anchors/  # one file per checkout's audit chain
   audit/            # full local audit log
-  run/              # sockets, lock, grants, session token, staged transactions, revision high-water marks
+  run/              # sockets, locks, grants, session token, daemon.log, staged transactions, revision marks
   checkouts/<id>/   # trust.json audit/ run/ of each project checkout
 
 <project>/.typevault/   # a project vault: the same files as vault/, all safe to commit
