@@ -57,7 +57,7 @@ it('removes the older copy when two files hold the same name', async () => {
   )
   const payload = { ...kept.payload, fields: { key: { type: 'secret' as const, value: 'stale' } } }
   const stale = await sealEntry(
-    { id: 'f'.repeat(32), tier: 'team', rev: 1, at: '2020-01-01T00:00:00.000Z', payload },
+    { id: `team.${'f'.repeat(32)}`, tier: 'team', rev: 1, at: '2020-01-01T00:00:00.000Z', payload },
     vault.state,
     signerOf(owner),
   )
@@ -77,7 +77,7 @@ it('never deletes a copy that lives in another tier', async () => {
   )
   const payload = { ...kept.payload, fields: { key: { type: 'secret' as const, value: 'planted' } } }
   const planted = await sealEntry(
-    { id: 'e'.repeat(32), tier: 'other', rev: 99, at: kept.envelope.at, payload },
+    { id: `other.${'e'.repeat(32)}`, tier: 'other', rev: 99, at: kept.envelope.at, payload },
     vault.state,
     signerOf(owner),
   )

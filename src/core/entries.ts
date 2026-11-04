@@ -25,7 +25,7 @@ export const CertSchema = z.object({
 const SignerSchema = z.union([IssuerSchema, z.object({ kind: z.literal('cert'), cert: CertSchema })])
 export const EnvelopeSchema = z.object({
   v: z.literal(1),
-  id: z.string().regex(/^[0-9a-f]{32}$/),
+  id: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*\.[0-9a-f]{32}$/),
   tier: z.string(),
   gen: z.number().int().positive(),
   rev: z.number().int().positive(),
@@ -162,6 +162,8 @@ export type VerifyOptions = { readonly acceptExpiredCerts?: boolean }
 export function verifyEnvelope(envelope: Envelope, state: VaultState, options: VerifyOptions = {}): string | undefined {
   const tier = state.tiers[envelope.tier]
   if (tier === undefined) return `unknown tier "${envelope.tier}"`
+  // The id names its tier, so a file can only ever be replaced by a write its tier's signers could make.
+  if (!envelope.id.startsWith(`${envelope.tier}.`)) return `entry id does not belong to tier "${envelope.tier}"`
   if (tier.gen !== envelope.gen) return `stale generation ${envelope.gen} (current ${tier.gen})`
   if (Date.parse(envelope.at) > Date.now() + CLOCK_SKEW_MS) return 'timestamp is in the future'
   const signPublic = signerAuthority(

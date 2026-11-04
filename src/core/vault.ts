@@ -224,7 +224,7 @@ export class Vault {
       ...(input.origin === undefined ? {} : { origin: input.origin }),
       ...(changed || found?.payload.needsRotation !== true ? {} : { needsRotation: true }),
     }
-    const draft = { id: prior?.id ?? randomHex(16), tier: input.tier, rev: currentRev + 1, at: now, payload }
+    const draft = { id: entryIdIn(input.tier, prior?.id), tier: input.tier, rev: currentRev + 1, at: now, payload }
     return { envelope: await sealEntry(draft, this.#state, signer), payload }
   }
 
@@ -234,11 +234,13 @@ export class Vault {
    */
   put(input: EntryInput, signer: SignerContext, options: PutOptions = {}): Promise<StoredEntry> {
     return withLock(this.layout.lockFile, 'exclusive', async () => {
-      const stored = await this.#draft(input, await this.find(input.name), options, signer)
+      const found = await this.find(input.name)
+      const stored = await this.#draft(input, found, options, signer)
       atomicWrite(
         join(this.layout.entries, `${stored.envelope.id}.json`),
         `${JSON.stringify(stored.envelope, null, 2)}\n`,
       )
+      if (found !== undefined && found.envelope.id !== stored.envelope.id) this.#unlink(found.envelope.id)
       return stored
     })
   }
@@ -252,6 +254,7 @@ export class Vault {
       const { entries } = await this.scan()
       const txn = new Txn()
       const stored: StoredEntry[] = []
+      const retiered: string[] = []
       for (const input of inputs) {
         const found = resolveName(
           this.#state.tiers,
@@ -259,9 +262,14 @@ export class Vault {
         )
         const entry = await this.#draft(input, found, {}, await signerFor(input.tier))
         txn.put(`entries/${entry.envelope.id}.json`, `${JSON.stringify(entry.envelope, null, 2)}\n`)
+        if (found !== undefined && found.envelope.id !== entry.envelope.id) {
+          txn.remove(`entries/${found.envelope.id}.json`)
+          retiered.push(found.envelope.id)
+        }
         stored.push(entry)
       }
       commitTxn(this.layout, txn)
+      for (const id of retiered) this.#tombstone(id)
       return stored
     })
   }
@@ -285,9 +293,10 @@ export class Vault {
   putCiphertext(name: EntryName, tier: string, ciphertext: Uint8Array, signer: SignerContext): Promise<Envelope> {
     return withLock(this.layout.lockFile, 'exclusive', async () => {
       const existing = await this.find(name)
-      const draft = { id: existing?.envelope.id ?? randomHex(16), tier, rev: (existing?.envelope.rev ?? 0) + 1 }
+      const draft = { id: entryIdIn(tier, existing?.envelope.id), tier, rev: (existing?.envelope.rev ?? 0) + 1 }
       const envelope = signCiphertext({ ...draft, at: new Date().toISOString() }, ciphertext, this.#state, signer)
       atomicWrite(join(this.layout.entries, `${envelope.id}.json`), `${JSON.stringify(envelope, null, 2)}\n`)
+      if (existing !== undefined && existing.envelope.id !== envelope.id) this.#unlink(existing.envelope.id)
       return envelope
     })
   }
@@ -298,7 +307,7 @@ export class Vault {
    */
   removeById(id: string, allows: (envelope: Envelope) => boolean): Promise<void> {
     return withLock(this.layout.lockFile, 'exclusive', async () => {
-      if (!/^[0-9a-f]{32}$/.test(id)) throw new TypeVaultError('invalid', 'invalid entry id')
+      if (!EnvelopeSchema.shape.id.safeParse(id).success) throw new TypeVaultError('invalid', 'invalid entry id')
       this.refresh()
       const path = join(this.layout.entries, `${id}.json`)
       if (!existsSync(path)) throw new TypeVaultError('not_found', 'entry is already gone')
@@ -307,10 +316,14 @@ export class Vault {
         throw new TypeVaultError('denied', 'refusing to remove an entry file that does not verify')
       }
       if (!allows(parsed.data)) throw new TypeVaultError('denied', 'this grant cannot remove that entry')
-      rmSync(path)
-      fsyncDir(this.layout.entries)
-      this.#tombstone(id)
+      this.#unlink(id)
     })
+  }
+
+  #unlink(id: string): void {
+    rmSync(join(this.layout.entries, `${id}.json`))
+    fsyncDir(this.layout.entries)
+    this.#tombstone(id)
   }
 
   move(from: EntryName, to: EntryName, signer: SignerContext): Promise<StoredEntry> {
@@ -326,3 +339,7 @@ export class Vault {
     })
   }
 }
+
+/** An entry keeps its id only within its tier: the id names the tier (see `verifyEnvelope`), so a retier mints a new one. */
+const entryIdIn = (tier: string, current: string | undefined): string =>
+  current?.startsWith(`${tier}.`) === true ? current : `${tier}.${randomHex(16)}`
