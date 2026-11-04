@@ -75,6 +75,7 @@ const refuseExisting = (item: KeyItem, vault: string): never => {
 
 const OpAccountsSchema = z.array(z.object({}).loose())
 const OpItemsSchema = z.array(z.object({ id: z.string(), title: z.string() }))
+const OpVaultsSchema = z.array(z.object({ id: z.string(), name: z.string() }))
 
 async function exportOp(item: KeyItem, options: ExportOptions, runOp: RunOp): Promise<void> {
   if (options.account === undefined) {
@@ -85,7 +86,12 @@ async function exportOp(item: KeyItem, options: ExportOptions, runOp: RunOp): Pr
     }
   }
   const account = options.account === undefined ? [] : ['--account', options.account]
-  const scope = ['--vault', options.vault, ...account]
+  const vaults = parseJson(await runOp(['vault', 'list', '--format', 'json', ...account]), OpVaultsSchema, 'op')
+  const vault = resolveVault(
+    vaults.map(({ id, name }) => ({ id, title: name })),
+    options.vault,
+  )
+  const scope = ['--vault', vault.id, ...account]
   const listed = parseJson(await runOp(['item', 'list', '--format', 'json', ...scope]), OpItemsSchema, 'op')
   const existing = listed.filter((entry) => entry.title === item.title)
   if (existing.length > 0 && options.replace !== true) refuseExisting(item, options.vault)

@@ -11,11 +11,16 @@ const ITEM: KeyItem = {
 
 type OpCall = { readonly args: readonly string[]; readonly input?: string }
 
-function fakeOp(existing: readonly { id: string; title: string }[], accounts = 1) {
+function fakeOp(
+  existing: readonly { id: string; title: string }[],
+  accounts = 1,
+  vaults: readonly { id: string; name: string }[] = [{ id: 'infra-id', name: 'Infra' }],
+) {
   const calls: OpCall[] = []
   const runOp = async (args: readonly string[], input?: string): Promise<string> => {
     calls.push(input === undefined ? { args } : { args, input })
     if (args[0] === 'account') return JSON.stringify(Array.from({ length: accounts }, () => ({})))
+    if (args[0] === 'vault') return JSON.stringify(vaults)
     if (args[1] === 'list') return JSON.stringify(existing)
     return '{}'
   }
@@ -33,11 +38,13 @@ test('op export pipes an API Credential template through stdin, never the key in
   expect(via).toBe('op')
   expect(op.calls.map((call) => call.args.slice(0, 2))).toEqual([
     ['account', 'list'],
+    ['vault', 'list'],
     ['item', 'list'],
     ['item', 'create'],
   ])
   expect(op.calls.flatMap((call) => call.args).join(' ')).not.toContain(ITEM.credential)
-  const template = JSON.parse(op.calls[2]?.input ?? '')
+  expect(op.calls[3]?.args).toContain('infra-id')
+  const template = JSON.parse(op.calls[3]?.input ?? '')
   expect(template).toMatchObject({ title: ITEM.title, category: 'API_CREDENTIAL', tags: ['typevault'] })
   expect(template.fields[0]).toEqual({
     id: 'credential',
@@ -67,11 +74,33 @@ test('op export with --replace archives the old item only after creating the new
   )
 
   expect(op.calls.map((call) => call.args.slice(0, 3))).toEqual([
+    ['vault', 'list', '--format'],
     ['item', 'list', '--format'],
     ['item', 'create', '-'],
     ['item', 'delete', 'old'],
   ])
-  expect(op.calls[2]?.args).toContain('--archive')
+  expect(op.calls[3]?.args).toContain('--archive')
+})
+
+test('op export refuses a vault title shared by several vaults', async () => {
+  const op = fakeOp([], 1, [
+    { id: 'v1', name: 'Backup' },
+    { id: 'v2', name: 'Backup' },
+  ])
+
+  const result = export1Password(ITEM, { vault: 'Backup', account: 'acme' }, { runOp: op.runOp, hasOp: () => true })
+
+  await expect(result).rejects.toMatchObject({ code: 'conflict' })
+  expect(op.calls.some((call) => call.args[0] === 'item')).toBe(false)
+})
+
+test('op export refuses a vault it cannot find', async () => {
+  const op = fakeOp([])
+
+  const result = export1Password(ITEM, { vault: 'Missing', account: 'acme' }, { runOp: op.runOp, hasOp: () => true })
+
+  await expect(result).rejects.toMatchObject({ code: 'not_found' })
+  expect(op.calls.some((call) => call.args[0] === 'item')).toBe(false)
 })
 
 test('op export without --account refuses when several accounts are signed in', async () => {
