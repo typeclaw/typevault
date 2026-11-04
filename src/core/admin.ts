@@ -53,15 +53,6 @@ export class Admin {
     })
   }
 
-  async #wrapFor(txn: Txn, included: string, state: VaultState, holder: { name: string; tier: Tier }): Promise<void> {
-    const key = await this.#vault.keyring.unlock(included)
-    const meta = state.tiers[included]
-    if (key === undefined || meta === undefined)
-      throw new TypeVaultError('not_found', `cannot unlock tier "${included}"`)
-    const sealed = await seal([holder.tier.recipient], utf8(encodeSecretKey(key)))
-    txn.put(wrapPath(included, meta.gen, { kind: 'tier', tier: holder.name, gen: holder.tier.gen }), sealed)
-  }
-
   addTier(rawName: string): Promise<void> {
     const name = parseTierName(rawName)
     return this.#mutate(async (state, txn) => {
@@ -97,6 +88,10 @@ export class Admin {
     })
   }
 
+  /**
+   * Makes `tier` include `included`, rotating every tier `included` reaches in the same transaction, so the includer
+   * can open neither their older ciphertext in git history nor entries deleted before the include.
+   */
   include(tier: string, included: string): Promise<void> {
     return this.#mutate(async (state, txn) => {
       const holder = state.tiers[tier]
@@ -106,9 +101,9 @@ export class Admin {
       if (reach(state.tiers, included).has(tier)) {
         throw new TypeVaultError('invalid', `"${included}" already reaches "${tier}"; including it would form a cycle`)
       }
-      await this.#wrapFor(txn, included, state, { name: tier, tier: holder })
-      const updated = { ...holder, includes: [...holder.includes, included] }
-      txn.put('tiers.json', tiersDoc({ ...state.tiers, [tier]: updated }, this.#owner, state.seqs.tiers + 1))
+      const tiers = { ...state.tiers, [tier]: { ...holder, includes: [...holder.includes, included] } }
+      const context = { vault: this.#vault, owner: this.#owner, state: { ...state, tiers }, txn, exposed: false }
+      await rotateTiers(context, reachOf(state, [included]))
     })
   }
 
