@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it } from 'bun:test'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -48,8 +48,11 @@ async function setViaPage(
     submitted =
       options.fields === undefined ? Promise.resolve(proc.kill()) : fillPage(url, args[0] ?? '', options.fields)
   }
-  // An empty PATH keeps the CLI from opening a real browser.
-  const spawnEnv = { ...env, PATH: '' }
+  // Bun.spawn falls back to the system path when PATH is empty, so shadow the openers with no-op stubs instead.
+  const stubs = join(base, 'stubs')
+  mkdirSync(stubs, { recursive: true })
+  for (const opener of ['open', 'xdg-open']) writeFileSync(join(stubs, opener), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+  const spawnEnv = { ...env, PATH: stubs }
   const decoder = new TextDecoder()
   const proc = options.tty
     ? Bun.spawn([process.execPath, CLI, 'set', ...args], {
