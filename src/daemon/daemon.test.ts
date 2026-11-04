@@ -125,6 +125,21 @@ describe('live grants', () => {
     await expect(child.list()).rejects.toMatchObject({ code: 'denied' })
   })
 
+  it('refuses a grant or derive with too many or too long --only patterns', async () => {
+    const many = Array.from({ length: 101 }, (_, i) => `entry-${i}`)
+    await expect(grant('default', { tiers: ['member'], only: many })).rejects.toMatchObject({ code: 'invalid' })
+    const { token } = await grant('default', { tiers: ['member'] })
+    const parent = new LiveAccess(layout.agentSocket, token)
+    await expect(parent.call('/v1/derive', { only: many }, Token)).rejects.toMatchObject({ code: 'invalid' })
+    await expect(parent.call('/v1/derive', { only: ['a'.repeat(257)] }, Token)).rejects.toMatchObject({
+      code: 'invalid',
+    })
+    expect((await parent.call('/v1/derive', { only: many.slice(0, 100) }, Token)).token).toStartWith('tvl1.')
+    await expect(parent.values(many)).rejects.toMatchObject({ code: 'invalid' })
+    await expect(parent.values(['a'.repeat(257)])).rejects.toMatchObject({ code: 'invalid' })
+    expect(await parent.values([...many.slice(0, 99), 'a'.repeat(256)])).toEqual([])
+  })
+
   it('keeps a capped socket away from grants it did not issue and from the audit trail', async () => {
     const { token } = await grant('default', { tiers: ['member'], label: 'owner:session' })
     const bot = layout.adminSocket('bot')

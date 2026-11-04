@@ -6,9 +6,11 @@ import { FieldsSchema } from '../core/payload'
 const name = z.string().transform((value) => parseEntryName(value))
 const preset = z.string().refine(isPreset, 'unknown preset').optional()
 const reason = z.string().max(500).optional()
+/** Every request under a grant matches against its `only` patterns, so a grant may not carry an unbounded list. */
+const only = z.array(z.string().max(256)).max(100).default([])
 
 export const NameBody = z.object({ name, reason, tier: z.string().optional() })
-export const ValuesBody = z.object({ only: z.array(z.string()).default([]), reason })
+export const ValuesBody = z.object({ only, reason })
 export const SetBody = z.object({
   name,
   fields: FieldsSchema,
@@ -24,7 +26,7 @@ export const SetBody = z.object({
 export const MoveBody = z.object({ from: name, to: name })
 export const DeriveBody = z.object({
   tiers: z.array(z.string()).optional(),
-  only: z.array(z.string()).default([]),
+  only,
   ttl: z.string().optional(),
   label: z.string().max(200).optional(),
 })
@@ -32,7 +34,7 @@ export const RequestBody = z.object({ name, preset, tier: z.string().optional(),
 export const WaitBody = z.object({ id: z.string() })
 export const GrantBody = z.object({
   tiers: z.array(z.string()).min(1),
-  only: z.array(z.string()).default([]),
+  only,
   ttl: z.string().default('1h'),
   label: z.string().max(200).default('unlabeled'),
   sealed: z.boolean().default(false),
