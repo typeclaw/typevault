@@ -8,16 +8,18 @@ Like `bun` and `npm`, every command works on the project unless you pass `-g`:
 
 ```sh
 typevault ls                                     # the nearest .typevault/ up from the working directory
-typevault -g ls                                  # the global vault in ~/.config/typevault
+typevault -g ls                                  # the global vault in ~/.typevault
 ```
 
 Without `-g`, a command run outside any project fails instead of falling back to the global vault, so a secret never
 lands in the wrong one. `-g` goes before `--` in `run`; `TYPEVAULT_GLOBAL=1` does the same, and an explicit
-`TYPEVAULT_DIR` always selects the vault kept whole at that path.
+`TYPEVAULT_DIR` always selects the vault at that path as the global one. `~/.typevault` is never taken for a project
+vault, even from a directory inside your home.
 
 A project vault holds only ciphertext, wrapped keys and signed manifests, so commit `.typevault/` as is. Each checkout
 keeps its own trust pin, audit log and daemon under `~/.config/typevault/checkouts/<id>/`, keyed by the checkout's
-path. A collaborator gets access by joining as a member, or with a grant, as with the global vault.
+path. A collaborator gets access by joining as a member, or with a grant, as with the global vault. The global vault is laid
+out the same way, so `~/.typevault` can be a git repository of its own, synced between your devices.
 
 To start over, delete `.typevault/` and run `typevault init` again. `init` stops this checkout's daemon and clears its
 runtime state (grants, session, revision marks), which belonged to the old vault, and pins the new owner key. The pin

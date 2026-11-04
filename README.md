@@ -48,7 +48,7 @@ typevault run -- ./deploy.sh                     # OPENAI and ANTHROPIC arrive a
 typevault whoami                                 # live grant, sealed grant, unlocked session or machine key
 ```
 
-Commands use the nearest project vault, like `bun` and `npm`; `-g` selects the global one in `~/.config/typevault`.
+Commands use the nearest project vault, like `bun` and `npm`; `-g` selects the global one in `~/.typevault`.
 
 ## How it works
 

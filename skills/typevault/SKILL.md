@@ -7,7 +7,7 @@ allowed-tools: Bash(typevault:*), Bash(bunx typevault:*)
 # TypeVault
 
 A CLI-first secrets vault for agents. Secrets are age-encrypted files in `.typevault/` (per project) or
-`~/.config/typevault` (global, `-g`). Agents reach them through a grant. With a live grant every read is audited; a sealed grant is audited
+`~/.typevault` (global, `-g`). Agents reach them through a grant. With a live grant every read is audited; a sealed grant is audited
 when issued, and its reads only best effort.
 
 Install: `bun add -g typevault`
