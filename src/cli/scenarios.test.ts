@@ -94,7 +94,15 @@ it(
     await ok(alice, ['lock'])
 
     // when her agent (no terminal) runs a command while the vault is locked, it is told to ask her
-    const check = ['run', '--only', 'tv://openai', '--', 'sh', '-c', 'test "$OPENAI" = sk-live-1 && echo match']
+    const check = [
+      'run',
+      '--only',
+      'tv://openai',
+      '--',
+      process.execPath,
+      '-e',
+      'if (process.env.OPENAI === "sk-live-1") console.log("match")',
+    ]
     expect(await fails(alice, check)).toContain('ask a human to run `typevault unlock`')
 
     // then once she unlocks, the agent's command gets the value and never prints it

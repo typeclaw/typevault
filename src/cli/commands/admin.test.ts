@@ -146,7 +146,7 @@ it('bulk-loads nothing for an owner session, and what --only names', async () =>
   // given an owner session and a secret in the default tier
   succeeds(await cli(['unlock', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
   succeeds(await cli(['set', 'tv://openai', '--preset', 'api_key', '--stdin'], owner, 'sk-test-1'))
-  const length = ['sh', '-c', 'echo ${#OPENAI}']
+  const length = [process.execPath, '-e', 'console.log((process.env.OPENAI ?? "").length)']
 
   // then an owner holds no tier directly, as in direct mode: only --only loads it
   expect(succeeds(await cli(['run', '--', ...length], owner)).stdout).toBe('0\n')

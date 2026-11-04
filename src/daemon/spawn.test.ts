@@ -133,7 +133,7 @@ it('waits, without signaling again, for a daemon that already closed its socket 
 it('signals the daemon that answers, never a different process its PID file names', async () => {
   // given a serving daemon whose PID file now names an unrelated process
   await standIn(SLOW_DAEMON)
-  const unrelated = Bun.spawn(['sleep', '30'])
+  const unrelated = Bun.spawn([process.execPath, '-e', 'setTimeout(() => {}, 30_000)'])
   standIns.push(unrelated)
   writeFileSync(join(layout.run, 'daemon.pid'), String(unrelated.pid))
 
@@ -147,7 +147,7 @@ it('signals the daemon that answers, never a different process its PID file name
 
 it('refuses, rather than signals, a live process named by a PID file that holds no daemon lock', async () => {
   // given a PID file naming a running process that isn't a daemon holding the lock, and no socket
-  const unrelated = Bun.spawn(['sleep', '30'])
+  const unrelated = Bun.spawn([process.execPath, '-e', 'setTimeout(() => {}, 30_000)'])
   standIns.push(unrelated)
   writeFileSync(join(layout.run, 'daemon.pid'), String(unrelated.pid))
 
