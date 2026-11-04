@@ -34,6 +34,14 @@ jobs:
       version: ${{ steps.version.outputs.version }}
 
     steps:
+      - name: Require main
+        # Releases ship only from main. The release job repeats this gate, so a
+        # dispatch from any other branch fails here, visibly, before tests run.
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Releases run only from main, not $GITHUB_REF"
+          exit 1
+
       - uses: actions/checkout@v4
 
       - uses: oven-sh/setup-bun@v2
@@ -80,6 +88,9 @@ jobs:
   release:
     name: Publish npm, tag, and release
     needs: checks
+    # Never publish, push, or tag from a branch other than main, whatever
+    # the checks job did.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # id-token: write is required for `npm publish --provenance` (OIDC
     # trusted publishing) — and ONLY this job needs it. contents: write is
