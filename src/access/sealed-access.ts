@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 
 import { appendAudit, type AuditEvent } from '../audit/log'
+import { signerAuthority } from '../core/entries'
 import { TypeVaultError } from '../core/errors'
 import type { Layout } from '../core/layout'
 import { type EntryName, matchesOnly } from '../core/naming'
@@ -99,9 +100,24 @@ export class SealedAccess implements Access {
     }
   }
 
+  /**
+   * The bundle is holder-editable (whoever holds the grant can re-seal it), so only the issuer-signed
+   * certificate bounds what may be deleted: its tiers, `--only` and expiry, checked against the file on disk.
+   * The entry must still be the revision this grant carried, or one this grant's certificate wrote since.
+   */
   async remove(name: EntryName, _tier?: string): Promise<void> {
     const entry = this.#entry(name)
-    await (await this.#vault()).removeById(entry.id)
+    const { cert } = this.#bundle.write
+    const vault = await this.#vault()
+    await vault.removeById(
+      entry.id,
+      (envelope) =>
+        envelope.tier === entry.tier &&
+        (envelope.rev === entry.rev ||
+          (envelope.signer.kind === 'cert' && envelope.signer.cert.signPublic === cert.signPublic)) &&
+        allowsEntry([{ tiers: cert.tiers, only: cert.only }], vault.state, envelope.tier, name) &&
+        signerAuthority({ kind: 'cert', cert }, envelope.tier, vault.state, new Date().toISOString()) !== undefined,
+    )
     await this.#audit({ action: 'remove', entries: [name] })
   }
 

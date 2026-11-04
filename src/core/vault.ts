@@ -286,12 +286,21 @@ export class Vault {
     })
   }
 
-  /** Deletes an entry file by id, for writers that can't read the entry (sealed grants). */
-  removeById(id: string): Promise<void> {
+  /**
+   * Deletes an entry file by id, for writers that can't read the entry (sealed grants).
+   * `allows` judges the verified envelope under the lock; the file stays unless it returns true.
+   */
+  removeById(id: string, allows: (envelope: Envelope) => boolean): Promise<void> {
     return withLock(this.layout.lockFile, 'exclusive', async () => {
       if (!/^[0-9a-f]{32}$/.test(id)) throw new TypeVaultError('invalid', 'invalid entry id')
+      this.refresh()
       const path = join(this.layout.entries, `${id}.json`)
       if (!existsSync(path)) throw new TypeVaultError('not_found', 'entry is already gone')
+      const parsed = EnvelopeSchema.safeParse(parseJson(readFileSync(path)))
+      if (!parsed.success || parsed.data.id !== id || verifyEnvelope(parsed.data, this.#state) !== undefined) {
+        throw new TypeVaultError('denied', 'refusing to remove an entry file that does not verify')
+      }
+      if (!allows(parsed.data)) throw new TypeVaultError('denied', 'this grant cannot remove that entry')
       rmSync(path)
       fsyncDir(this.layout.entries)
       this.#tombstone(id)
