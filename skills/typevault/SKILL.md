@@ -133,7 +133,8 @@ typevault grant revoke --label ci:deploy
 ```
 
 `TYPEVAULT_GRANT` takes a live grant (`tvl1.`), a sealed one (`tvg1:`) or `@path` to a file holding a sealed one. Live
-grants start the daemon automatically.
+grants go through the daemon: for a person's vault that is their unlocked session, so a live grant stops working when
+they lock it; a machine member's daemon starts on its own.
 
 ## Troubleshooting
 
@@ -147,5 +148,7 @@ grants start the daemon automatically.
 - **Signature or merge problems after a git pull**: `typevault doctor --fix` (owner).
 - **Daemon trouble with a live grant**: check `typevault daemon status`, then ask the owner. Don't stop the daemon
   yourself: restarting it needs keys a grant doesn't carry.
+- **`the typevault daemon did not start: ...`**: the message quotes the daemon's first line and names
+  `run/daemon.log`. Show the user both; don't delete runtime state yourself.
 
 Run `typevault <command> --help` for every flag.

@@ -35,6 +35,8 @@ export type Layout = {
   readonly lockFile: string
   readonly auditLock: string
   readonly grantsFile: string
+  /** Held by the daemon from start until its cleanup is done: whether a daemon is still here, without PIDs. */
+  readonly daemonLock: string
   /** The unlocked session's grant token, readable only by this user while the daemon runs. */
   readonly sessionFile: string
   readonly revisionsFile: string
@@ -108,6 +110,7 @@ function build(scope: Layout['scope'], root: string, vault: string): Layout {
     lockFile: join(run, 'lock'),
     auditLock: join(run, 'audit.lock'),
     grantsFile: join(run, 'grants.json'),
+    daemonLock: join(run, 'daemon.lock'),
     sessionFile: join(run, 'session.token'),
     revisionsFile: join(run, 'revisions.json'),
     agentSocket: join(run, 'agent.sock'),

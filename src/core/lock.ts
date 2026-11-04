@@ -1,6 +1,6 @@
 import { dlopen, FFIType } from 'bun:ffi'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { closeSync, openSync } from 'node:fs'
+import { closeSync, existsSync, openSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 import { TypeVaultError } from './errors'
@@ -37,6 +37,36 @@ async function acquire(path: string, mode: LockMode): Promise<number> {
     await Bun.sleep(RETRY_MS)
   }
   return fd
+}
+
+/**
+ * Takes an exclusive flock on `path` without waiting, and returns its release, or undefined when another holder has
+ * it. Held for as long as the holder lives: the kernel drops it when the process exits, however it exits.
+ */
+export function holdLock(path: string): (() => void) | undefined {
+  ensureDir(dirname(path), 0o700)
+  const fd = openSync(path, 'a', 0o600)
+  if (libc.symbols.flock(fd, LOCK_EX | LOCK_NB) !== 0) {
+    closeSync(fd)
+    return undefined
+  }
+  return () => {
+    libc.symbols.flock(fd, LOCK_UN)
+    closeSync(fd)
+  }
+}
+
+/** Whether some holder has `path` locked right now. A lock that can't be tested counts as held. */
+export function isLockHeld(path: string): boolean {
+  if (!existsSync(path)) return false
+  const fd = openSync(path, 'r')
+  try {
+    if (libc.symbols.flock(fd, LOCK_EX | LOCK_NB) !== 0) return true
+    libc.symbols.flock(fd, LOCK_UN)
+    return false
+  } finally {
+    closeSync(fd)
+  }
 }
 
 /**

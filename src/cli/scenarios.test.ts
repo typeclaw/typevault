@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 // End-to-end scenarios: every step runs the real CLI in its own process, as a person or an agent would. Each actor
@@ -52,6 +52,17 @@ function actor(name: string, extra: Actor = {}): Actor {
 const withPassword = (...args: string[]): string[] => [...args, '--vault-password-stdin']
 const line = (password: string): string => `${password}\n`
 const publicKeyIn = (run: Run): string => run.stdout.split(' ').find((word) => word.startsWith('tvp1:')) ?? ''
+/** An actor's state directory for the shared checkout: where its daemon, grants and revision marks live. */
+function runDir(name: string): string {
+  const checkouts = join(base, name, 'typevault', 'checkouts')
+  const [only] = readdirSync(checkouts)
+  if (only === undefined) throw new Error(`${name} has no checkout state`)
+  return join(checkouts, only, 'run')
+}
+
+/** A grants file in a format this version doesn't read, as an older release would leave it. */
+const OLD_FORMAT_GRANTS = JSON.stringify([{ id: '4d74c52abdebdd72', label: 'old', groups: ['default'], only: [] }])
+
 const secretKeyIn = (run: Run): string => /TVSK-[A-Z0-9-]+/.exec(run.stderr)?.[0] ?? ''
 
 beforeEach(() => {
@@ -201,6 +212,45 @@ it(
     expect(await fails(host, ['grant', '--tier', 'default'])).toContain('above this socket')
     const identity = JSON.parse(readFileSync(join(base, 'host', 'typevault', 'identity.json'), 'utf8'))
     expect(identity).toMatchObject({ kind: 'machine', name: 'host' })
+  },
+  SCENARIO_MS,
+)
+
+it(
+  're-creating a vault in the same checkout starts clean, even with the old daemon running',
+  async () => {
+    // given a vault unlocked here, whose daemon is still running and whose state is from an older release
+    const alice = actor('alice')
+    await ok(alice, withPassword('init', '--name', 'alice'), line('a'))
+    await ok(alice, withPassword('unlock'), line('a'))
+    await ok(alice, ['set', 'tv://openai', '--type', 'api_key', '--stdin'], 'sk-old')
+    writeFileSync(join(runDir('alice'), 'grants.json'), OLD_FORMAT_GRANTS)
+
+    // when the vault is deleted and created again in the same place
+    rmSync(join(project, '.typevault'), { recursive: true })
+    await ok(alice, withPassword('init'), '')
+
+    // then the new vault unlocks and starts empty: none of the old runtime state is in the way
+    await ok(alice, withPassword('unlock'), line('a'))
+    expect(JSON.parse((await ok(alice, ['ls', '--json'])).stdout)).toEqual([])
+  },
+  SCENARIO_MS,
+)
+
+it(
+  "a daemon that can't start says why",
+  async () => {
+    // given runtime state this release can't read, left in place
+    const alice = actor('alice')
+    await ok(alice, withPassword('init', '--name', 'alice'), line('a'))
+    writeFileSync(join(runDir('alice'), 'grants.json'), OLD_FORMAT_GRANTS)
+
+    // when the owner unlocks
+    const error = await fails(alice, withPassword('unlock'), line('a'))
+
+    // then the error carries the daemon's own first line and where its full log is
+    expect(error).toContain('the typevault daemon did not start: ZodError')
+    expect(error).toContain(join(runDir('alice'), 'daemon.log'))
   },
   SCENARIO_MS,
 )

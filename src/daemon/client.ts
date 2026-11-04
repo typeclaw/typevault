@@ -53,6 +53,18 @@ export async function callDaemon<T>(
   return schema.parse(payload)
 }
 
+/** The PID of the daemon answering on `socket`, or undefined when none answers (or it is too old to say). */
+export async function servingPid(socket: string): Promise<number | undefined> {
+  const Ping = z.object({ ok: z.literal(true), pid: z.number().int().positive() })
+  try {
+    return (await callDaemon(socket, '/v1/ping', {}, Ping, { timeoutMs: 1_000 })).pid
+  } catch (error) {
+    if (error instanceof TypeVaultError || error instanceof z.ZodError) return undefined
+    if (error instanceof Error && error.name === 'TimeoutError') return undefined
+    throw error
+  }
+}
+
 export async function isDaemonAlive(socket: string): Promise<boolean> {
   try {
     await callDaemon(socket, '/v1/ping', {}, z.object({ ok: z.literal(true) }), { timeoutMs: 1_000 })
