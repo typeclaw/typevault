@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 
 import { TypeVaultError } from '../core/errors'
 import { styles } from './styles'
@@ -13,7 +14,7 @@ export function pageAssets(): ReturnType<typeof buildAssets> {
 
 async function buildAssets() {
   const result = await Bun.build({
-    entrypoints: [new URL('./browser.ts', import.meta.url).pathname],
+    entrypoints: [fileURLToPath(new URL('./browser.ts', import.meta.url))],
     target: 'browser',
     minify: true,
   })

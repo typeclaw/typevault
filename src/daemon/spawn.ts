@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { closeSync, existsSync, openSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { machineKeys } from '../access/keys'
 import { encodeSecretKey, type SecretKey } from '../core/crypto'
@@ -14,7 +15,7 @@ type Env = Readonly<Record<string, string | undefined>>
 
 const START_TIMEOUT_MS = 10_000
 const POLL_MS = 50
-const CLI = new URL('../cli/index.ts', import.meta.url).pathname
+const CLI = fileURLToPath(new URL('../cli/index.ts', import.meta.url))
 
 export const LOCKED_MESSAGE = 'the vault is locked: ask a human to run `typevault unlock`'
 
