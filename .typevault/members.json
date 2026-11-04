@@ -1,0 +1,16 @@
+{
+  "body": {
+    "v": 1,
+    "seq": 1,
+    "members": {
+      "neo": {
+        "kind": "human",
+        "recipient": "age1rwrvnmpfl2qspjkcf7qmfturrh50dgcn6a85p4a3ghz77nr2ld5q7ymp3k",
+        "signPublic": "c4NGgHK0V3p0QXVKHFvwHRDBtit7J6Lki8AJUeWvwQM=",
+        "owner": true,
+        "tiers": []
+      }
+    }
+  },
+  "sig": "7QAX3puNWJalq1H07pFwVxkAcm3j4DPBLSrIS9gl2doqTX4kkxJFiGvX2Bz33FU+Q4y0hhRH8us6cmEKYfxbCw=="
+}
