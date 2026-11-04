@@ -45,7 +45,8 @@ function session(context: DaemonContext, request: Request): { grant: ResolvedGra
 /** Routes on the agent socket. Every call needs a live grant; none can create a grant from nothing. */
 export function agentRoutes(context: DaemonContext): Readonly<Record<string, Handler>> {
   return {
-    '/v1/ping': async () => json({ ok: true }),
+    // The PID lets `stopDaemon` signal exactly the process that answers here, never one a stale PID file names.
+    '/v1/ping': async () => json({ ok: true, pid: process.pid }),
     '/v1/whoami': async (request) => {
       const { grant, access } = session(context, request)
       const { hash: _hash, ...record } = grant.record

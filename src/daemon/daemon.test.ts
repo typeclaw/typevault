@@ -12,6 +12,7 @@ import { signerOf } from '../core/entries'
 import { createIdentity } from '../core/identity'
 import { type Founder, founderOf, initVault } from '../core/init'
 import { type Layout, layoutOf } from '../core/layout'
+import { holdLock, isLockHeld } from '../core/lock'
 import { parseEntryName } from '../core/naming'
 import { Vault } from '../core/vault'
 import { callDaemon } from './client'
@@ -194,5 +195,29 @@ describe('unlocked session', () => {
     expect(existsSync(layout.sessionFile)).toBe(false)
     daemon = await startDaemon({ layout, env, keys: [owner] })
     await expect(new LiveAccess(layout.agentSocket, token).list()).rejects.toMatchObject({ code: 'denied' })
+  })
+})
+
+describe('daemon lock', () => {
+  it('is held for the life of the daemon and released once it has stopped', async () => {
+    expect(isLockHeld(layout.daemonLock)).toBe(true)
+
+    await daemon.stop()
+
+    expect(isLockHeld(layout.daemonLock)).toBe(false)
+    daemon = await startDaemon({ layout, env: { TYPEVAULT_DIR: layout.root }, keys: [owner] })
+  })
+
+  it('keeps a new daemon from starting while another still holds it, shutting down', async () => {
+    // given the running daemon stopped, and its lock still held as if its cleanup were unfinished
+    await daemon.stop()
+    const release = holdLock(layout.daemonLock)
+    if (release === undefined) throw new Error('the lock was not free after stop')
+
+    // then a new daemon refuses to start beside it
+    const env = { TYPEVAULT_DIR: layout.root }
+    await expect(startDaemon({ layout, env, keys: [owner] })).rejects.toMatchObject({ code: 'conflict' })
+    release()
+    daemon = await startDaemon({ layout, env, keys: [owner] })
   })
 })

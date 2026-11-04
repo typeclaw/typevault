@@ -7,6 +7,7 @@ import type { SecretKey } from '../core/crypto'
 import { TypeVaultError } from '../core/errors'
 import { atomicWrite, ensureDir } from '../core/fsx'
 import type { Layout } from '../core/layout'
+import { holdLock } from '../core/lock'
 import { Vault } from '../core/vault'
 import { adminRoutes, type Ceiling } from './admin-routes'
 import { agentRoutes, type DaemonContext } from './agent-routes'
@@ -52,6 +53,20 @@ export async function startDaemon(options: DaemonOptions): Promise<RunningDaemon
   ensureDir(layout.run, 0o700)
   if (await isDaemonAlive(layout.agentSocket))
     throw new TypeVaultError('conflict', 'a typevault daemon is already running')
+  // Held until this daemon's cleanup is done: one still shutting down here keeps a replacement from starting, and
+  // `stopDaemon` knows the old one is gone when the lock frees up, with no PID to trust.
+  const release = holdLock(layout.daemonLock)
+  if (release === undefined) throw new TypeVaultError('conflict', 'a typevault daemon is still shutting down here')
+  try {
+    return await serve(options, release)
+  } catch (error) {
+    release()
+    throw error
+  }
+}
+
+async function serve(options: DaemonOptions, release: () => void): Promise<RunningDaemon> {
+  const { layout } = options
   for (const file of readdirSync(layout.run).filter((name) => name.endsWith('.sock'))) rmSync(join(layout.run, file))
   if (options.keys.length === 0) throw new TypeVaultError('locked', 'the vault is locked (run `typevault unlock`)')
   const vault = await Vault.open(layout, options.keys, options.env)
@@ -107,6 +122,7 @@ export async function startDaemon(options: DaemonOptions): Promise<RunningDaemon
       ]) {
         if (existsSync(file)) rmSync(file)
       }
+      release()
     },
   }
 }
