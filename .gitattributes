@@ -1,0 +1,6 @@
+# Check files out with LF everywhere, including Git for Windows (core.autocrlf=true): the formatter expects LF, and a
+# committed vault's signed manifests must stay byte-exact.
+* text=auto eol=lf
+
+*.png binary
+*.age binary
