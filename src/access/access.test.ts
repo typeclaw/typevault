@@ -16,7 +16,7 @@ import { parseEntryName, type Field } from '../core/naming'
 import { Vault } from '../core/vault'
 import { envFor, explicitNames, resolveEnvRefs } from './env'
 import { ScopedVault } from './scoped'
-import { issueSealedGrant, readSealedGrant, sealedSigningSecret } from './sealed'
+import { issueSealedGrant, readSealedGrant, type SealedBundle, sealedSigningSecret } from './sealed'
 import { SealedAccess } from './sealed-access'
 
 const machineFounder = async (): Promise<Founder> => founderOf((await createIdentity('owner', 'machine')).identity)
@@ -517,6 +517,63 @@ describe('sealed grants', () => {
   it('refuses to work once expired', async () => {
     const access = new SealedAccess(await readSealedGrant(await issue(-1)), layoutOf(root), {})
     await expect(access.list()).rejects.toMatchObject({ code: 'expired' })
+  })
+
+  it('removes an entry the certificate covers', async () => {
+    const access = new SealedAccess(await readSealedGrant(await issue()), layoutOf(root), {})
+    await access.remove(n('github/bot'))
+    expect(await vault.find(n('github/bot'))).toBeUndefined()
+  })
+
+  it('removes an entry its own certificate rewrote after the grant was issued', async () => {
+    const access = new SealedAccess(await readSealedGrant(await issue()), layoutOf(root), {})
+    await access.set({ name: n('github/bot'), fields: { password: { type: 'secret' as const, value: 'rotated' } } })
+    await access.remove(n('github/bot'))
+    expect(await vault.find(n('github/bot'))).toBeUndefined()
+  })
+
+  // The holder can decrypt and re-seal its own bundle, so only the issuer-signed certificate is trusted.
+  const forgeRemoval = async (target: string, bundle: SealedBundle) => {
+    const stored = await vault.find(n(target))
+    if (stored === undefined) throw new Error(`missing ${target}`)
+    const { id, tier, rev } = stored.envelope
+    const forged = {
+      ...bundle,
+      exp: new Date(Date.now() + 60_000).toISOString(),
+      scope: { tiers: ['trusted'], only: [] },
+      entries: [{ ...bundle.entries[0]!, name: n(target), id, tier, rev }],
+    }
+    return new SealedAccess(forged, layoutOf(root), {}).remove(n(target))
+  }
+
+  it('refuses to remove an entry outside its certificate tiers, whatever the bundle claims', async () => {
+    await expect(forgeRemoval('stripe', await readSealedGrant(await issue()))).rejects.toMatchObject({ code: 'denied' })
+    expect(await vault.find(n('stripe'))).toBeDefined()
+  })
+
+  it('refuses to remove an entry outside its certificate --only, whatever the bundle claims', async () => {
+    await vault.put(
+      { name: n('aws/root'), fields: { key: { type: 'secret', value: 'k' } }, tier: 'member' },
+      signerOf(owner),
+    )
+    await expect(forgeRemoval('aws/root', await readSealedGrant(await issue()))).rejects.toMatchObject({
+      code: 'denied',
+    })
+    expect(await vault.find(n('aws/root'))).toBeDefined()
+  })
+
+  it('refuses to remove once its certificate expires, whatever the bundle claims', async () => {
+    await expect(forgeRemoval('github/bot', await readSealedGrant(await issue(-1)))).rejects.toMatchObject({
+      code: 'denied',
+    })
+    expect(await vault.find(n('github/bot'))).toBeDefined()
+  })
+
+  it('refuses to remove an entry renamed out of its --only since the grant was issued', async () => {
+    const access = new SealedAccess(await readSealedGrant(await issue()), layoutOf(root), {})
+    await vault.move(n('github/bot'), n('aws/bot'), signerOf(owner))
+    await expect(access.remove(n('github/bot'))).rejects.toMatchObject({ code: 'denied' })
+    expect(await vault.find(n('aws/bot'))).toBeDefined()
   })
 
   const certSigner = async (ttlMs: number) => {
