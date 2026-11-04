@@ -11,7 +11,7 @@ Live and sealed grants, ceilings, asking a human for a secret, and SDK options.
 | TTL / revocation | enforced / instant            | advisory / impossible          |
 | Use for          | laptops, containers, typeclaw | CI, one-shot containers        |
 
-A sealed grant can write, within its tiers and `--only`, until its certificate expires by the **reader's** clock.
+A sealed grant can write, within its tiers and `--only`, until its certificate expires by the **reader's** clock. It replaces only the entries it was issued with and the ones it wrote itself; writing a name added after it was issued adds a second copy for `doctor` to settle.
 A daemon (every minute) or `typevault doctor --fix` adopts those writes by re-signing them. Writes nobody adopts
 before expiry stop being trusted, and `doctor --fix` lists them. The holder keeps the signing key and picks each write's
 timestamp, so nothing proves such a write came before the expiry: the owner keeps one only by naming it, with
