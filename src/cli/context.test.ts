@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it } from 'bun:test'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -9,7 +9,7 @@ import { createIdentity } from '../core/identity'
 import { type Founder, founderOf, initGlobalVault, initLocalVault } from '../core/init'
 import { parseEntryName } from '../core/naming'
 import { Vault } from '../core/vault'
-import { findLayout, layoutFrom } from './context'
+import { findLayout, layoutFrom, resolveAccess } from './context'
 
 const machineFounder = async (): Promise<Founder> => founderOf((await createIdentity('owner', 'machine')).identity)
 
@@ -58,6 +58,22 @@ it('never takes the global vault in the home directory for a project vault above
     vault: join(base, '.typevault'),
     root: global.root,
   })
+})
+
+it('refuses a live connection to a vault whose owner is not the pinned one', async () => {
+  // given a global vault and a pin naming a different owner
+  const { layout } = await initGlobalVault(await machineFounder(), env)
+  const { signPublic } = JSON.parse(readFileSync(layout.ownerFile, 'utf8')) as { signPublic: string }
+  const vault = { ...env, TYPEVAULT_GLOBAL: '1' }
+  const pinned = { ...vault, TYPEVAULT_OWNER: 'not-the-owner' }
+
+  // then neither a live grant nor a human session gets past the pin
+  await expect(resolveAccess({ ...pinned, TYPEVAULT_GRANT: 'tvl1.x.y' })).rejects.toMatchObject({ code: 'tampered' })
+  await expect(resolveAccess(pinned)).rejects.toMatchObject({ code: 'tampered' })
+
+  // and the right pin goes on to the daemon, which is locked here
+  const right = { ...vault, TYPEVAULT_OWNER: signPublic }
+  await expect(resolveAccess({ ...right, TYPEVAULT_GRANT: 'tvl1.x.y' })).rejects.toMatchObject({ code: 'locked' })
 })
 
 it('selects the global vault with -g even inside a project', async () => {
