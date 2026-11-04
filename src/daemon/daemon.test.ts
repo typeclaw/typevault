@@ -69,6 +69,29 @@ afterEach(async () => {
   rmSync(base, { recursive: true, force: true })
 })
 
+it('stops cleanly when the host asks it to over the control socket', async () => {
+  // given a runner that stops the daemon as soon as it is asked to, as `typevault daemon run` does
+  const stopped = daemon.stopRequested.then(() => daemon.stop())
+
+  // when the host asks over the control socket, as stopDaemon does on Windows
+  await callDaemon(layout.controlSocket, '/v1/shutdown', {}, z.object({ ok: z.literal(true) }))
+
+  // then the daemon finishes stopping and lets go of its lock (the test times out if stopping hangs)
+  await stopped
+  expect(isLockHeld(layout.daemonLock)).toBe(false)
+  daemon = await startDaemon({ layout, env, keys: [owner] })
+})
+
+it('refuses to stop for a caller on the agent socket, which sandboxes reach', async () => {
+  await expect(callDaemon(layout.agentSocket, '/v1/shutdown', {}, z.json())).rejects.toMatchObject({
+    code: 'not_found',
+  })
+
+  expect(await callDaemon(layout.agentSocket, '/v1/ping', {}, z.object({ ok: z.literal(true) }))).toMatchObject({
+    ok: true,
+  })
+})
+
 describe('live grants', () => {
   it('serves values within the grant and audits each read with its label', async () => {
     const { token } = await grant('default', { tiers: ['member'], label: 'session:abc' })

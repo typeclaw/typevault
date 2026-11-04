@@ -13,7 +13,7 @@ import { adminRoutes, type Ceiling } from './admin-routes'
 import { agentRoutes, type DaemonContext } from './agent-routes'
 import { isDaemonAlive } from './client'
 import { GrantStore, SESSION_CEILING } from './grants'
-import { router } from './http'
+import { json, router } from './http'
 import { type PromptOptions, PromptRequests } from './requests'
 
 const ADOPT_EVERY_MS = 60_000
@@ -30,7 +30,12 @@ export type DaemonOptions = {
    */
   readonly session?: { readonly ttlMs: number }
 }
-export type RunningDaemon = { readonly stop: () => Promise<void>; readonly ceilings: readonly Ceiling[] }
+export type RunningDaemon = {
+  readonly stop: () => Promise<void>
+  readonly ceilings: readonly Ceiling[]
+  /** Settles when the host asks this daemon to stop over its control socket (how `stopDaemon` does it on Windows). */
+  readonly stopRequested: Promise<void>
+}
 
 /** One admin socket per owner-signed ceiling, plus an uncapped `default` socket when this daemon holds the owner key. */
 function ceilingsOf(vault: Vault): readonly Ceiling[] {
@@ -77,6 +82,7 @@ async function serve(options: DaemonOptions, release: () => void): Promise<Runni
   if (ceilings.length === 0 && options.session === undefined)
     throw new TypeVaultError('invalid', 'no ceilings configured (typevault ceiling set <name> <tier>)')
 
+  const { promise: stopRequested, resolve: requestStop } = Promise.withResolvers<void>()
   const member = vault.member === undefined ? undefined : vault.state.members[vault.member]
   const context: DaemonContext = {
     vault,
@@ -94,6 +100,16 @@ async function serve(options: DaemonOptions, release: () => void): Promise<Runni
   const servers = [
     listen(layout.agentSocket, router(agentRoutes(context))),
     ...ceilings.map((ceiling) => listen(layout.adminSocket(ceiling.name), router(adminRoutes(context, ceiling)))),
+    listen(
+      layout.controlSocket,
+      router({
+        '/v1/shutdown': async () => {
+          // Stopped once this response is out: stopping the server while its own request is in flight never settles.
+          setTimeout(requestStop, 0)
+          return json({ ok: true })
+        },
+      }),
+    ),
   ]
   atomicWrite(join(layout.run, 'daemon.pid'), String(process.pid), 0o600)
   const session = options.session === undefined ? undefined : await openSession(context, options.session.ttlMs)
@@ -107,6 +123,7 @@ async function serve(options: DaemonOptions, release: () => void): Promise<Runni
 
   return {
     ceilings,
+    stopRequested,
     stop: async () => {
       clearInterval(adoption)
       if (session !== undefined) {
@@ -119,6 +136,7 @@ async function serve(options: DaemonOptions, release: () => void): Promise<Runni
       for (const file of [
         layout.agentSocket,
         ...ceilings.map((c) => layout.adminSocket(c.name)),
+        layout.controlSocket,
         join(layout.run, 'daemon.pid'),
       ]) {
         if (existsSync(file)) rmSync(file)
