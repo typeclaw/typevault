@@ -203,18 +203,20 @@ export class ScopedVault implements Access {
     return toSummary(valueOf(stored))
   }
 
-  // The scope check and the delete resolve the name under one exclusive lock: otherwise a copy another process
-  // writes in between (say in a tier above this scope) is what the delete resolves to, not the checked one.
+  // The name is resolved once and the delete targets that copy's id: resolving it again could land on a copy that
+  // arrived in between (another process, or a git pull, which takes no lock), say in a tier above this scope.
   remove(name: EntryName, tier?: string): Promise<void> {
     return withLock(this.#vault.layout.lockFile, 'exclusive', async () => {
-      if (tier === undefined) await this.#find(name)
+      let entry: StoredEntry | undefined
+      if (tier === undefined) entry = await this.#find(name)
       else {
-        this.#vault.refresh()
-        if (!allowsEntry(this.#chain, this.#vault.state, tier, name)) {
-          throw new TypeVaultError('not_found', `no entry named ${name}`)
-        }
+        const { entries } = await this.#vault.scan()
+        entry = entries.find((copy) => copy.payload.name === name && copy.envelope.tier === tier)
+        if (entry === undefined || !this.#allows(entry)) throw new TypeVaultError('not_found', `no entry named ${name}`)
       }
-      await this.#vault.remove(name, tier)
+      await this.#vault.removeById(entry.envelope.id, (envelope) =>
+        allowsEntry(this.#chain, this.#vault.state, envelope.tier, name),
+      )
       await this.#audit({ action: 'remove', entries: [name], ...(tier === undefined ? {} : { tiers: [tier] }) })
     })
   }
