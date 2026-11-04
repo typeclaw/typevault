@@ -31,8 +31,12 @@ export type AdminOptions = {
   readonly dir?: string
   /** Use the global vault instead of the project's, like the CLI's `-g`. Defaults to `TYPEVAULT_GLOBAL`. */
   readonly global?: boolean
-  /** Which admin socket to use (`run/admin-<ceiling>.sock`). Defaults to `TYPEVAULT_CEILING`, else `default`. */
+  /** Which admin socket to use (`admin-<ceiling>.sock`). Defaults to `TYPEVAULT_CEILING`, else `default`. */
   readonly ceiling?: string
+  /** The vault's private state (trust pin, audit, run). Defaults to `TYPEVAULT_STATE_DIR`, else this user's config. */
+  readonly stateDir?: string
+  /** Where the daemon's sockets live, for a `stateDir` too deep for one. Defaults to `TYPEVAULT_RUN_DIR`. */
+  readonly runDir?: string
   /** Where the defaults above are read from. Defaults to `process.env`. */
   readonly env?: Env
 }
@@ -53,6 +57,8 @@ export function createAdmin(options: AdminOptions = {}): AdminClient {
     ...(options.dir === undefined ? {} : { TYPEVAULT_DIR: options.dir }),
     ...(options.global === undefined ? {} : { TYPEVAULT_GLOBAL: options.global ? '1' : '' }),
     ...(options.ceiling === undefined ? {} : { TYPEVAULT_CEILING: options.ceiling }),
+    ...(options.stateDir === undefined ? {} : { TYPEVAULT_STATE_DIR: options.stateDir }),
+    ...(options.runDir === undefined ? {} : { TYPEVAULT_RUN_DIR: options.runDir }),
   }
   return {
     grant: async (request) => (await adminCall(env, '/v1/grant', request, IssuedSchema)).token,

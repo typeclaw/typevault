@@ -22,6 +22,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./admin": "./src/admin.ts",
+    "./owner": "./src/owner.ts",
     "./redact": "./src/redact/index.ts"
   },
   "scripts": {

@@ -6,6 +6,7 @@ import { adoptCertWrites } from '../core/adopt'
 import type { SecretKey } from '../core/crypto'
 import { TypeVaultError } from '../core/errors'
 import { atomicWrite, ensureDir } from '../core/fsx'
+import { claimDaemon, type DaemonClaim, refuseForeignDaemon } from '../core/holder'
 import type { Layout } from '../core/layout'
 import { holdLock } from '../core/lock'
 import { Vault } from '../core/vault'
@@ -56,23 +57,30 @@ async function openSession(context: DaemonContext, ttlMs: number): Promise<strin
 export async function startDaemon(options: DaemonOptions): Promise<RunningDaemon> {
   const { layout } = options
   ensureDir(layout.run, 0o700)
+  ensureDir(layout.sockets, 0o700)
+  refuseForeignDaemon(layout, options.env)
   if (await isDaemonAlive(layout.agentSocket))
     throw new TypeVaultError('conflict', 'a typevault daemon is already running')
   // Held until this daemon's cleanup is done: one still shutting down here keeps a replacement from starting, and
   // `stopDaemon` knows the old one is gone when the lock frees up, with no PID to trust.
   const release = holdLock(layout.daemonLock)
   if (release === undefined) throw new TypeVaultError('conflict', 'a typevault daemon is still shutting down here')
+  let claim: DaemonClaim | undefined
   try {
-    return await serve(options, release)
+    claim = claimDaemon(layout, options.env)
+    return await serve(options, claim, release)
   } catch (error) {
+    claim?.release()
     release()
     throw error
   }
 }
 
-async function serve(options: DaemonOptions, release: () => void): Promise<RunningDaemon> {
+async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: () => void): Promise<RunningDaemon> {
   const { layout } = options
-  for (const file of readdirSync(layout.run).filter((name) => name.endsWith('.sock'))) rmSync(join(layout.run, file))
+  for (const file of readdirSync(layout.sockets).filter((name) => name.endsWith('.sock'))) {
+    rmSync(join(layout.sockets, file))
+  }
   if (options.keys.length === 0) throw new TypeVaultError('locked', 'the vault is locked (run `typevault unlock`)')
   const vault = await Vault.open(layout, options.keys, options.env)
   if (vault.keyring.owner === undefined && vault.member === undefined) {
@@ -126,22 +134,34 @@ async function serve(options: DaemonOptions, release: () => void): Promise<Runni
     stopRequested,
     stop: async () => {
       clearInterval(adoption)
-      if (session !== undefined) {
-        context.grants.revoke((record) => record.id === session)
-        if (existsSync(layout.sessionFile)) rmSync(layout.sessionFile)
+      try {
+        // The claim was cleared and someone else's daemon now owns the grants, session and run files. Saving this
+        // daemon's stale grant store or removing those files would undo its successor's, so only local resources go.
+        if (!claim.owns()) {
+          await Promise.all(servers.map((server) => server.stop(true)))
+          await context.requests.stop()
+          return
+        }
+        if (session !== undefined) {
+          context.grants.revoke((record) => record.id === session)
+          if (existsSync(layout.sessionFile)) rmSync(layout.sessionFile)
+        }
+        await Promise.all(servers.map((server) => server.stop(true)))
+        await context.requests.stop()
+        // A vault deleted under its daemon has nowhere left to anchor (and writing there would half re-create it).
+        if (existsSync(layout.ownerFile)) await anchorAudit(layout)
+        for (const file of [
+          layout.agentSocket,
+          ...ceilings.map((c) => layout.adminSocket(c.name)),
+          layout.controlSocket,
+          join(layout.run, 'daemon.pid'),
+        ]) {
+          if (existsSync(file)) rmSync(file)
+        }
+      } finally {
+        claim.release()
+        releaseLock()
       }
-      await Promise.all(servers.map((server) => server.stop(true)))
-      await context.requests.stop()
-      await anchorAudit(layout)
-      for (const file of [
-        layout.agentSocket,
-        ...ceilings.map((c) => layout.adminSocket(c.name)),
-        layout.controlSocket,
-        join(layout.run, 'daemon.pid'),
-      ]) {
-        if (existsSync(file)) rmSync(file)
-      }
-      release()
     },
   }
 }

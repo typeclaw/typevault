@@ -1,5 +1,5 @@
-import { existsSync, rmSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, readdirSync, rmSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 
 import { encodeSecretKey, generateSecretKey, type PublicKey, publicKeyOf, seal, type SecretKey } from './crypto'
 import { utf8 } from './encoding'
@@ -53,8 +53,12 @@ function refuseExisting(ownerFile: string, where: string): void {
 async function writeVault(layout: Layout, founder: Founder): Promise<SecretKey> {
   const name = parseMemberName(founder.name)
   // A vault re-created at the same place reuses this checkout's state directory. Its runtime state (grants, a
-  // session token, revision marks) belongs to the old vault, so it goes; the trust pin is rewritten below.
-  rmSync(layout.run, { recursive: true, force: true })
+  // session token, revision marks) belongs to the old vault, so it goes; the trust pin is rewritten below. The daemon
+  // lock and claim stay: whoever initializes may hold them to keep a daemon from starting meanwhile.
+  const kept = new Set([basename(layout.daemonLock), basename(layout.daemonHolder)])
+  for (const name of existsSync(layout.run) ? readdirSync(layout.run) : []) {
+    if (!kept.has(name)) rmSync(join(layout.run, name), { recursive: true, force: true })
+  }
   const ownerKey = await generateSecretKey({ kind: 'owner' })
   const owner: PublicKey = await publicKeyOf(ownerKey)
   const { kind, recipient, signPublic } = founder.member

@@ -14,6 +14,9 @@ Environment variables, on-disk layout, and known limits.
 | `TYPEVAULT_CEILING`                             | Admin socket to grant through (default `default`)                                           |
 | `TYPEVAULT_OWNER`                               | Pin the owner key instead of trusting it on first use                                       |
 | `TYPEVAULT_PROMPT_PORT`, `TYPEVAULT_PUBLIC_URL` | Where the daemon serves `request` pages                                                     |
+| `TYPEVAULT_STATE_DIR`                           | The vault's private state, instead of `checkouts/<id>/`; one machine at a time              |
+| `TYPEVAULT_RUN_DIR`                             | Where the daemon's sockets live, for a state directory too deep for a socket path           |
+| `TYPEVAULT_HOST_ID`                             | This machine's name in `daemon.holder` and audit anchors (default: the hostname)            |
 
 ## Layout
 
@@ -35,6 +38,9 @@ Environment variables, on-disk layout, and known limits.
     trust.json          # the owner key this machine trusts
     audit/              # full local audit log
     run/                # sockets, locks, grants, session token, daemon.log, staged transactions, revision marks
+
+$TYPEVAULT_STATE_DIR/   # when set: the same contents as checkouts/<id>/, in place of it
+$TYPEVAULT_RUN_DIR/     # when set: the sockets, instead of run/
 ```
 
 ## Known limits

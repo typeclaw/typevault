@@ -17,6 +17,7 @@ import {
 } from './entries'
 import { TypeVaultError } from './errors'
 import { assertNoSymlinks, atomicWrite, fsyncDir } from './fsx'
+import { refuseForeignDaemon } from './holder'
 import { heldMembers, Keyring, unwrapOwner } from './keyring'
 import type { Layout } from './layout'
 import { withLock } from './lock'
@@ -102,6 +103,7 @@ export class Vault {
 
   /** Opens the vault with `keys`. An owner member's key also brings the owner key it unwraps. */
   static async open(layout: Layout, keys: readonly SecretKey[], env: Env = process.env): Promise<Vault> {
+    refuseForeignDaemon(layout, env)
     if (existsSync(layout.txnDir) && readdirSync(layout.txnDir).length > 0) {
       await withLock(layout.lockFile, 'exclusive', async () => recoverTxns(layout))
     }

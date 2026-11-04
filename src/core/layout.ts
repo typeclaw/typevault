@@ -1,14 +1,15 @@
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
 import { sha256Hex } from './crypto'
 import { utf8 } from './encoding'
+import { TypeVaultError } from './errors'
 
 export type Layout = {
   /** `global`: one vault per user, `~/.typevault/`. `local`: a `.typevault/` committed in a project. */
   readonly scope: 'global' | 'local'
-  /** Private state (trust pin, audit, run). Never committed. */
+  /** Private state (trust pin, audit, run): `TYPEVAULT_STATE_DIR`, else this checkout's. Never committed. */
   readonly root: string
   /** The committable part: ciphertext and signed manifests only. */
   readonly vault: string
@@ -37,6 +38,10 @@ export type Layout = {
   readonly grantsFile: string
   /** Held by the daemon from start until its cleanup is done: whether a daemon is still here, without PIDs. */
   readonly daemonLock: string
+  /** Which machine's daemon holds `daemonLock` (host id, pid, heartbeat), for openers flock can't reach. */
+  readonly daemonHolder: string
+  /** Where the sockets live: `TYPEVAULT_RUN_DIR`, else `run`. */
+  readonly sockets: string
   /** The unlocked session's grant token, readable only by this user while the daemon runs. */
   readonly sessionFile: string
   readonly revisionsFile: string
@@ -77,12 +82,41 @@ export const globalLayout = (env: Env = process.env): Layout => vaultLayout('glo
 /** A project vault at `dir`. */
 export const localLayout = (dir: string, env: Env = process.env): Layout => vaultLayout('local', dir, env)
 
+const setting = (env: Env, name: string): string | undefined => {
+  const value = env[name]
+  return value !== undefined && value !== '' ? resolve(value) : undefined
+}
+
+/** This machine, as daemon holders and audit anchors name it: `TYPEVAULT_HOST_ID`, else the hostname. */
+export function hostId(env: Env = process.env): string {
+  const explicit = env['TYPEVAULT_HOST_ID']
+  return explicit !== undefined && explicit !== '' ? explicit : hostname()
+}
+
 /**
  * Trust, audit and run state belong to this checkout (keyed by its path), so a replaced owner.json still meets the
- * old pin and two clones never share a daemon or a transaction journal.
+ * old pin and two clones never share a daemon or a transaction journal. `TYPEVAULT_STATE_DIR` names that state
+ * directly instead: every opener given it acts as one checkout, whatever path or home it reaches the vault through.
  */
-const vaultLayout = (scope: Layout['scope'], dir: string, env: Env): Layout =>
-  build(scope, join(configDir(env), 'checkouts', shortHash(resolve(dir))), dir)
+function vaultLayout(scope: Layout['scope'], dir: string, env: Env): Layout {
+  const stateDir = setting(env, 'TYPEVAULT_STATE_DIR')
+  const root = stateDir ?? join(configDir(env), 'checkouts', shortHash(resolve(dir)))
+  // Without a state directory, a chain is named by where its log lives. With one, it is the vault's single chain,
+  // named by its owner key: nothing kept in the state directory can be lost or swapped to escape its anchors.
+  const chain =
+    stateDir === undefined
+      ? () => shortHash(`${hostId(env)}\0${root}`)
+      : () => `state-${vaultIdOf(ownerSignPublic(dir))}`
+  return build(scope, root, dir, setting(env, 'TYPEVAULT_RUN_DIR'), chain)
+}
+
+function ownerSignPublic(vault: string): string {
+  const owner: unknown = JSON.parse(readFileSync(join(vault, 'owner.json'), 'utf8'))
+  if (typeof owner !== 'object' || owner === null || !('signPublic' in owner) || typeof owner.signPublic !== 'string') {
+    throw new TypeVaultError('tampered', `${join(vault, 'owner.json')} is malformed`)
+  }
+  return owner.signPublic
+}
 
 // A home directory reached through a symlink (macOS's /tmp, say) is still the same directory.
 const canonical = (path: string): string => (existsSync(path) ? realpathSync(path) : resolve(path))
@@ -105,9 +139,16 @@ export function findLocalVault(from: string, env: Env = process.env): string | u
   }
 }
 
-function build(scope: Layout['scope'], root: string, vault: string): Layout {
+function build(
+  scope: Layout['scope'],
+  root: string,
+  vault: string,
+  runDir: string | undefined,
+  chain: () => string,
+): Layout {
   const audit = join(root, 'audit')
   const run = join(root, 'run')
+  const sockets = runDir ?? run
   return {
     scope,
     root,
@@ -121,8 +162,10 @@ function build(scope: Layout['scope'], root: string, vault: string): Layout {
     ownerWrapsDir: join(vault, 'owner'),
     signersFile: join(vault, 'signers.json'),
     ceilingsFile: join(vault, 'ceilings.json'),
-    // Named by where the log lives, never by the log itself: a log rewritten from its first record keeps its anchors.
-    anchorsFile: join(vault, 'audit-anchors', `${shortHash(`${hostname()}\0${root}`)}.jsonl`),
+    // Never named by the log itself: a log rewritten from its first record keeps its anchors.
+    get anchorsFile() {
+      return join(vault, 'audit-anchors', `${chain()}.jsonl`)
+    },
     legacyAnchorsFile: join(vault, 'audit-anchors.jsonl'),
     // Staging lives in run/, which is never committed: a txn dir from git must not be able to steer deletes.
     txnDir: join(run, 'txn'),
@@ -134,10 +177,12 @@ function build(scope: Layout['scope'], root: string, vault: string): Layout {
     auditLock: join(run, 'audit.lock'),
     grantsFile: join(run, 'grants.json'),
     daemonLock: join(run, 'daemon.lock'),
+    daemonHolder: join(run, 'daemon.holder'),
+    sockets,
     sessionFile: join(run, 'session.token'),
     revisionsFile: join(run, 'revisions.json'),
-    agentSocket: join(run, 'agent.sock'),
-    adminSocket: (ceiling: string) => join(run, `admin-${ceiling}.sock`),
-    controlSocket: join(run, 'control.sock'),
+    agentSocket: join(sockets, 'agent.sock'),
+    adminSocket: (ceiling: string) => join(sockets, `admin-${ceiling}.sock`),
+    controlSocket: join(sockets, 'control.sock'),
   }
 }

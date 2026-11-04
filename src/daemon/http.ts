@@ -12,6 +12,9 @@ const STATUS: Readonly<Record<ErrorCode, number>> = {
   tampered: 422,
   locked: 423,
   unavailable: 503,
+  in_use: 423,
+  no_vault: 404,
+  not_member: 403,
 }
 
 export const json = (body: unknown, status = 200): Response =>

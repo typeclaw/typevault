@@ -64,7 +64,26 @@ global vault's directory, and without it the vault is chosen like the CLI's. Wit
 refuses unless you pass `direct: true`, which reads through the unlocked session, or loads a machine member's key
 into your process; keep that to issuers.
 `createAdmin` takes `dir`, `ceiling` and `env`, and offers `grant`, `list` and `revoke`. Both take `global: true` to use
-the global vault, like `-g`.
+the global vault, like `-g`, and `stateDir` and `runDir` (see
+[Private state in a directory you choose](vaults-and-members.md#private-state-in-a-directory-you-choose)).
+
+`typevault/owner` provisions a vault without touching this user's config (Bun only):
+
+```ts
+import { createMachineIdentity, initVault, openVault } from 'typevault/owner'
+
+const location = { dir: 'agent/.typevault', stateDir: 'agent/.state/typevault' }
+const identity = await createMachineIdentity({ name: 'agent' }) // { name, key, publicKey }; writes no file
+await initVault({ ...location, founder: identity })
+const vault = await openVault({ ...location, key: identity.key })
+await vault.tiers.add('member')
+await vault.ceilings.set('session', 'member')
+await vault.entries.set({ name: 'openai', fields: { key: { type: 'secret', value } }, tier: 'member' })
+```
+
+`vault` also offers `tiers.include`, `tiers.list`, `members.list` and `entries.get`/`list`/`remove`. `openVault` fails
+with `no_vault` when `dir` holds no vault and `not_member` when the key is not one of its members; `initVault` fails
+with `conflict` over an existing vault, so resuming one never re-creates it.
 
 ---
 
