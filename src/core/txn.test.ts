@@ -3,16 +3,18 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { type Layout, layoutOf } from './layout'
+import { globalLayout, type Layout } from './layout'
 import { commitTxn, recoverTxns, Txn } from './txn'
 
+let base: string
 let layout: Layout
 
 beforeEach(() => {
-  layout = layoutOf(mkdtempSync(join(tmpdir(), 'typevault-txn-')))
+  base = mkdtempSync(join(tmpdir(), 'typevault-txn-'))
+  layout = globalLayout({ TYPEVAULT_DIR: join(base, 'vault'), XDG_CONFIG_HOME: base })
   mkdirSync(layout.vault, { recursive: true })
 })
-afterEach(() => rmSync(layout.root, { recursive: true, force: true }))
+afterEach(() => rmSync(base, { recursive: true, force: true }))
 
 function stage(id: string, committed: boolean): void {
   const dir = join(layout.txnDir, id)

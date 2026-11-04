@@ -7,7 +7,7 @@ import { TypeVaultError } from './errors'
 import { atomicWrite, ensureDir } from './fsx'
 import { type Identity, type MemberPublic, memberPublicOfIdentity, sealedCopyPath } from './identity'
 import { ownerWrapPath } from './keyring'
-import { type Layout, layoutOf, localLayout } from './layout'
+import { globalLayout, type Layout, localLayout } from './layout'
 import { ceilingsDoc, membersDoc, parseMemberName, signersDoc, tiersDoc } from './state'
 
 type Env = Readonly<Record<string, string | undefined>>
@@ -23,25 +23,19 @@ export const founderOf = (identity: Identity): Founder => ({
 
 export type Created = { readonly layout: Layout; readonly owner: SecretKey }
 
-/** Ignores everything in the vault directory except `vault/`, the only part that is safe to commit. */
-const ROOT_GITIGNORE = '/*\n!/vault/\n!/.gitignore\n'
-
 /**
- * Creates an empty global vault owned by `founder`. The owner key is never written down in the clear: it exists only
- * wrapped to owner members, so the founder's password and Secret Key are the recovery path.
+ * Creates an empty global vault owned by `founder`, all of it safe to commit. The owner key is never written down in
+ * the clear: it exists only wrapped to owner members, so the founder's password and Secret Key are the recovery path.
  */
-export async function initVault(root: string, founder: Founder): Promise<Created> {
-  const layout = layoutOf(root)
-  refuseExisting(layout.ownerFile, root)
-  const owner = await writeVault(layout, founder)
-  atomicWrite(join(layout.root, '.gitignore'), ROOT_GITIGNORE)
-  return { layout, owner }
-}
+export const initGlobalVault = (founder: Founder, env: Env = process.env): Promise<Created> =>
+  create(globalLayout(env), founder)
 
 /** Creates an empty project vault at `dir`, all of it safe to commit. */
-export async function initLocalVault(dir: string, founder: Founder, env: Env = process.env): Promise<Created> {
-  refuseExisting(join(dir, 'owner.json'), dir)
-  const layout = localLayout(dir, env)
+export const initLocalVault = (dir: string, founder: Founder, env: Env = process.env): Promise<Created> =>
+  create(localLayout(dir, env), founder)
+
+async function create(layout: Layout, founder: Founder): Promise<Created> {
+  refuseExisting(layout.ownerFile, layout.vault)
   return { layout, owner: await writeVault(layout, founder) }
 }
 

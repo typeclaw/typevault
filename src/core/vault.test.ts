@@ -9,10 +9,12 @@ import { utf8 } from './encoding'
 import { signerOf } from './entries'
 import { TypeVaultError } from './errors'
 import { createIdentity } from './identity'
-import { type Founder, founderOf, initVault } from './init'
-import { layoutOf } from './layout'
+import { type Founder, founderOf, initGlobalVault } from './init'
+import { globalLayout } from './layout'
 import { parseEntryName } from './naming'
 import { Vault } from './vault'
+
+const envIn = (dir: string) => ({ TYPEVAULT_DIR: join(dir, 'vault'), XDG_CONFIG_HOME: dir })
 
 const machineFounder = async (): Promise<Founder> => founderOf((await createIdentity('owner', 'machine')).identity)
 
@@ -21,7 +23,7 @@ let owner: SecretKey
 let admin: Admin
 
 const env = {}
-const open = (keys: readonly SecretKey[]): Promise<Vault> => Vault.open(layoutOf(root), keys, env)
+const open = (keys: readonly SecretKey[]): Promise<Vault> => Vault.open(globalLayout(envIn(root)), keys, env)
 const keyOf = async (tier: string): Promise<SecretKey> => {
   const key = await (await open([owner])).keyring.unlock(tier)
   if (key === undefined) throw new Error(`no key for ${tier}`)
@@ -36,7 +38,7 @@ const stripe = {
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'typevault-'))
-  owner = (await initVault(root, await machineFounder())).owner
+  owner = (await initGlobalVault(await machineFounder(), envIn(root))).owner
   admin = new Admin(await open([owner]))
   await admin.addTier('guest')
   await admin.addTier('member')
@@ -296,6 +298,6 @@ describe('rotation', () => {
 
   it('leaves no staged transaction behind', async () => {
     await admin.rotate('trusted')
-    expect(readdirSync(join(root, 'run', 'txn'))).toEqual([])
+    expect(readdirSync(globalLayout(envIn(root)).txnDir)).toEqual([])
   })
 })

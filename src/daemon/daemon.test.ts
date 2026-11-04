@@ -10,8 +10,8 @@ import { seal, type SecretKey } from '../core/crypto'
 import { utf8 } from '../core/encoding'
 import { signerOf } from '../core/entries'
 import { createIdentity } from '../core/identity'
-import { type Founder, founderOf, initVault } from '../core/init'
-import { type Layout, layoutOf } from '../core/layout'
+import { type Founder, founderOf, initGlobalVault } from '../core/init'
+import { globalLayout, type Layout } from '../core/layout'
 import { holdLock, isLockHeld } from '../core/lock'
 import { parseEntryName } from '../core/naming'
 import { Vault } from '../core/vault'
@@ -21,6 +21,8 @@ import { LiveAccess } from './live-access'
 
 const machineFounder = async (): Promise<Founder> => founderOf((await createIdentity('owner', 'machine')).identity)
 
+let base: string
+let env: Record<string, string>
 let layout: Layout
 let owner: SecretKey
 let daemon: RunningDaemon
@@ -32,8 +34,10 @@ const grant = (socket: string, body: Record<string, unknown>) =>
 
 beforeEach(async () => {
   // Short root: unix socket paths are limited to ~104 bytes.
-  layout = layoutOf(mkdtempSync('/tmp/tvd-'))
-  owner = (await initVault(layout.root, await machineFounder())).owner
+  base = mkdtempSync('/tmp/tvd-')
+  env = { TYPEVAULT_DIR: join(base, 'vault'), XDG_CONFIG_HOME: base }
+  layout = globalLayout(env)
+  owner = (await initGlobalVault(await machineFounder(), env)).owner
   const vault = await Vault.open(layout, [owner], {})
   const admin = new Admin(vault)
   await admin.addTier('member')
@@ -52,12 +56,12 @@ beforeEach(async () => {
     { name: n('stripe'), fields: { key: { type: 'secret' as const, value: 'sk_live_x' } }, tier: 'trusted' },
     signerOf(owner),
   )
-  daemon = await startDaemon({ layout, env: { TYPEVAULT_DIR: layout.root }, keys: [owner] })
+  daemon = await startDaemon({ layout, env, keys: [owner] })
 })
 
 afterEach(async () => {
   await daemon.stop()
-  rmSync(layout.root, { recursive: true, force: true })
+  rmSync(base, { recursive: true, force: true })
 })
 
 describe('live grants', () => {
@@ -236,7 +240,6 @@ describe('unlocked session', () => {
   it('serves its grant from run/session.token and ends it with the daemon', async () => {
     // given a daemon started as an unlocked session
     await daemon.stop()
-    const env = { TYPEVAULT_DIR: layout.root }
     daemon = await startDaemon({ layout, env, keys: [owner], session: { ttlMs: 60_000 } })
     const token = readFileSync(layout.sessionFile, 'utf8')
 
@@ -257,7 +260,7 @@ describe('unlocked session', () => {
     await new Admin(await Vault.open(layout, [owner], {})).setCeiling('session', 'member')
     daemon = await startDaemon({
       layout,
-      env: { TYPEVAULT_DIR: layout.root },
+      env,
       keys: [owner],
       session: { ttlMs: 60_000 },
     })
@@ -277,7 +280,7 @@ describe('unlocked session', () => {
     // given a ceiling named "session" over trusted, and a grant it issued for trusted
     await daemon.stop()
     await new Admin(await Vault.open(layout, [owner], {})).setCeiling('session', 'trusted')
-    daemon = await startDaemon({ layout, env: { TYPEVAULT_DIR: layout.root }, keys: [owner] })
+    daemon = await startDaemon({ layout, env, keys: [owner] })
     const access = new LiveAccess(layout.agentSocket, (await grant('session', { tiers: ['trusted'] })).token)
 
     // when it writes without naming a tier
@@ -296,7 +299,7 @@ describe('daemon lock', () => {
     await daemon.stop()
 
     expect(isLockHeld(layout.daemonLock)).toBe(false)
-    daemon = await startDaemon({ layout, env: { TYPEVAULT_DIR: layout.root }, keys: [owner] })
+    daemon = await startDaemon({ layout, env, keys: [owner] })
   })
 
   it('keeps a new daemon from starting while another still holds it, shutting down', async () => {
@@ -306,7 +309,6 @@ describe('daemon lock', () => {
     if (release === undefined) throw new Error('the lock was not free after stop')
 
     // then a new daemon refuses to start beside it
-    const env = { TYPEVAULT_DIR: layout.root }
     await expect(startDaemon({ layout, env, keys: [owner] })).rejects.toMatchObject({ code: 'conflict' })
     release()
     daemon = await startDaemon({ layout, env, keys: [owner] })

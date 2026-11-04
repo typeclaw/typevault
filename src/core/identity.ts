@@ -14,7 +14,7 @@ import {
 import { fromBase64Url, fromUtf8, toBase64Url, utf8 } from './encoding'
 import { TypeVaultError } from './errors'
 import { assertNoSymlinks, atomicWrite } from './fsx'
-import { type Layout, resolveRoot } from './layout'
+import { configDir, type Layout } from './layout'
 import { generateSecretKeyCode, openWithPassword, sealWithPassword } from './password'
 import { type MemberKind, parseMemberName } from './state'
 
@@ -57,7 +57,7 @@ const MemberPublicSchema = z.object({
 })
 const PUBLIC_PREFIX = 'tvp1:'
 
-export const identityPath = (env: Env): string => join(resolveRoot(env), 'identity.json')
+export const identityPath = (env: Env): string => join(configDir(env), 'identity.json')
 
 export function readIdentity(env: Env): Identity | undefined {
   const path = identityPath(env)

@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { Admin } from '../core/admin'
 import { signerOf } from '../core/entries'
 import { createIdentity } from '../core/identity'
-import { type Founder, founderOf, initLocalVault, initVault } from '../core/init'
+import { type Founder, founderOf, initGlobalVault, initLocalVault } from '../core/init'
 import { parseEntryName } from '../core/naming'
 import { Vault } from '../core/vault'
 import { findLayout, layoutFrom } from './context'
@@ -21,7 +21,7 @@ beforeEach(() => {
   base = realpathSync(mkdtempSync(join(tmpdir(), 'typevault-context-')))
   project = join(base, 'project')
   mkdirSync(join(project, 'src', 'deep'), { recursive: true })
-  env = { XDG_CONFIG_HOME: join(base, 'config') }
+  env = { HOME: base, XDG_CONFIG_HOME: join(base, 'config') }
 })
 afterEach(() => rmSync(base, { recursive: true, force: true }))
 
@@ -46,14 +46,17 @@ it('finds the project vault from a nested directory and reads it with the keys k
   expect(found?.payload.fields).toEqual({ key: { type: 'secret' as const, value: 'sk-x' } })
 })
 
-it('never falls back to the global vault without -g', async () => {
-  await initVault(join(base, 'config', 'typevault'), await machineFounder())
+it('never takes the global vault in the home directory for a project vault above the project', async () => {
+  // given a global vault in the home directory the project sits in
+  const { layout: global } = await initGlobalVault(await machineFounder(), env)
 
+  // then it is found only with -g
   expect(findLayout(env, project)).toBeUndefined()
   expect(() => layoutFrom(env, project)).toThrow(expect.objectContaining({ code: 'not_found' }))
   expect(layoutFrom({ ...env, TYPEVAULT_GLOBAL: '1' }, project)).toMatchObject({
     scope: 'global',
-    root: join(base, 'config', 'typevault'),
+    vault: join(base, '.typevault'),
+    root: global.root,
   })
 })
 
@@ -61,5 +64,5 @@ it('selects the global vault with -g even inside a project', async () => {
   await initLocalVault(join(project, '.typevault'), await machineFounder(), env)
 
   expect(layoutFrom({ ...env, TYPEVAULT_GLOBAL: '1' }, project).scope).toBe('global')
-  expect(layoutFrom({ TYPEVAULT_DIR: join(base, 'elsewhere') }, project).root).toBe(join(base, 'elsewhere'))
+  expect(layoutFrom({ TYPEVAULT_DIR: join(base, 'elsewhere') }, project).vault).toBe(join(base, 'elsewhere'))
 })

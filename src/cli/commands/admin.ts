@@ -8,8 +8,8 @@ import { Admin } from '../../core/admin'
 import { adoptCertWrites } from '../../core/adopt'
 import { doctor as runDoctor } from '../../core/doctor'
 import { TypeVaultError } from '../../core/errors'
-import { founderOf, initLocalVault, initVault } from '../../core/init'
-import { type Layout, LOCAL_VAULT_DIR, layoutOf, localLayout, resolveRoot } from '../../core/layout'
+import { founderOf, initGlobalVault, initLocalVault } from '../../core/init'
+import { globalLayout, type Layout, LOCAL_VAULT_DIR, localLayout } from '../../core/layout'
 import { parseEntryName } from '../../core/naming'
 import { Vault } from '../../core/vault'
 import { stopDaemon } from '../../daemon/spawn'
@@ -24,15 +24,16 @@ export const init = defineCommand({
     const env = process.env
     const founder = founderOf(await ensureIdentity(env, args))
     const global = wantsGlobal(env)
-    await stopStaleDaemon(global ? layoutOf(resolveRoot(env)) : localLayout(join(process.cwd(), LOCAL_VAULT_DIR), env))
-    const { layout, owner } = global
-      ? await initVault(resolveRoot(env), founder)
-      : await initLocalVault(join(process.cwd(), LOCAL_VAULT_DIR), founder, env)
+    const dir = join(process.cwd(), LOCAL_VAULT_DIR)
+    await stopStaleDaemon(global ? globalLayout(env) : localLayout(dir, env))
+    const { layout, owner } = global ? await initGlobalVault(founder, env) : await initLocalVault(dir, founder, env)
     await new Admin(await Vault.open(layout, [owner], env)).addTier(STARTER_TIER)
-    print(
-      `vault created at ${global ? layout.root : layout.vault} with tier "${STARTER_TIER}", owned by ${founder.name}`,
+    print(`vault created at ${layout.vault} with tier "${STARTER_TIER}", owned by ${founder.name}`)
+    note(
+      global
+        ? 'It holds no key in the clear: safe to sync with git.'
+        : `Commit ${LOCAL_VAULT_DIR}/: it holds no key in the clear.`,
     )
-    note(global ? 'Only vault/ is safe to commit.' : `Commit ${LOCAL_VAULT_DIR}/: it holds no key in the clear.`)
     note('next: typevault set <name> --stdin (more tiers: typevault tier add <name>)')
   },
 })

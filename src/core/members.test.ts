@@ -8,17 +8,19 @@ import { type SecretKey, unseal } from './crypto'
 import { fromBase64 } from './encoding'
 import { type Envelope, signerOf } from './entries'
 import { createIdentity } from './identity'
-import { founderOf, initVault } from './init'
-import { layoutOf } from './layout'
+import { founderOf, initGlobalVault } from './init'
+import { globalLayout } from './layout'
 import { parseEntryName } from './naming'
 import { Txn } from './txn'
 import { Vault } from './vault'
+
+const envIn = (dir: string) => ({ TYPEVAULT_DIR: join(dir, 'vault'), XDG_CONFIG_HOME: dir })
 
 let root: string
 let owner: SecretKey
 let admin: Admin
 
-const open = (keys: readonly SecretKey[]): Promise<Vault> => Vault.open(layoutOf(root), keys, {})
+const open = (keys: readonly SecretKey[]): Promise<Vault> => Vault.open(globalLayout(envIn(root)), keys, {})
 const put = async (name: string, tier: string): Promise<Envelope> =>
   (
     await (
@@ -39,7 +41,7 @@ async function addMachine(name: string, tiers: readonly string[]): Promise<Secre
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'typevault-members-'))
   const founder = await createIdentity('alice', 'human', 'correct horse')
-  ;({ owner } = await initVault(root, founderOf(founder.identity)))
+  ;({ owner } = await initGlobalVault(founderOf(founder.identity), envIn(root)))
   admin = new Admin(await open([founder.key]))
   await admin.addTier('member')
   await admin.addTier('trusted')
@@ -115,7 +117,7 @@ it('refuses to remove an owner', async () => {
 })
 
 it('commits a human founder only in sealed form', async () => {
-  const committed = readFileSync(join(layoutOf(root).membersDir, 'alice.key'), 'utf8')
+  const committed = readFileSync(join(globalLayout(envIn(root)).membersDir, 'alice.key'), 'utf8')
 
   expect(JSON.parse(committed)).toMatchObject({ v: 1, kdf: { name: 'argon2id' } })
 })

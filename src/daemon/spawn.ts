@@ -6,7 +6,7 @@ import { machineKeys } from '../access/keys'
 import { encodeSecretKey, type SecretKey } from '../core/crypto'
 import { TypeVaultError } from '../core/errors'
 import { ensureDir } from '../core/fsx'
-import type { Layout } from '../core/layout'
+import { configDir, type Layout } from '../core/layout'
 import { isLockHeld } from '../core/lock'
 import { isDaemonAlive, servingPid } from './client'
 
@@ -114,14 +114,16 @@ export async function startBackground(
   // A background daemon has no terminal: its output goes to a log, so a failed start can say why.
   const logPath = join(layout.run, 'daemon.log')
   const log = openSync(logPath, 'w', 0o600)
-  // The child selects the same vault the way the CLI does: a project vault from its directory, the global one by root.
+  // The child selects the same vault the way the CLI does: a project vault from its directory, the global one by path.
+  // Its private state is where this process resolved it: `env` may lack the HOME this process fell back to.
+  const childEnv = { ...env, XDG_CONFIG_HOME: dirname(configDir(env)) }
   const [executable = process.execPath, ...args] = command
   const child = spawn(executable, args, {
     detached: true,
     stdio: [stdin === undefined ? 'ignore' : 'pipe', log, log],
     ...(layout.scope === 'local'
-      ? { cwd: dirname(layout.vault), env }
-      : { env: { ...env, TYPEVAULT_DIR: layout.root } }),
+      ? { cwd: dirname(layout.vault), env: childEnv }
+      : { env: { ...childEnv, TYPEVAULT_DIR: layout.vault } }),
   })
   closeSync(log)
   if (stdin !== undefined) child.stdin?.end(stdin)

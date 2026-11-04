@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import { createIdentity } from './identity'
-import { type Founder, founderOf, initLocalVault, initVault } from './init'
-import { layoutOf } from './layout'
+import { type Founder, founderOf, initGlobalVault, initLocalVault } from './init'
+import { globalLayout } from './layout'
 import { Vault } from './vault'
 
 function plantOldVault(vaultDir: string): void {
@@ -46,8 +46,23 @@ it('keeps every key of a project vault inside it, sealed, with only checkout sta
   expect(existsSync(join(base, 'config', 'typevault', 'vaults'))).toBe(false)
 })
 
+it('keeps the global vault in the home directory, apart from the identity and private state', async () => {
+  // when the global vault is founded
+  const env = { HOME: base, XDG_CONFIG_HOME: join(base, 'config') }
+  const { layout } = await initGlobalVault(await founder('machine'), env)
+
+  // then it lives in ~/.typevault, all of it committable, and its private state lives under the config directory
+  expect(layout.vault).toBe(join(base, '.typevault'))
+  expect(readdirSync(layout.vault)).toContain('owner.json')
+  expect(readdirSync(layout.vault)).not.toContain('trust.json')
+  expect(layout.trustFile.startsWith(join(base, 'config', 'typevault', 'checkouts'))).toBe(true)
+})
+
 it('lists the founder as the only member, an owner', async () => {
-  const { layout } = await initVault(join(base, 'global'), await founder('machine'))
+  const { layout } = await initGlobalVault(await founder('machine'), {
+    TYPEVAULT_DIR: join(base, 'global'),
+    XDG_CONFIG_HOME: base,
+  })
 
   const { members } = (await Vault.open(layout, [], {})).state
 
@@ -70,12 +85,12 @@ it('refuses to init over an old-format project vault without writing anything', 
 
 it('refuses to init over an old-format global vault without writing anything', async () => {
   // given
-  const root = join(base, 'global')
-  const { ownerFile } = layoutOf(root)
+  const env = { TYPEVAULT_DIR: join(base, 'global'), XDG_CONFIG_HOME: base }
+  const { ownerFile } = globalLayout(env)
   plantOldVault(dirname(ownerFile))
 
   // when
-  const init = initVault(root, await founder('machine'))
+  const init = initGlobalVault(await founder('machine'), env)
 
   // then
   await expect(init).rejects.toThrow('old-format vault')
