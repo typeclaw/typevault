@@ -16,6 +16,7 @@ import {
 import { parseTotpSeed, totpCode, totpRemainingSeconds } from '../../otp/totp'
 import { accessOf, resolveAccess } from '../context'
 import { csv, note, print, readStdin, repeated, table } from '../output'
+import { openBrowser, promptFields } from '../web-prompt'
 
 export const ls = defineCommand({
   meta: { name: 'ls', description: 'List the entries your grant reaches' },
@@ -103,7 +104,11 @@ function parseFieldsJson(text: string): Record<string, string> {
 }
 
 export const set = defineCommand({
-  meta: { name: 'set', description: 'Create or update an entry. Pipe the secret on stdin with --stdin.' },
+  meta: {
+    name: 'set',
+    description:
+      'Create or update an entry. Pipe the secret on stdin with --stdin, or type it in a browser with --web.',
+  },
   args: {
     name: { type: 'positional', description: ENTRY_NAME_SYNTAX, required: true },
     type: { type: 'string', description: 'password | api_key | oauth | ssh | totp | note' },
@@ -113,6 +118,10 @@ export const set = defineCommand({
     },
     field: { type: 'string', description: 'k=v, repeatable (non-secret fields; use --stdin for the secret)' },
     stdin: { type: 'boolean', description: 'Read the main secret field from stdin' },
+    web: {
+      type: 'boolean',
+      description: 'Type the fields in a local one-time browser page (default for a new entry from a terminal)',
+    },
     env: { type: 'string', description: 'Env var name for the main field in `run`' },
     origin: { type: 'string', description: 'Site this login is for (a hint, never a block)' },
     tag: { type: 'string', description: 'Comma-separated tags' },
@@ -126,12 +135,15 @@ export const set = defineCommand({
     const type = args.type === undefined ? existing?.type : parseEntryType(args.type)
     if (type === undefined) throw new TypeVaultError('invalid', 'new entries need --type')
     const given = parseFields(repeated(rawArgs, '--field'))
+    const tier = args.tier ?? existing?.tier ?? process.env['TYPEVAULT_TIER']
     const fromStdin = args['stdin-json']
       ? parseFieldsJson(await readStdin())
       : args.stdin
         ? { [primaryField(type)]: await readStdin() }
         : {}
-    const fields = { ...given, ...fromStdin }
+    const web = args.web ?? (existing === undefined && !args.stdin && !args['stdin-json'] && process.stdin.isTTY)
+    const fromWeb = web ? await promptFields({ name, type, tier }, showPrompt) : {}
+    const fields = { ...given, ...fromStdin, ...fromWeb }
     const base = existing !== undefined && !args.replace ? (await access.get(name, 'merge fields for set')).fields : {}
     const ifRev = args['if-rev'] === undefined ? undefined : z.coerce.number().int().parse(args['if-rev'])
     const tags = csv(args.tag)
@@ -139,7 +151,7 @@ export const set = defineCommand({
       name,
       type,
       fields: { ...base, ...fields },
-      tier: args.tier ?? existing?.tier ?? process.env['TYPEVAULT_TIER'],
+      tier,
       env: args.env,
       origin: args.origin,
       ...(tags.length === 0 ? {} : { tags }),
@@ -148,6 +160,11 @@ export const set = defineCommand({
     note(`stored ${stored.name} in ${stored.tier} (r${stored.rev})`)
   },
 })
+
+function showPrompt(url: string, code: string): void {
+  note(`Enter the secret at ${url}\nMatch code: ${code} (the page shows the same code)`)
+  if (!openBrowser(url)) note('could not open a browser; open the link yourself')
+}
 
 export const rm = defineCommand({
   meta: { name: 'rm', description: 'Remove an entry' },
