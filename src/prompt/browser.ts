@@ -17,6 +17,8 @@ function requiredElement<T extends HTMLElement>(selector: string, kind: { new ()
   throw new TypeVaultError('invalid', 'The request page is incomplete. Open a new request.')
 }
 
+const ACRONYMS = new Set(['url', 'totp', 'id', 'api', 'ssh'])
+
 const form = requiredElement('#prompt', HTMLFormElement)
 const fieldsRoot = requiredElement('#fields', HTMLDivElement)
 const status = requiredElement('#status', HTMLParagraphElement)
@@ -36,7 +38,12 @@ function initialize(): void {
     wrapper.className = 'field'
     const label = document.createElement('label')
     label.htmlFor = `field-${field}`
-    label.textContent = field.replaceAll('_', ' ').replace(/^./, (char) => char.toUpperCase())
+    const fieldName = field
+      .split('_')
+      .map((word) => (ACRONYMS.has(word) ? word.toUpperCase() : word))
+      .join(' ')
+      .replace(/^./, (char) => char.toUpperCase())
+    label.textContent = fieldName
     const row = document.createElement('div')
     row.className = 'input-row'
     const input = ['text', 'private_key', 'public_key'].includes(field)
@@ -47,6 +54,12 @@ function initialize(): void {
     input.autocomplete = 'off'
     input.spellcheck = false
     input.required = field === ENTRY_TYPES[type].primary
+    if (!input.required) {
+      const optional = document.createElement('span')
+      optional.className = 'optional'
+      optional.textContent = 'Optional'
+      label.append(optional)
+    }
     if (input instanceof HTMLInputElement) input.type = secret ? 'password' : 'text'
     else if (secret) input.classList.add('concealed')
     inputs.push(input)
@@ -56,14 +69,14 @@ function initialize(): void {
       toggle.type = 'button'
       toggle.className = 'toggle'
       toggle.textContent = 'Show'
-      toggle.setAttribute('aria-label', `Show ${label.textContent.toLowerCase()}`)
+      toggle.setAttribute('aria-label', `Show ${fieldName.toLowerCase()}`)
       toggle.setAttribute('aria-pressed', 'false')
       toggle.addEventListener('click', () => {
         const show = toggle.getAttribute('aria-pressed') !== 'true'
         if (input instanceof HTMLInputElement) input.type = show ? 'text' : 'password'
         else input.classList.toggle('concealed', !show)
         toggle.setAttribute('aria-pressed', String(show))
-        toggle.setAttribute('aria-label', `${show ? 'Hide' : 'Show'} ${label.textContent?.toLowerCase()}`)
+        toggle.setAttribute('aria-label', `${show ? 'Hide' : 'Show'} ${fieldName.toLowerCase()}`)
         toggle.textContent = show ? 'Hide' : 'Show'
       })
       row.append(toggle)
