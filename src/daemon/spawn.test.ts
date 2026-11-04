@@ -19,7 +19,7 @@ mkdirSync(SHORT_TMP, { recursive: true })
 // once, cleans up for a second, marks that it finished, and exits.
 const SLOW_DAEMON = `
 import { join } from 'node:path'
-import { holdLock } from '${LOCK_MODULE}'
+import { holdLock } from ${JSON.stringify(LOCK_MODULE)}
 const run = process.argv[2]
 if (holdLock(join(run, 'daemon.lock')) === undefined) process.exit(2)
 const stop = async () => {
@@ -73,7 +73,7 @@ setInterval(() => {}, 1 << 30)
 // half a second later, as a real one does after opening its vault. It serves until killed.
 const WINNING_DAEMON = `
 import { join } from 'node:path'
-import { holdLock } from '${LOCK_MODULE}'
+import { holdLock } from ${JSON.stringify(LOCK_MODULE)}
 const run = process.argv[2]
 if (holdLock(join(run, 'daemon.lock')) === undefined) process.exit(2)
 await Bun.write(join(run, 'winner.pid'), String(process.pid))
