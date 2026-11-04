@@ -15,6 +15,7 @@ import { type Identity, readIdentity, sealedCopyPath, unlockIdentity } from '../
 import { findLocalVault, globalLayout, type Layout, localLayout } from '../core/layout'
 import { loadState } from '../core/state'
 import { Vault } from '../core/vault'
+import { worktreeVaults } from '../core/worktrees'
 import { callDaemon, isDaemonAlive } from '../daemon/client'
 import { LiveAccess } from '../daemon/live-access'
 import { ensureDaemon, LOCKED_MESSAGE, startSession, stopDaemon } from '../daemon/spawn'
@@ -97,6 +98,28 @@ export async function unlockSession(env: Env, passwords: Passwords, ttlMs: numbe
 const hasSession = async (layout: Layout): Promise<boolean> =>
   existsSync(layout.sessionFile) && (await isDaemonAlive(layout.agentSocket))
 
+/** This vault in the repository's other worktrees, where a session is unlocked: one unlock serves them all. */
+export async function worktreeSessions(layout: Layout, env: Env): Promise<readonly Layout[]> {
+  if (layout.scope !== 'local') return []
+  const sessions: Layout[] = []
+  for (const vault of await worktreeVaults(layout.vault)) {
+    const worktree = localLayout(vault, env)
+    if (await hasSession(worktree)) sessions.push(worktree)
+  }
+  return sessions
+}
+
+/** Starts here the session unlocked in another worktree, if any; that worktree's daemon checks this is one. */
+async function shareWorktreeSession(layout: Layout, env: Env): Promise<boolean> {
+  const [unlocked] = await worktreeSessions(layout, env)
+  if (unlocked === undefined) return false
+  const token = readFileSync(unlocked.sessionFile, 'utf8').trim()
+  await callDaemon(unlocked.agentSocket, '/v1/attach', { vault: layout.vault }, z.object({ ok: z.literal(true) }), {
+    token,
+  })
+  return true
+}
+
 /** After `passwd`, the copy committed in this vault still opens with the old password until it is replaced. */
 function refreshSealedCopy(vault: Vault, identity: Identity & { readonly kind: 'human' }): void {
   const copy = sealedCopyPath(vault.layout, identity.name)
@@ -147,7 +170,7 @@ export async function resolveAccess(env: Env): Promise<ResolvedAccess> {
 async function sessionAccess(env: Env): Promise<LiveAccess> {
   const layout = layoutFrom(env)
   checkOwnerPin(layout, env)
-  if (!(await hasSession(layout))) {
+  if (!(await hasSession(layout)) && !(await shareWorktreeSession(layout, env))) {
     const identity = readIdentity(env)
     if (identity === undefined) {
       throw new TypeVaultError('denied', 'no grant and no identity here (set TYPEVAULT_GRANT, or run typevault join)')
