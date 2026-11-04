@@ -1,5 +1,8 @@
 import { spawn } from 'node:child_process'
-import { dirname } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+
+import { z } from 'zod'
 
 import { machineKeys } from '../access/keys'
 import { encodeSecretKey, type SecretKey } from '../core/crypto'
@@ -34,6 +37,35 @@ export async function startSession(layout: Layout, env: Env, key: SecretKey, ttl
     encodeSecretKey(key),
   )
 }
+
+/**
+ * Stops the daemon and waits until its process has exited. Waiting for the socket to go quiet isn't enough: the
+ * daemon removes its sockets and PID file last, and would delete a replacement's if one started in between.
+ */
+export async function stopDaemon(layout: Layout): Promise<void> {
+  const pidFile = join(layout.run, 'daemon.pid')
+  if (!existsSync(pidFile)) throw new TypeVaultError('not_found', 'no daemon is running')
+  const pid = z.coerce.number().int().parse(readFileSync(pidFile, 'utf8'))
+  if (!isRunning(pid)) return
+  process.kill(pid, 'SIGTERM')
+  const deadline = Date.now() + STOP_TIMEOUT_MS
+  while (isRunning(pid)) {
+    if (Date.now() > deadline) throw new TypeVaultError('unavailable', `the typevault daemon (pid ${pid}) did not stop`)
+    await Bun.sleep(POLL_MS)
+  }
+}
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ESRCH') return false
+    throw error
+  }
+}
+
+const STOP_TIMEOUT_MS = 5_000
 
 async function startBackground(layout: Layout, env: Env, args: readonly string[], stdin?: string): Promise<void> {
   // The child selects the same vault the way the CLI does: a project vault from its directory, the global one by root.
