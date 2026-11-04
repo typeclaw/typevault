@@ -77,11 +77,15 @@ export class SealedAccess implements Access {
   async set(input: SetInput): Promise<EntrySummary> {
     const bundle = this.#live()
     const vault = await this.#vault()
-    const tier = input.tier ?? bundle.scope.tiers[0]
+    const prior = bundle.entries.find((value) => value.name === input.name)
+    const tier = input.tier ?? prior?.tier ?? bundle.scope.tiers[0]
     if (tier === undefined || !allowsEntry([bundle.scope], vault.state, tier, input.name)) {
       throw new TypeVaultError('denied', `this grant cannot write ${input.name} in tier "${tier ?? '?'}"`)
     }
-    const prior = bundle.entries.find((value) => value.name === input.name)
+    // Blind writes can't remove the old copy (that takes reading it), so moving tiers would leave two.
+    if (prior !== undefined && prior.tier !== tier) {
+      throw new TypeVaultError('denied', `${input.name} is in tier "${prior.tier}"; a sealed grant cannot move it`)
+    }
     const { ifRev } = input
     const stored = await vault.put(
       entryInputOf(input, tier),

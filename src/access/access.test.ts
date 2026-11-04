@@ -602,6 +602,39 @@ describe('sealed grants', () => {
     ).rejects.toMatchObject({ code: 'denied' })
   })
 
+  it('never touches an entry outside its tiers through a rewritten bundle id', async () => {
+    // given a holder who points its bundle copy of github/bot at the trusted-tier stripe file
+    const target = (await vault.find(n('stripe')))?.envelope.id ?? ''
+    const bundle = await readSealedGrant(await issue())
+    const entries = bundle.entries.map((entry) => (entry.name === 'github/bot' ? { ...entry, id: target } : entry))
+    const access = new SealedAccess({ ...bundle, entries }, layoutOf(root), {})
+
+    // when it writes and removes through that entry
+    await access.set({ name: n('github/bot'), fields: { password: { type: 'secret' as const, value: 'pwned' } } })
+    await expect(access.remove(n('github/bot'))).rejects.toMatchObject({ code: 'denied' })
+
+    // then stripe is untouched
+    const reopened = await Vault.open(layoutOf(root), [owner], {})
+    expect((await reopened.find(n('stripe')))?.payload.fields['password']?.value).toBe('sk_live_x')
+  })
+
+  it("reports a certificate write planted under another tier's entry id", async () => {
+    const target = (await vault.find(n('stripe')))?.envelope.id ?? ''
+    const payload = (await vault.find(n('github/bot')))?.payload
+    if (payload === undefined) throw new Error('missing github/bot')
+    const forged = await sealEntry(
+      { id: target, tier: 'member', rev: 2, at: new Date().toISOString(), payload },
+      vault.state,
+      await certSigner(60_000),
+    )
+    writeFileSync(join(root, 'vault', 'entries', `${target}.json`), JSON.stringify(forged))
+
+    expect((await vault.scan()).problems).toContainEqual({
+      file: `${target}.json`,
+      reason: 'entry id does not belong to tier "member"',
+    })
+  })
+
   it('honors an expired certificate only when the owner explicitly adopts', async () => {
     const { ref } = await certSigner(-1)
     const at = new Date(Date.parse(ref.cert.exp) - 1_000).toISOString()
