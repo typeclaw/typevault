@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -7,10 +7,11 @@ import { readAudit } from '../audit/log'
 import { Admin } from '../core/admin'
 import { adoptCertWrites } from '../core/adopt'
 import type { SecretKey } from '../core/crypto'
-import { signerAuthority, signerOf } from '../core/entries'
+import { sealEntry, signerAuthority, signerOf } from '../core/entries'
 import { createIdentity } from '../core/identity'
 import { type Founder, founderOf, initVault } from '../core/init'
 import { layoutOf } from '../core/layout'
+import { withLock } from '../core/lock'
 import { parseEntryName, type Field } from '../core/naming'
 import { Vault } from '../core/vault'
 import { envFor, explicitNames, resolveEnvRefs } from './env'
@@ -161,6 +162,29 @@ describe('ScopedVault', () => {
     ).rejects.toMatchObject({
       code: 'denied',
     })
+  })
+
+  it('removes the copy it checked even when a higher-tier copy lands right after the check', async () => {
+    // given a trusted copy of github/bot that another writer plants as soon as the lock is free
+    const checked = await vault.find(n('github/bot'))
+    if (checked === undefined) throw new Error('no github/bot')
+    const planted = await sealEntry(
+      { id: 'e'.repeat(32), tier: 'trusted', rev: 1, at: checked.envelope.at, payload: checked.payload },
+      vault.state,
+      signerOf(owner),
+    )
+    const plantedFile = join(vault.layout.entries, `${planted.id}.json`)
+
+    // when a member grant removes github/bot while that write is queued
+    const removed = member().remove(n('github/bot'))
+    const plant = withLock(vault.layout.lockFile, 'exclusive', async () =>
+      writeFileSync(plantedFile, JSON.stringify(planted)),
+    )
+    await Promise.all([removed, plant])
+
+    // then the member copy is gone and the trusted copy the grant cannot reach survives
+    expect(existsSync(join(vault.layout.entries, `${checked.envelope.id}.json`))).toBe(false)
+    expect(existsSync(plantedFile)).toBe(true)
   })
 
   it('uses the entry name for $default and applies its trusted env override', async () => {
