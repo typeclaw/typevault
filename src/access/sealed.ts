@@ -58,7 +58,13 @@ export async function issueSealedGrant(vault: Vault, request: SealedRequest): Pr
   const exp = new Date(Date.now() + request.ttlMs).toISOString()
   const signing = generateSigningKey()
   const cert = issueCert(
-    { signPublic: signing.signPublic, tiers: [...request.tiers], only: [...request.only], exp },
+    {
+      signPublic: signing.signPublic,
+      tiers: [...request.tiers],
+      only: [...request.only],
+      ids: granted.map((value) => value.id),
+      exp,
+    },
     signerOf(issuer),
   )
   const bundle = { v: 1, id, label: request.label, tiers: request.tiers, only: request.only, exp, entries: granted }

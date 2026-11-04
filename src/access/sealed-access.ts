@@ -107,7 +107,8 @@ export class SealedAccess implements Access {
   /**
    * The bundle is holder-editable (whoever holds the grant can re-seal it), so only the issuer-signed
    * certificate bounds what may be deleted: its tiers, `--only` and expiry, checked against the file on disk.
-   * The entry must still be the revision this grant carried, or one this grant's certificate wrote since.
+   * The entry must still be the revision this grant carried (of an id its certificate lists), or one this grant's
+   * certificate wrote since.
    */
   async remove(name: EntryName, _tier?: string): Promise<void> {
     const entry = this.#entry(name)
@@ -117,7 +118,7 @@ export class SealedAccess implements Access {
       entry.id,
       (envelope) =>
         envelope.tier === entry.tier &&
-        (envelope.rev === entry.rev ||
+        ((cert.ids.includes(envelope.id) && envelope.rev === entry.rev) ||
           (envelope.signer.kind === 'cert' && envelope.signer.cert.signPublic === cert.signPublic)) &&
         allowsEntry([{ tiers: cert.tiers, only: cert.only }], vault.state, envelope.tier, name) &&
         signerAuthority({ kind: 'cert', cert }, envelope.tier, vault.state, new Date().toISOString()) !== undefined,

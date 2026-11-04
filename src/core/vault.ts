@@ -10,7 +10,9 @@ import {
   openEntry,
   sealEntry,
   signCiphertext,
+  certEntryId,
   type SignerContext,
+  type SignerRef,
   verifyEnvelope,
 } from './entries'
 import { TypeVaultError } from './errors'
@@ -224,7 +226,8 @@ export class Vault {
       ...(input.origin === undefined ? {} : { origin: input.origin }),
       ...(changed || found?.payload.needsRotation !== true ? {} : { needsRotation: true }),
     }
-    const draft = { id: entryIdIn(input.tier, prior?.id), tier: input.tier, rev: currentRev + 1, at: now, payload }
+    const id = entryIdIn(signer.ref, input.tier, input.name, prior?.id)
+    const draft = { id, tier: input.tier, rev: currentRev + 1, at: now, payload }
     return { envelope: await sealEntry(draft, this.#state, signer), payload }
   }
 
@@ -240,7 +243,10 @@ export class Vault {
         join(this.layout.entries, `${stored.envelope.id}.json`),
         `${JSON.stringify(stored.envelope, null, 2)}\n`,
       )
-      if (found !== undefined && found.envelope.id !== stored.envelope.id) this.#unlink(found.envelope.id)
+      // A certificate may only replace the files it was issued with, never delete another one.
+      if (found !== undefined && found.envelope.id !== stored.envelope.id && signer.ref.kind !== 'cert') {
+        this.#unlink(found.envelope.id)
+      }
       return stored
     })
   }
@@ -260,9 +266,10 @@ export class Vault {
           this.#state.tiers,
           entries.filter((entry) => entry.payload.name === input.name),
         )
-        const entry = await this.#draft(input, found, {}, await signerFor(input.tier))
+        const signer = await signerFor(input.tier)
+        const entry = await this.#draft(input, found, {}, signer)
         txn.put(`entries/${entry.envelope.id}.json`, `${JSON.stringify(entry.envelope, null, 2)}\n`)
-        if (found !== undefined && found.envelope.id !== entry.envelope.id) {
+        if (found !== undefined && found.envelope.id !== entry.envelope.id && signer.ref.kind !== 'cert') {
           txn.remove(`entries/${found.envelope.id}.json`)
           retiered.push(found.envelope.id)
         }
@@ -293,10 +300,13 @@ export class Vault {
   putCiphertext(name: EntryName, tier: string, ciphertext: Uint8Array, signer: SignerContext): Promise<Envelope> {
     return withLock(this.layout.lockFile, 'exclusive', async () => {
       const existing = await this.find(name)
-      const draft = { id: entryIdIn(tier, existing?.envelope.id), tier, rev: (existing?.envelope.rev ?? 0) + 1 }
+      const id = entryIdIn(signer.ref, tier, name, existing?.envelope.id)
+      const draft = { id, tier, rev: (existing?.envelope.rev ?? 0) + 1 }
       const envelope = signCiphertext({ ...draft, at: new Date().toISOString() }, ciphertext, this.#state, signer)
       atomicWrite(join(this.layout.entries, `${envelope.id}.json`), `${JSON.stringify(envelope, null, 2)}\n`)
-      if (existing !== undefined && existing.envelope.id !== envelope.id) this.#unlink(existing.envelope.id)
+      if (existing !== undefined && existing.envelope.id !== envelope.id && signer.ref.kind !== 'cert') {
+        this.#unlink(existing.envelope.id)
+      }
       return envelope
     })
   }
@@ -340,6 +350,12 @@ export class Vault {
   }
 }
 
-/** An entry keeps its id only within its tier: the id names the tier (see `verifyEnvelope`), so a retier mints a new one. */
-const entryIdIn = (tier: string, current: string | undefined): string =>
-  current?.startsWith(`${tier}.`) === true ? current : `${tier}.${randomHex(16)}`
+/**
+ * An entry keeps its id only within its tier: the id names the tier (see `verifyEnvelope`), so a retier mints a new one.
+ * A certificate keeps only an id it was issued with; a blind writer's `current` comes from a holder-editable bundle.
+ */
+const entryIdIn = (signer: SignerRef, tier: string, name: string, current: string | undefined): string => {
+  const kept = current?.startsWith(`${tier}.`) === true ? current : undefined
+  if (signer.kind !== 'cert') return kept ?? `${tier}.${randomHex(16)}`
+  return kept !== undefined && signer.cert.ids.includes(kept) ? kept : certEntryId(signer.cert, tier, name)
+}
