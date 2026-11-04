@@ -200,6 +200,43 @@ describe('unlocked session', () => {
     daemon = await startDaemon({ layout, env, keys: [owner] })
     await expect(new LiveAccess(layout.agentSocket, token).list()).rejects.toMatchObject({ code: 'denied' })
   })
+
+  it('stays out of reach of a ceiling named "session"', async () => {
+    // given an owner-signed ceiling named "session", and a daemon started as an unlocked session
+    await daemon.stop()
+    await new Admin(await Vault.open(layout, [owner], {})).setCeiling('session', 'member')
+    daemon = await startDaemon({
+      layout,
+      env: { TYPEVAULT_DIR: layout.root },
+      keys: [owner],
+      session: { ttlMs: 60_000 },
+    })
+    const token = readFileSync(layout.sessionFile, 'utf8')
+    const socket = layout.adminSocket('session')
+
+    // when that ceiling's socket lists grants and revokes the session by label
+    const listed = await callDaemon(socket, '/v1/grants', {}, z.array(z.json()))
+    await callDaemon(socket, '/v1/revoke', { label: 'session' }, z.json())
+
+    // then it saw nothing, and the session still reads
+    expect(listed).toEqual([])
+    expect((await new LiveAccess(layout.agentSocket, token).list()).length).toBe(3)
+  })
+
+  it('treats grants from a ceiling named "session" as ordinary grants', async () => {
+    // given a ceiling named "session" over trusted, and a grant it issued for trusted
+    await daemon.stop()
+    await new Admin(await Vault.open(layout, [owner], {})).setCeiling('session', 'trusted')
+    daemon = await startDaemon({ layout, env: { TYPEVAULT_DIR: layout.root }, keys: [owner] })
+    const access = new LiveAccess(layout.agentSocket, (await grant('session', { tiers: ['trusted'] })).token)
+
+    // when it writes without naming a tier
+    const written = await access.set({ name: n('resend'), fields: { key: { type: 'secret', value: 're_x' } } })
+
+    // then it owns only trusted, and the write lands there
+    expect(await access.ownTiers()).toEqual(['trusted'])
+    expect(written.tier).toBe('trusted')
+  })
 })
 
 describe('daemon lock', () => {
