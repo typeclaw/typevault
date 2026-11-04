@@ -135,3 +135,29 @@ it.each([
   expect({ code: run.code, refused: run.stderr.includes('is a symlink') }).toEqual({ code: 1, refused: true })
   expect(readFileSync(outside, 'utf8')).toBe('keep me')
 })
+
+it('replaces a daemon that holds no session when its owner unlocks', async () => {
+  // given a daemon for this checkout that holds no session: here a machine member's, started without a password
+  const machine = { PATH: owner['PATH'] ?? '', XDG_CONFIG_HOME: join(base, 'ci') }
+  const joined = succeeds(await cli(['join', '--machine', '--name', 'ci'], machine))
+  const publicKey = joined.stdout.split(' ').find((word) => word.startsWith('tvp1:')) ?? ''
+  succeeds(
+    await cli(
+      ['member', 'add', 'ci', publicKey, '--tier', 'default', '--vault-password-stdin'],
+      owner,
+      `${PASSWORD}\n`,
+    ),
+  )
+  succeeds(await cli(['ceiling', 'set', 'bot', 'default', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
+  const { key } = JSON.parse(readFileSync(join(base, 'ci', 'typevault', 'identity.json'), 'utf8'))
+  succeeds(await cli(['daemon', 'start'], { ...owner, TYPEVAULT_KEY: key }))
+  expect((await cli(['ls'], owner)).stderr).toContain('the vault is locked')
+
+  // when the owner unlocks
+  const unlocked = succeeds(await cli(['unlock', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
+
+  // then the session replaced that daemon, and the owner's commands go through it
+  expect(unlocked.stdout).toContain('unlocked vault')
+  succeeds(await cli(['set', 'tv://openai', '--type', 'api_key', '--stdin'], owner, 'sk-test-1'))
+  expect(JSON.parse(succeeds(await cli(['ls', '--json'], owner)).stdout)).toMatchObject([{ name: 'openai' }])
+}, 30_000)

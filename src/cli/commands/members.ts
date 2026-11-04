@@ -21,12 +21,12 @@ import {
 } from '../../core/identity'
 import { vaultIdOf } from '../../core/layout'
 import { Vault } from '../../core/vault'
+import { stopDaemon } from '../../daemon/spawn'
 import { export1Password, identityTitle } from '../../export/1password'
 import { ONEPASSWORD_VIAS } from '../../import/1password-live'
 import { DEFAULT_SESSION_MS, findLayout, layoutFrom, openAdmin, openPublic, unlockSession, type Env } from '../context'
 import { csv, note, print, table } from '../output'
 import { newPassword, passwords } from '../password'
-import { stopDaemon } from './daemon'
 
 export const identityArgs = {
   name: { type: 'string', description: 'Your member name, the first time (default: your OS user name)' },

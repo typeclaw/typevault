@@ -16,7 +16,7 @@ import { findLocalVault, type Layout, layoutOf, localLayout, resolveRoot } from 
 import { Vault } from '../core/vault'
 import { callDaemon, isDaemonAlive } from '../daemon/client'
 import { LiveAccess } from '../daemon/live-access'
-import { ensureDaemon, LOCKED_MESSAGE, startSession } from '../daemon/spawn'
+import { ensureDaemon, LOCKED_MESSAGE, startSession, stopDaemon } from '../daemon/spawn'
 import { note } from './output'
 import { type Passwords, passwords, passwordsFromStdin } from './password'
 
@@ -68,11 +68,11 @@ async function unlockHuman(identity: Identity | undefined, passwords: Passwords)
 
 /**
  * Unlocks a human member's session: their key goes to a daemon that holds it for `ttlMs`, and this user's CLI
- * reads through the session grant it writes. Returns false when a session (or a machine daemon) already runs.
+ * reads through the session grant it writes. Returns false when a session already runs.
  */
 export async function unlockSession(env: Env, passwords: Passwords, ttlMs: number): Promise<boolean> {
   const layout = layoutFrom(env)
-  if (await isDaemonAlive(layout.agentSocket)) return false
+  if (await hasSession(layout)) return false
   const identity = readIdentity(env)
   const key = await unlockHuman(identity, passwords)
   const vault = await Vault.open(layout, [key], env)
@@ -83,9 +83,18 @@ export async function unlockSession(env: Env, passwords: Passwords, ttlMs: numbe
     )
   }
   if (identity?.kind === 'human') refreshSealedCopy(vault, identity)
+  // A daemon without a session (a machine member's, or one left from before the vault was re-created) holds no key
+  // of this person's, so it can't serve them: the session replaces it.
+  if (await isDaemonAlive(layout.agentSocket)) {
+    await stopDaemon(layout)
+    note('replaced a running daemon that held no unlocked session')
+  }
   await startSession(layout, env, key, ttlMs)
   return true
 }
+
+const hasSession = async (layout: Layout): Promise<boolean> =>
+  existsSync(layout.sessionFile) && (await isDaemonAlive(layout.agentSocket))
 
 /** After `passwd`, the copy committed in this vault still opens with the old password until it is replaced. */
 function refreshSealedCopy(vault: Vault, identity: Identity & { readonly kind: 'human' }): void {
@@ -135,7 +144,7 @@ export async function resolveAccess(env: Env): Promise<ResolvedAccess> {
  */
 async function sessionAccess(env: Env): Promise<LiveAccess> {
   const layout = layoutFrom(env)
-  if (!(await isDaemonAlive(layout.agentSocket))) {
+  if (!(await hasSession(layout))) {
     const identity = readIdentity(env)
     if (identity === undefined) {
       throw new TypeVaultError('denied', 'no grant and no identity here (set TYPEVAULT_GRANT, or run typevault join)')
@@ -144,7 +153,6 @@ async function sessionAccess(env: Env): Promise<LiveAccess> {
     if (identity.kind !== 'human' || !canAsk) throw new TypeVaultError('locked', LOCKED_MESSAGE)
     await unlockSession(env, passwords(), DEFAULT_SESSION_MS)
   }
-  if (!existsSync(layout.sessionFile)) throw new TypeVaultError('locked', LOCKED_MESSAGE)
   return new LiveAccess(layout.agentSocket, readFileSync(layout.sessionFile, 'utf8').trim())
 }
 

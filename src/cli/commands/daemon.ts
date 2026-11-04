@@ -1,30 +1,14 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
-
 import { defineCommand } from 'citty'
 import { z } from 'zod'
 
 import { machineKeys } from '../../access/keys'
 import { parseTtl } from '../../access/scope'
 import { decodeSecretKey } from '../../core/crypto'
-import { TypeVaultError } from '../../core/errors'
-import type { Layout } from '../../core/layout'
 import { isDaemonAlive } from '../../daemon/client'
 import { startDaemon } from '../../daemon/daemon'
-import { ensureDaemon } from '../../daemon/spawn'
+import { ensureDaemon, stopDaemon } from '../../daemon/spawn'
 import { adminCall, DEFAULT_SESSION_MS, layoutFrom } from '../context'
 import { note, print, readStdin } from '../output'
-
-/** Stops the daemon and waits until it is gone, so a following command sees the vault locked. */
-export async function stopDaemon(layout: Layout): Promise<void> {
-  const pidFile = join(layout.run, 'daemon.pid')
-  if (!existsSync(pidFile)) throw new TypeVaultError('not_found', 'no daemon is running')
-  process.kill(z.coerce.number().int().parse(readFileSync(pidFile, 'utf8')), 'SIGTERM')
-  const deadline = Date.now() + STOP_TIMEOUT_MS
-  while (Date.now() < deadline && (await isDaemonAlive(layout.agentSocket))) await Bun.sleep(50)
-}
-
-const STOP_TIMEOUT_MS = 5_000
 
 const port = (value: string | undefined): number | undefined =>
   value === undefined || value === '' ? undefined : z.coerce.number().int().parse(value)
