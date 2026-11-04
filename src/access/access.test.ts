@@ -9,6 +9,7 @@ import { adoptCertWrites } from '../core/adopt'
 import type { SecretKey } from '../core/crypto'
 import { fromBase64 } from '../core/encoding'
 import { sealEntry, signCiphertext, signerAuthority, signerOf } from '../core/entries'
+import { TypeVaultError } from '../core/errors'
 import { createIdentity } from '../core/identity'
 import { type Founder, founderOf, initVault } from '../core/init'
 import { layoutOf } from '../core/layout'
@@ -570,11 +571,24 @@ describe('sealed grants', () => {
     expect(await vault.find(n('github/bot'))).toBeDefined()
   })
 
-  it('refuses to remove an entry renamed out of its --only since the grant was issued', async () => {
-    const access = new SealedAccess(await readSealedGrant(await issue()), layoutOf(root), {})
-    await vault.move(n('github/bot'), n('aws/bot'), signerOf(owner))
-    await expect(access.remove(n('github/bot'))).rejects.toMatchObject({ code: 'denied' })
-    expect(await vault.find(n('aws/bot'))).toBeDefined()
+  it('never touches an entry renamed out of its --only since the grant was issued', async () => {
+    // given a grant issued for github/bot, which the owner then renames to aws/bot
+    const bundle = await readSealedGrant(await issue())
+    const moved = await vault.move(n('github/bot'), n('aws/bot'), signerOf(owner))
+
+    // when the holder, its bundle revision rewritten to the renamed file's, removes and then rewrites github/bot
+    for (const id of [bundle.entries.find((entry) => entry.name === 'github/bot')?.id, moved.envelope.id]) {
+      const entries = bundle.entries.map((entry) =>
+        entry.name === 'github/bot' ? { ...entry, id: id ?? '', rev: moved.envelope.rev } : entry,
+      )
+      const access = new SealedAccess({ ...bundle, entries }, layoutOf(root), {})
+      await expect(access.remove(n('github/bot'))).rejects.toBeInstanceOf(TypeVaultError)
+      await access.set({ name: n('github/bot'), fields: { password: { type: 'secret' as const, value: 'pwned' } } })
+    }
+
+    // then aws/bot keeps its value
+    const reopened = await Vault.open(layoutOf(root), [owner], {})
+    expect((await reopened.find(n('aws/bot')))?.payload.fields['password']?.value).toBe('hunter2-bot')
   })
 
   const certSigner = async (ttlMs: number) => {

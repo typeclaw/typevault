@@ -342,9 +342,12 @@ export class Vault {
       if (existing === undefined) throw new TypeVaultError('not_found', `no entry named ${from}`)
       if ((await this.find(to)) !== undefined) throw new TypeVaultError('conflict', `${to} already exists`)
       const payload = { ...existing.payload, name: to }
-      const draft = { id: existing.envelope.id, tier: existing.envelope.tier, rev: existing.envelope.rev + 1 }
+      const { tier } = existing.envelope
+      // A fresh id: a grant issued for the old name lists the old one, and must not follow the entry to its new name.
+      const draft = { id: entryIdIn(signer.ref, tier, to, undefined), tier, rev: existing.envelope.rev + 1 }
       const envelope = await sealEntry({ ...draft, at: new Date().toISOString(), payload }, this.#state, signer)
       atomicWrite(join(this.layout.entries, `${envelope.id}.json`), `${JSON.stringify(envelope, null, 2)}\n`)
+      this.#unlink(existing.envelope.id)
       return { envelope, payload }
     })
   }
