@@ -80,6 +80,41 @@ describe('live grants', () => {
     await expect(grant('bot', { tiers: ['trusted'] })).rejects.toMatchObject({ code: 'denied' })
   })
 
+  it('holds a running socket to its ceiling as the owner lowers or removes it', async () => {
+    // given the bot socket already serving under a `member` ceiling
+    expect((await grant('bot', { tiers: ['member'] })).token).toBeString()
+    const admin = new Admin(await Vault.open(layout, [owner], {}))
+
+    // when the owner lowers it to a tier below `member`
+    await admin.addTier('guest')
+    await admin.setCeiling('bot', 'guest')
+
+    // then the socket refuses `member` but grants `guest`
+    await expect(grant('bot', { tiers: ['member'] })).rejects.toMatchObject({ code: 'denied' })
+    expect((await grant('bot', { tiers: ['guest'] })).token).toBeString()
+
+    // and once the ceiling is removed, it grants nothing
+    await admin.removeCeiling('bot')
+    await expect(grant('bot', { tiers: ['guest'] })).rejects.toMatchObject({ code: 'denied' })
+  })
+
+  it('caps the owner socket while the owner signs a default ceiling, and uncaps it once removed', async () => {
+    // given the uncapped owner socket, and the owner signing a `member` ceiling for it while running
+    const admin = new Admin(await Vault.open(layout, [owner], {}))
+    await admin.setCeiling('default', 'member')
+
+    // then it refuses `trusted` and the audit trail
+    await expect(grant('default', { tiers: ['trusted'] })).rejects.toMatchObject({ code: 'denied' })
+    await expect(callDaemon(layout.adminSocket('default'), '/v1/audit', {}, z.json())).rejects.toMatchObject({
+      code: 'denied',
+    })
+
+    // and once the ceiling is removed, it is uncapped again
+    await admin.removeCeiling('default')
+    expect((await grant('default', { tiers: ['trusted'] })).token).toBeString()
+    expect(await callDaemon(layout.adminSocket('default'), '/v1/audit', {}, z.array(z.json()))).toBeArray()
+  })
+
   it('narrows a derived grant and revokes it with its parent', async () => {
     const { token } = await grant('default', { tiers: ['member'], label: 'agent:a' })
     const parent = new LiveAccess(layout.agentSocket, token)
