@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, parse } from 'node:path'
 
 import { z } from 'zod'
 
@@ -19,6 +20,11 @@ import { callDaemon } from './client'
 import { type RunningDaemon, startDaemon } from './daemon'
 import { LiveAccess } from './live-access'
 
+// Unix socket paths are limited to ~104 bytes (108 on Windows), too short under the default temp dir on macOS and
+// Windows CI runners.
+const SHORT_TMP = process.platform === 'win32' ? join(parse(tmpdir()).root, 'tmp') : '/tmp'
+mkdirSync(SHORT_TMP, { recursive: true })
+
 const machineFounder = async (): Promise<Founder> => founderOf((await createIdentity('owner', 'machine')).identity)
 
 let base: string
@@ -33,8 +39,7 @@ const grant = (socket: string, body: Record<string, unknown>) =>
   callDaemon(layout.adminSocket(socket), '/v1/grant', body, Token)
 
 beforeEach(async () => {
-  // Short root: unix socket paths are limited to ~104 bytes.
-  base = mkdtempSync('/tmp/tvd-')
+  base = mkdtempSync(join(SHORT_TMP, 'tvd-'))
   env = { TYPEVAULT_DIR: join(base, 'vault'), XDG_CONFIG_HOME: base }
   layout = globalLayout(env)
   owner = (await initGlobalVault(await machineFounder(), env)).owner

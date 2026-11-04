@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, setSystemTime } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { join, parse } from 'node:path'
 
 import { issueSealedGrant, readSealedGrant, sealedSigningSecret } from '../../access/sealed'
 import { Admin } from '../../core/admin'
@@ -11,6 +12,11 @@ import { parseEntryName } from '../../core/naming'
 import { Vault } from '../../core/vault'
 
 const envIn = (dir: string) => ({ TYPEVAULT_DIR: join(dir, 'vault'), XDG_CONFIG_HOME: dir })
+
+// Unix socket paths are limited to ~104 bytes (108 on Windows), too short under the default temp dir on macOS and
+// Windows CI runners.
+const SHORT_TMP = process.platform === 'win32' ? join(parse(tmpdir()).root, 'tmp') : '/tmp'
+mkdirSync(SHORT_TMP, { recursive: true })
 
 const CLI = join(import.meta.dir, '..', 'index.ts')
 const PASSWORD = 'correct horse battery staple'
@@ -43,8 +49,7 @@ const succeeds = (run: Run): Run => {
 }
 
 beforeEach(async () => {
-  // Short root: the daemon's unix socket path is limited to ~104 bytes.
-  base = realpathSync(mkdtempSync('/tmp/tvc-'))
+  base = realpathSync(mkdtempSync(join(SHORT_TMP, 'tvc-')))
   project = join(base, 'p')
   mkdirSync(project)
   owner = { PATH: process.env['PATH'] ?? '', XDG_CONFIG_HOME: join(base, 'alice') }

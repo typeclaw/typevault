@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { join, parse } from 'node:path'
 
 import { z } from 'zod'
 
@@ -18,12 +19,16 @@ import { type Layout, localLayout } from './layout'
 import { parseEntryName } from './naming'
 import { Vault } from './vault'
 
+// Unix socket paths are limited to ~104 bytes (108 on Windows), too short under the default temp dir on macOS and
+// Windows CI runners.
+const SHORT_TMP = process.platform === 'win32' ? join(parse(tmpdir()).root, 'tmp') : '/tmp'
+mkdirSync(SHORT_TMP, { recursive: true })
+
 let base: string
 let env: Record<string, string>
 
 beforeEach(() => {
-  // Short root: unix socket paths are limited to ~104 bytes.
-  base = mkdtempSync('/tmp/tvl-')
+  base = mkdtempSync(join(SHORT_TMP, 'tvl-'))
   env = { XDG_CONFIG_HOME: join(base, 'c') }
 })
 afterEach(() => rmSync(base, { recursive: true, force: true }))

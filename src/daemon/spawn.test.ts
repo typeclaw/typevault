@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { join, parse } from 'node:path'
 
 import type { Subprocess } from 'bun'
 
@@ -8,6 +9,11 @@ import { globalLayout, type Layout } from '../core/layout'
 import { startBackground, stopDaemon } from './spawn'
 
 const LOCK_MODULE = join(import.meta.dir, '..', 'core', 'lock.ts')
+
+// Unix socket paths are limited to ~104 bytes (108 on Windows), too short under the default temp dir on macOS and
+// Windows CI runners.
+const SHORT_TMP = process.platform === 'win32' ? join(parse(tmpdir()).root, 'tmp') : '/tmp'
+mkdirSync(SHORT_TMP, { recursive: true })
 
 // Stands in for a daemon whose cleanup is slow. Like a real one it holds run/daemon.lock for its whole life and
 // answers pings with its PID; on SIGTERM it stops answering at once, cleans up for a second, marks that it finished,
@@ -76,8 +82,7 @@ let layout: Layout
 let standIns: Subprocess[] = []
 
 beforeEach(() => {
-  // Short root: unix socket paths are limited to ~104 bytes.
-  root = mkdtempSync('/tmp/tvp-')
+  root = mkdtempSync(join(SHORT_TMP, 'tvp-'))
   layout = globalLayout({ TYPEVAULT_DIR: join(root, 'vault'), XDG_CONFIG_HOME: root })
   mkdirSync(layout.run, { recursive: true })
 })
