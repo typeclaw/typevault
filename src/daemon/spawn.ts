@@ -9,6 +9,7 @@ import { machineKeys } from '../access/keys'
 import { encodeSecretKey, type SecretKey } from '../core/crypto'
 import { TypeVaultError } from '../core/errors'
 import { ensureDir } from '../core/fsx'
+import { refuseForeignDaemon } from '../core/holder'
 import { configDir, type Layout } from '../core/layout'
 import { isLockHeld } from '../core/lock'
 import { callDaemon, isDaemonAlive, servingPid } from './client'
@@ -28,6 +29,7 @@ export const LOCKED_MESSAGE = 'the vault is locked: ask a human to run `typevaul
 export async function ensureDaemon(layout: Layout, env: Env): Promise<void> {
   if (await isDaemonAlive(layout.agentSocket)) return
   if (machineKeys(env).length === 0) throw new TypeVaultError('locked', LOCKED_MESSAGE)
+  refuseForeignDaemon(layout, env)
   await startBackground(layout, env, [process.execPath, CLI, 'daemon', 'run'])
 }
 
@@ -118,6 +120,8 @@ async function tellToStop(layout: Layout, pid: number): Promise<void> {
 
 const STOP_TIMEOUT_MS = 5_000
 
+const isSet = (value: string | undefined): boolean => value !== undefined && value !== ''
+
 /**
  * Runs `command` detached as this checkout's daemon and waits until the agent socket answers. Exported for tests,
  * which stand in their own daemon.
@@ -134,7 +138,13 @@ export async function startBackground(
   const log = openSync(logPath, 'w', 0o600)
   // The child selects the same vault the way the CLI does: a project vault from its directory, the global one by path.
   // Its private state is where this process resolved it: `env` may lack the HOME this process fell back to.
-  const childEnv = { ...env, XDG_CONFIG_HOME: dirname(configDir(env)) }
+  // An explicit state or run directory may be relative to this process's directory, which the child doesn't share.
+  const childEnv = {
+    ...env,
+    XDG_CONFIG_HOME: dirname(configDir(env)),
+    ...(isSet(env['TYPEVAULT_STATE_DIR']) ? { TYPEVAULT_STATE_DIR: layout.root } : {}),
+    ...(isSet(env['TYPEVAULT_RUN_DIR']) ? { TYPEVAULT_RUN_DIR: layout.sockets } : {}),
+  }
   const [executable = process.execPath, ...args] = command
   const child = spawn(executable, args, {
     detached: true,

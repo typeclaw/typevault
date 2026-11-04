@@ -1,0 +1,84 @@
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+
+import { z } from 'zod'
+
+import { randomHex } from './crypto'
+import { TypeVaultError } from './errors'
+import { hostId, type Layout } from './layout'
+
+type Env = Readonly<Record<string, string | undefined>>
+
+const CLAIM_ATTEMPTS = 3
+
+const HolderSchema = z.object({ host: z.string(), pid: z.number().int(), token: z.string(), at: z.string() })
+type Holder = z.infer<typeof HolderSchema>
+
+export type DaemonClaim = {
+  readonly release: () => void
+  readonly owns: () => boolean
+}
+
+/**
+ * flock does not cross machines (a bind mount between macOS and a Linux VM, say), so whoever runs a daemon (or
+ * re-initializes the vault) also claims the state directory in `daemon.holder`, created exclusively. An opener on the
+ * same machine trusts the flock; one on another machine refuses while any claim from another host is there. Another
+ * machine's claim is never taken over: nothing here can tell a crashed daemon from a paused one, so a claim left by a
+ * crash stays until someone who knows that daemon is gone deletes it.
+ */
+export function refuseForeignDaemon(layout: Layout, env: Env): void {
+  const holder = readHolder(layout)
+  if (holder !== undefined && holder.host !== hostId(env)) throw inUse(layout, holder)
+}
+
+/**
+ * Claims the state directory for this process until `release`. The caller must hold `daemonLock`, so a claim this
+ * machine left behind belongs to a daemon that is gone, and is replaced. Another machine's claim fails with `in_use`.
+ */
+export function claimDaemon(layout: Layout, env: Env): DaemonClaim {
+  const token = randomHex(8)
+  const record = JSON.stringify({ host: hostId(env), pid: process.pid, token, at: new Date().toISOString() })
+  for (let attempt = 0; ; attempt++) {
+    try {
+      writeFileSync(layout.daemonHolder, record, { flag: 'wx', mode: 0o600 })
+      break
+    } catch (error) {
+      if (!isCode(error, 'EEXIST')) throw error
+    }
+    const holder = readHolder(layout)
+    if (holder !== undefined && holder.host !== hostId(env)) throw inUse(layout, holder)
+    if (attempt + 1 >= CLAIM_ATTEMPTS) {
+      throw new TypeVaultError('in_use', `could not claim ${layout.root}: another process keeps claiming it`)
+    }
+    if (holder !== undefined) rmSync(layout.daemonHolder, { force: true })
+  }
+  const owns = (): boolean => readHolder(layout)?.token === token
+  return {
+    owns,
+    release: () => {
+      if (owns()) rmSync(layout.daemonHolder, { force: true })
+    },
+  }
+}
+
+function readHolder(layout: Layout): Holder | undefined {
+  if (!existsSync(layout.daemonHolder)) return undefined
+  let text: string
+  try {
+    text = readFileSync(layout.daemonHolder, 'utf8')
+  } catch (error) {
+    if (isCode(error, 'ENOENT')) return undefined
+    throw error
+  }
+  const parsed = HolderSchema.safeParse(JSON.parse(text))
+  if (!parsed.success) throw new TypeVaultError('tampered', `${layout.daemonHolder} is malformed`)
+  return parsed.data
+}
+
+const inUse = (layout: Layout, holder: Holder): TypeVaultError =>
+  new TypeVaultError(
+    'in_use',
+    `a typevault daemon on another machine (${holder.host}, pid ${holder.pid}, since ${holder.at}) is using ${layout.root}; one machine at a time may use a state directory (if that daemon is gone for good, delete ${layout.daemonHolder})`,
+  )
+
+const isCode = (error: unknown, code: string): boolean =>
+  error instanceof Error && 'code' in error && error.code === code

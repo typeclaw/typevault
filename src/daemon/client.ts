@@ -12,6 +12,9 @@ const CODES: readonly ErrorCode[] = [
   'expired',
   'locked',
   'unavailable',
+  'in_use',
+  'no_vault',
+  'not_member',
 ]
 const toCode = (code: string): ErrorCode => CODES.find((known) => known === code) ?? 'unavailable'
 

@@ -27,6 +27,10 @@ export type ClientOptions = {
   readonly global?: boolean
   /** Without a grant, open the vault with this machine's own keys (owner, issuers). Off by default. */
   readonly direct?: boolean
+  /** The vault's private state (trust pin, audit, run). Defaults to `TYPEVAULT_STATE_DIR`, else this user's config. */
+  readonly stateDir?: string
+  /** Where the daemon's sockets live, for a `stateDir` too deep for one. Defaults to `TYPEVAULT_RUN_DIR`. */
+  readonly runDir?: string
   /** Where the defaults above are read from. Defaults to `process.env`. */
   readonly env?: Env
 }
@@ -47,6 +51,8 @@ export async function createClient(options: ClientOptions = {}): Promise<Access>
     TYPEVAULT_GRANT: grant,
     ...(options.dir === undefined ? {} : { TYPEVAULT_DIR: options.dir }),
     ...(options.global === undefined ? {} : { TYPEVAULT_GLOBAL: options.global ? '1' : '' }),
+    ...(options.stateDir === undefined ? {} : { TYPEVAULT_STATE_DIR: options.stateDir }),
+    ...(options.runDir === undefined ? {} : { TYPEVAULT_RUN_DIR: options.runDir }),
   }
   return (await resolveAccess(env)).access
 }

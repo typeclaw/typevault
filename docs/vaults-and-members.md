@@ -18,12 +18,32 @@ vault, even from a directory inside your home.
 
 A project vault holds only ciphertext, wrapped keys and signed manifests, so commit `.typevault/` as is. Each checkout
 keeps its own trust pin, audit log and daemon under `~/.config/typevault/checkouts/<id>/`, keyed by the checkout's
-path. A collaborator gets access by joining as a member, or with a grant, as with the global vault. The global vault is laid
+path, unless you choose the directory (below). A collaborator gets access by joining as a member, or with a grant, as with the global vault. The global vault is laid
 out the same way, so `~/.typevault` can be a git repository of its own, synced between your devices.
 
 To start over, delete `.typevault/` and run `typevault init` again. `init` stops this checkout's daemon and clears its
 runtime state (grants, session, revision marks), which belonged to the old vault, and pins the new owner key. The pin
 stays keyed by path, so a vault whose `owner.json` is swapped through git is still refused: only `init` re-pins.
+
+### Private state in a directory you choose
+
+`TYPEVAULT_STATE_DIR` (SDK: `stateDir`) puts a vault's private state (trust pin, audit log, `run/`) in that directory
+instead of `checkouts/<id>/`. Every opener given the same state directory acts as one checkout, whatever path or home it
+reaches the vault through, so a folder carrying both the vault and its state can move or be mounted elsewhere and keep
+its trust pin, rollback protection and audit chain. Its audit anchors are named by the vault's owner key, not by host or path, so a
+deleted audit log still fails against them. Give each vault its own state directory, and keep it out of git's reach as you would
+`~/.config`.
+
+A deep state directory can push socket paths past the AF_UNIX limit (about 104 bytes on macOS, 108 on Linux):
+`TYPEVAULT_RUN_DIR` (SDK: `runDir`) moves the daemon's sockets to a short directory of their own, one per vault.
+
+One machine at a time may use a state directory. Its locks hold only within one machine (flock does not cross a bind
+mount between macOS and a Linux VM), so a daemon also claims the directory in `run/daemon.holder` (its host, pid and
+start time) for as long as it runs. A direct open or a daemon on another machine fails with `in_use` while that claim
+is there, however old: a crashed daemon can't be told from a paused one, so its claim is never taken over from another
+machine. If that machine's daemon is gone for good, delete the file; the same machine replaces its own leftover claim
+on its next start. The host is the hostname, or `TYPEVAULT_HOST_ID` where the hostname changes on every start (a
+container).
 
 ## Members and unlocking
 
