@@ -74,6 +74,11 @@ as unlocked only while that session is running: a daemon without one (a machine 
 release) is stopped and replaced, once the password checks out. Without a grant, your CLI and your agents read through
 the session. Agents never see the password or the key, and live grants you issue work only while it runs.
 
+One unlock serves every git worktree of the repository. An agent working in another worktree reads through a session
+the unlocked one starts there, with the worktree's own files and state, until the original session ends; `typevault
+lock` in any of them locks them all. Only worktrees the repository lists count: a clone of the repository or a copy of
+the vault needs its own `unlock`.
+
 While a person's vault is locked, an agent's command fails with `the vault is locked: ask a human to run typevault
 unlock`; in a terminal, the command asks for the password and unlocks on the spot. Owner commands (`tier`, `member`,
 `key rotate`, ...) ask for the password every time, because only they open the owner key. Scripts pass passwords on

@@ -24,7 +24,16 @@ import { Vault } from '../../core/vault'
 import { stopDaemon } from '../../daemon/spawn'
 import { export1Password, identityTitle } from '../../export/1password'
 import { ONEPASSWORD_VIAS } from '../../import/1password-live'
-import { DEFAULT_SESSION_MS, findLayout, layoutFrom, openAdmin, openPublic, unlockSession, type Env } from '../context'
+import {
+  DEFAULT_SESSION_MS,
+  findLayout,
+  layoutFrom,
+  openAdmin,
+  openPublic,
+  unlockSession,
+  worktreeSessions,
+  type Env,
+} from '../context'
 import { csv, note, print, table } from '../output'
 import { newPassword, passwords } from '../password'
 
@@ -234,13 +243,20 @@ export const lock = defineCommand({
   async run() {
     const layout = findLayout(process.env)
     if (layout === undefined) throw new TypeVaultError('not_found', 'no vault here')
-    await stopDaemon(layout).then(
-      () => print('locked'),
-      (error: unknown) => {
-        if (error instanceof TypeVaultError && error.code === 'not_found') return print('already locked')
-        throw error
-      },
-    )
+    // A session unlocked in another worktree would only be shared here again on the next read.
+    const worktrees = await worktreeSessions(layout, process.env)
+    let locked = false
+    for (const target of [...worktrees, layout]) {
+      locked =
+        (await stopDaemon(target).then(
+          () => true,
+          (error: unknown) => {
+            if (error instanceof TypeVaultError && error.code === 'not_found') return false
+            throw error
+          },
+        )) || locked
+    }
+    print(locked ? 'locked' : 'already locked')
   },
 })
 

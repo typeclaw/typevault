@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
-import { closeSync, existsSync, openSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { closeSync, existsSync, openSync, readFileSync, rmSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { z } from 'zod'
@@ -30,14 +30,33 @@ export async function ensureDaemon(layout: Layout, env: Env): Promise<void> {
   if (await isDaemonAlive(layout.agentSocket)) return
   if (machineKeys(env).length === 0) throw new TypeVaultError('locked', LOCKED_MESSAGE)
   refuseForeignDaemon(layout, env)
-  await startBackground(layout, env, [process.execPath, CLI, 'daemon', 'run'])
+  await startBackground(layout, env, [process.execPath, CLI, 'daemon', 'run', ...vaultArgs(layout)])
 }
 
-/** Starts an unlocked session daemon holding `key`, handed over stdin so it never shows up in argv or env. */
-export async function startSession(layout: Layout, env: Env, key: SecretKey, ttlMs: number): Promise<void> {
+/**
+ * Starts an unlocked session daemon holding `key`, handed over stdin so it never shows up in argv or env. With
+ * `sourceLock`, the session is another one's, shared with a worktree: it serves only while that one's daemon holds
+ * this lock, so it ends with it however that daemon ends.
+ */
+export async function startSession(
+  layout: Layout,
+  env: Env,
+  key: SecretKey,
+  ttlMs: number,
+  sourceLock?: string,
+): Promise<void> {
   const ttl = `${Math.ceil(ttlMs / 1000)}s`
-  const command = [process.execPath, CLI, 'daemon', 'run', '--key-stdin', '--ttl', ttl]
+  const command = [process.execPath, CLI, 'daemon', 'run', ...vaultArgs(layout), '--key-stdin', '--ttl', ttl]
+  if (sourceLock !== undefined) command.push('--source-lock', sourceLock)
+  // A token left by a daemon that died would pass for this session's before it writes its own.
+  rmSync(layout.sessionFile, { force: true })
   await startBackground(layout, env, command, encodeSecretKey(key))
+  // The agent socket answers before the session's grant is written, and a caller reads that grant next.
+  const deadline = Date.now() + START_TIMEOUT_MS
+  while (!existsSync(layout.sessionFile)) {
+    if (Date.now() > deadline) throw new TypeVaultError('unavailable', 'the unlocked session did not start')
+    await Bun.sleep(POLL_MS)
+  }
 }
 
 /**
@@ -122,6 +141,9 @@ const STOP_TIMEOUT_MS = 5_000
 
 const isSet = (value: string | undefined): boolean => value !== undefined && value !== ''
 
+const vaultArgs = (layout: Layout): readonly string[] =>
+  layout.scope === 'local' ? ['--vault', resolve(layout.vault)] : []
+
 /**
  * Runs `command` detached as this checkout's daemon and waits until the agent socket answers. Exported for tests,
  * which stand in their own daemon.
@@ -136,8 +158,10 @@ export async function startBackground(
   // A background daemon has no terminal: its output goes to a log, so a failed start can say why.
   const logPath = join(layout.run, 'daemon.log')
   const log = openSync(logPath, 'w', 0o600)
-  // The child selects the same vault the way the CLI does: a project vault from its directory, the global one by path.
-  // Its private state is where this process resolved it: `env` may lack the HOME this process fell back to.
+  // The child starts in its private run directory, never the project's: Bun reads bunfig.toml (a preload) and .env from
+  // its directory, and anyone who can edit a checkout (an agent) could have it read the key off stdin. So it is handed
+  // the vault by path. Its private state is where this process resolved it: `env` may lack the HOME this process fell
+  // back to.
   // An explicit state or run directory may be relative to this process's directory, which the child doesn't share.
   const childEnv = {
     ...env,
@@ -149,9 +173,8 @@ export async function startBackground(
   const child = spawn(executable, args, {
     detached: true,
     stdio: [stdin === undefined ? 'ignore' : 'pipe', log, log],
-    ...(layout.scope === 'local'
-      ? { cwd: dirname(layout.vault), env: childEnv }
-      : { env: { ...childEnv, TYPEVAULT_DIR: layout.vault } }),
+    cwd: layout.run,
+    env: layout.scope === 'local' ? childEnv : { ...childEnv, TYPEVAULT_DIR: resolve(layout.vault) },
   })
   closeSync(log)
   if (stdin !== undefined) child.stdin?.end(stdin)

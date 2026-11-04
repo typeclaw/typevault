@@ -5,7 +5,7 @@ import { TypeVaultError } from '../core/errors'
 import type { Vault } from '../core/vault'
 import { type GrantStore, type ResolvedGrant, SESSION_CEILING } from './grants'
 import { type Handler, json, parseBody } from './http'
-import { DeriveBody, MoveBody, NameBody, RequestBody, SetBody, ValuesBody, WaitBody } from './protocol'
+import { AttachBody, DeriveBody, MoveBody, NameBody, RequestBody, SetBody, ValuesBody, WaitBody } from './protocol'
 import type { PromptRequests } from './requests'
 
 export type DaemonContext = {
@@ -16,6 +16,8 @@ export type DaemonContext = {
   readonly requests: PromptRequests
   /** The tiers an unlocked session's member holds directly: what `run` loads in bulk, as in direct mode. */
   readonly sessionTiers?: readonly string[]
+  /** An unlocked session's: starts the same session in another worktree of this vault's repository, until `exp`. */
+  readonly attach?: (vault: string, exp: number) => Promise<void>
 }
 
 function bearer(request: Request): string {
@@ -106,6 +108,16 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
           await parseBody(request, RequestBody),
         ),
       )
+    },
+    // Only the session's own grant shares it: a grant derived from it (an agent's) can't widen itself to a worktree.
+    '/v1/attach': async (request) => {
+      const { record } = session(context, request).grant
+      if (context.attach === undefined || record.ceiling !== SESSION_CEILING || record.parent !== undefined) {
+        throw new TypeVaultError('denied', 'only an unlocked session can be shared with a worktree')
+      }
+      const { vault } = await parseBody(request, AttachBody)
+      await context.attach(vault, Date.parse(record.exp))
+      return json({ ok: true })
     },
     '/v1/request/wait': async (request) => {
       const { grant } = session(context, request)
