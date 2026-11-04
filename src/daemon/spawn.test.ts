@@ -85,10 +85,13 @@ setInterval(() => {}, 1 << 30)
 
 // Stands in for the start that lost the race: it exits with a lock conflict as soon as the winner holds the lock,
 // before the winner serves.
+// The winner is started detached, as startBackground starts a daemon: on Windows a child that isn't dies with this
+// process.
 const LOSING_START = `
+import { spawn } from 'node:child_process'
 const [run, winner] = process.argv.slice(2)
-const other = Bun.spawn([process.execPath, winner, run], { stdout: 'pipe' })
-await other.stdout.getReader().read()
+const other = spawn(process.execPath, [winner, run], { detached: true, stdio: ['ignore', 'pipe', 'ignore'] })
+await new Promise((resolve) => other.stdout.once('data', resolve))
 other.unref()
 console.error('a typevault daemon is still shutting down here')
 process.exit(1)
