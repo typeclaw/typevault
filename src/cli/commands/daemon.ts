@@ -42,6 +42,7 @@ export const daemon = defineCommand({
         const { promise, resolve } = Promise.withResolvers<void>()
         process.once('SIGINT', resolve)
         process.once('SIGTERM', resolve)
+        void running.stopRequested.then(resolve)
         const expiry = ttlMs === undefined ? undefined : setTimeout(resolve, ttlMs)
         await promise
         clearTimeout(expiry)

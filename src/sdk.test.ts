@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdtempSync, rmSync, mkdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, parse } from 'node:path'
 
 import { createClient, parseEntryName } from 'typevault'
 import { createAdmin } from 'typevault/admin'
@@ -15,6 +16,11 @@ import { globalLayout } from './core/layout'
 import { Vault } from './core/vault'
 import { type RunningDaemon, startDaemon } from './daemon/daemon'
 import { stopDaemon } from './daemon/spawn'
+
+// Unix socket paths are limited to ~104 bytes (108 on Windows), too short under the default temp dir on macOS and
+// Windows CI runners.
+const SHORT_TMP = process.platform === 'win32' ? join(parse(tmpdir()).root, 'tmp') : '/tmp'
+mkdirSync(SHORT_TMP, { recursive: true })
 
 let root: string
 let owner: SecretKey
@@ -34,8 +40,7 @@ const envIn = (root: string): Env => ({ TYPEVAULT_DIR: join(root, 'vault'), XDG_
 const at = (root: string) => ({ dir: join(root, 'vault'), env: { XDG_CONFIG_HOME: root } })
 
 beforeEach(async () => {
-  // Short root: unix socket paths are limited to ~104 bytes.
-  root = mkdtempSync('/tmp/tvs-')
+  root = mkdtempSync(join(SHORT_TMP, 'tvs-'))
   owner = await machineVault(envIn(root))
   const vault = await Vault.open(globalLayout(envIn(root)), [owner], {})
   const admin = new Admin(vault)
@@ -91,7 +96,7 @@ describe('sdk', () => {
 
   it('reaches the global vault only when global is asked for', async () => {
     // given a global vault in the home directory and no project vault around
-    const home = mkdtempSync('/tmp/tvx-')
+    const home = mkdtempSync(join(SHORT_TMP, 'tvx-'))
     const env = { HOME: home, XDG_CONFIG_HOME: join(home, '.config') }
     const key = await machineVault(env)
     const vault = await Vault.open(globalLayout(env), [key], {})
@@ -117,7 +122,7 @@ describe('sdk', () => {
 
   it('starts the global daemon where its caller looks for it, from an SDK env without HOME', async () => {
     // given a global vault whose private state lives under a HOME that is not the account's
-    const home = mkdtempSync('/tmp/tvh-')
+    const home = mkdtempSync(join(SHORT_TMP, 'tvh-'))
     const env = { HOME: home }
     const { identity } = await createIdentity('owner', 'machine')
     if (identity.kind !== 'machine') throw new Error('not a machine identity')

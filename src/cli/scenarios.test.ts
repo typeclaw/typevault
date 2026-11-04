@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, expect, it } from 'bun:test'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { join, parse } from 'node:path'
+
+// Unix socket paths are limited to ~104 bytes (108 on Windows), too short under the default temp dir on macOS and
+// Windows CI runners.
+const SHORT_TMP = process.platform === 'win32' ? join(parse(tmpdir()).root, 'tmp') : '/tmp'
+mkdirSync(SHORT_TMP, { recursive: true })
 
 // End-to-end scenarios: every step runs the real CLI in its own process, as a person or an agent would. Each actor
 // has its own config directory (its identity, trust pin and daemon), and they share one project checkout.
@@ -66,8 +72,7 @@ const OLD_FORMAT_GRANTS = JSON.stringify([{ id: '4d74c52abdebdd72', label: 'old'
 const secretKeyIn = (run: Run): string => /TVSK-[A-Z0-9-]+/.exec(run.stderr)?.[0] ?? ''
 
 beforeEach(() => {
-  // Short root: the daemon's unix socket path is limited to ~104 bytes.
-  base = realpathSync(mkdtempSync('/tmp/tvs-'))
+  base = realpathSync(mkdtempSync(join(SHORT_TMP, 'tvs-')))
   project = join(base, 'p')
   mkdirSync(project)
   actors = []
@@ -89,7 +94,15 @@ it(
     await ok(alice, ['lock'])
 
     // when her agent (no terminal) runs a command while the vault is locked, it is told to ask her
-    const check = ['run', '--only', 'tv://openai', '--', 'sh', '-c', 'test "$OPENAI" = sk-live-1 && echo match']
+    const check = [
+      'run',
+      '--only',
+      'tv://openai',
+      '--',
+      process.execPath,
+      '-e',
+      'if (process.env.OPENAI === "sk-live-1") console.log("match")',
+    ]
     expect(await fails(alice, check)).toContain('ask a human to run `typevault unlock`')
 
     // then once she unlocks, the agent's command gets the value and never prints it

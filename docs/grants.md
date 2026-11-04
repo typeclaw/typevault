@@ -40,7 +40,8 @@ TYPEVAULT_CEILING=bot typevault grant --tier member
 The socket is the caller's identity, so protect it with file permissions or by mounting it only where it belongs.
 A capped socket lists and revokes only the grants it issued, and only the uncapped owner socket reads the audit trail.
 Processes under one OS user that can reach the same socket share its ceiling; per-session enforcement needs isolation
-(typeclaw sandboxes each session and mounts only the agent socket).
+(typeclaw sandboxes each session and mounts only the agent socket). `run/control.sock` can only stop the daemon
+(`typevault lock` uses it on Windows, which has no SIGTERM); keep it host-only too.
 
 ## Asking a human for a secret
 

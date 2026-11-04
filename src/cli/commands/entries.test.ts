@@ -67,7 +67,9 @@ async function setViaPage(
         stdout: 'pipe',
         stderr: 'pipe',
       })
-  if (options.typed !== undefined) proc.terminal?.write(`${options.typed}\n\u0004`)
+  // End of input is ^D on a Unix terminal, ^Z then Enter on a Windows console.
+  const eof = process.platform === 'win32' ? '\r\u001a\r' : '\n\u0004'
+  if (options.typed !== undefined) proc.terminal?.write(`${options.typed}${eof}`)
   if (proc.stderr instanceof ReadableStream) {
     for await (const chunk of proc.stderr) onOutput(decoder.decode(chunk))
   }

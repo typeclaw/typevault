@@ -1,6 +1,9 @@
 import { spawn } from 'node:child_process'
 import { closeSync, existsSync, openSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { z } from 'zod'
 
 import { machineKeys } from '../access/keys'
 import { encodeSecretKey, type SecretKey } from '../core/crypto'
@@ -8,13 +11,13 @@ import { TypeVaultError } from '../core/errors'
 import { ensureDir } from '../core/fsx'
 import { configDir, type Layout } from '../core/layout'
 import { isLockHeld } from '../core/lock'
-import { isDaemonAlive, servingPid } from './client'
+import { callDaemon, isDaemonAlive, servingPid } from './client'
 
 type Env = Readonly<Record<string, string | undefined>>
 
 const START_TIMEOUT_MS = 10_000
 const POLL_MS = 50
-const CLI = new URL('../cli/index.ts', import.meta.url).pathname
+const CLI = fileURLToPath(new URL('../cli/index.ts', import.meta.url))
 
 export const LOCKED_MESSAGE = 'the vault is locked: ask a human to run `typevault unlock`'
 
@@ -64,7 +67,7 @@ export async function stopDaemon(layout: Layout): Promise<void> {
   }
   // With the lock held but no socket answering, the daemon is already shutting down: another signal would only cut
   // its cleanup short, so this just waits.
-  if (serving !== undefined) signal(serving)
+  if (serving !== undefined) await tellToStop(layout, serving)
   const deadline = Date.now() + STOP_TIMEOUT_MS
   while (isLockHeld(layout.daemonLock)) {
     if (Date.now() > deadline) {
@@ -90,7 +93,22 @@ function isRunning(pid: number): boolean {
   }
 }
 
-function signal(pid: number): void {
+/**
+ * SIGTERM on Unix. Windows has no catchable signal (process.kill terminates outright, skipping cleanup), so there the
+ * daemon is asked over its control socket, which only this host's user reaches (sandboxes get the agent socket).
+ */
+async function tellToStop(layout: Layout, pid: number): Promise<void> {
+  if (process.platform === 'win32') {
+    try {
+      await callDaemon(layout.controlSocket, '/v1/shutdown', {}, z.object({ ok: z.literal(true) }), {
+        timeoutMs: 1_000,
+      })
+    } catch (error) {
+      // It closed its socket since answering: it is already stopping.
+      if (!(error instanceof TypeVaultError)) throw error
+    }
+    return
+  }
   try {
     process.kill(pid, 'SIGTERM')
   } catch (error) {

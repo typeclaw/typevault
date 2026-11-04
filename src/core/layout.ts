@@ -42,6 +42,8 @@ export type Layout = {
   readonly revisionsFile: string
   readonly agentSocket: string
   readonly adminSocket: (ceiling: string) => string
+  /** Host-only: how `stopDaemon` stops the daemon where there is no SIGTERM (Windows). Never mounted into a sandbox. */
+  readonly controlSocket: string
 }
 
 type Env = Readonly<Record<string, string | undefined>>
@@ -136,5 +138,6 @@ function build(scope: Layout['scope'], root: string, vault: string): Layout {
     revisionsFile: join(run, 'revisions.json'),
     agentSocket: join(run, 'agent.sock'),
     adminSocket: (ceiling: string) => join(run, `admin-${ceiling}.sock`),
+    controlSocket: join(run, 'control.sock'),
   }
 }

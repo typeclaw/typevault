@@ -21,7 +21,7 @@ describe('scrubFile', () => {
       const current = await stat(path)
       expect(changed).toBe(true)
       expect(await readFile(path, 'utf8')).toBe('before [redacted] after')
-      expect(current.mode & 0o7777).toBe(0o640)
+      expect(current.mode & 0o7777).toBe(original.mode & 0o7777)
       expect(current.ino).not.toBe(original.ino)
       expect(await readdir(directory)).toEqual(['transcript.txt'])
     } finally {
@@ -46,7 +46,7 @@ describe('scrubFile', () => {
       expect(current.ino).toBe(original.ino)
       expect(current.mtimeMs).toBe(original.mtimeMs)
       expect(current.ctimeMs).toBe(original.ctimeMs)
-      expect(current.mode & 0o7777).toBe(0o400)
+      expect(current.mode & 0o7777).toBe(original.mode & 0o7777)
       expect(await readdir(directory)).toEqual(['transcript.txt'])
     } finally {
       await rm(directory, { recursive: true, force: true })

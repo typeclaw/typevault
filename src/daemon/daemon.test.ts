@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, parse } from 'node:path'
 
 import { z } from 'zod'
 
@@ -19,6 +20,11 @@ import { callDaemon } from './client'
 import { type RunningDaemon, startDaemon } from './daemon'
 import { LiveAccess } from './live-access'
 
+// Unix socket paths are limited to ~104 bytes (108 on Windows), too short under the default temp dir on macOS and
+// Windows CI runners.
+const SHORT_TMP = process.platform === 'win32' ? join(parse(tmpdir()).root, 'tmp') : '/tmp'
+mkdirSync(SHORT_TMP, { recursive: true })
+
 const machineFounder = async (): Promise<Founder> => founderOf((await createIdentity('owner', 'machine')).identity)
 
 let base: string
@@ -33,8 +39,7 @@ const grant = (socket: string, body: Record<string, unknown>) =>
   callDaemon(layout.adminSocket(socket), '/v1/grant', body, Token)
 
 beforeEach(async () => {
-  // Short root: unix socket paths are limited to ~104 bytes.
-  base = mkdtempSync('/tmp/tvd-')
+  base = mkdtempSync(join(SHORT_TMP, 'tvd-'))
   env = { TYPEVAULT_DIR: join(base, 'vault'), XDG_CONFIG_HOME: base }
   layout = globalLayout(env)
   owner = (await initGlobalVault(await machineFounder(), env)).owner
@@ -62,6 +67,29 @@ beforeEach(async () => {
 afterEach(async () => {
   await daemon.stop()
   rmSync(base, { recursive: true, force: true })
+})
+
+it('stops cleanly when the host asks it to over the control socket', async () => {
+  // given a runner that stops the daemon as soon as it is asked to, as `typevault daemon run` does
+  const stopped = daemon.stopRequested.then(() => daemon.stop())
+
+  // when the host asks over the control socket, as stopDaemon does on Windows
+  await callDaemon(layout.controlSocket, '/v1/shutdown', {}, z.object({ ok: z.literal(true) }))
+
+  // then the daemon finishes stopping and lets go of its lock (the test times out if stopping hangs)
+  await stopped
+  expect(isLockHeld(layout.daemonLock)).toBe(false)
+  daemon = await startDaemon({ layout, env, keys: [owner] })
+})
+
+it('refuses to stop for a caller on the agent socket, which sandboxes reach', async () => {
+  await expect(callDaemon(layout.agentSocket, '/v1/shutdown', {}, z.json())).rejects.toMatchObject({
+    code: 'not_found',
+  })
+
+  expect(await callDaemon(layout.agentSocket, '/v1/ping', {}, z.object({ ok: z.literal(true) }))).toMatchObject({
+    ok: true,
+  })
 })
 
 describe('live grants', () => {
@@ -231,7 +259,8 @@ it('refuses a prompt submission for a different entry than the one requested', a
   })
 })
 
-it('keeps sockets private to the owner', async () => {
+// Windows sockets take the run directory's ACL and have no Unix mode to check.
+it.skipIf(process.platform === 'win32')('keeps sockets private to the owner', async () => {
   const { mode } = await Bun.file(join(layout.run, 'agent.sock')).stat()
   expect(mode & 0o777).toBe(0o600)
 })
