@@ -19,7 +19,15 @@ grant allows. Every read leaves a trail, and values stay out of model context.
 - **Rotation that tells you what to rotate**: `key rotate` starts a new generation and lists every secret to rotate at its source
 - **Reading = using**: if a grant can use a secret it can read it, so put a secret in a tier only if that tier may see it
 
-## Git-friendly: commit the vault, never the keys
+## Members, not shared keys: your password unlocks your own key
+
+- **One key per member**: each person and machine has its own key, and tier keys are wrapped to members, so sharing a vault never means passing a key or a password around
+- **Password + Secret Key**: a person's key is sealed by their password and a random Secret Key kept on their device, so the sealed copy can sit in git and still resist offline guessing
+- **Unlock once, agents keep working**: `typevault unlock` hands your key to the daemon for a while; agents read through it without ever seeing a password or a key, and `typevault lock` ends it
+- **Machines need no password**: CI and agent hosts join as machine members, each with its own key and only the tiers it needs
+- **Rotation on every membership change**: adding or removing a member rotates every tier they reach, so nobody opens history from before they joined
+
+## Git-friendly: commit the vault; no key is stored in the clear
 
 - **A directory of files**: one age-encrypted, signed file per entry, with opaque names; commit `.typevault/` with your project
 - **Project and global vaults**: like `bun` and `npm`, commands target the nearest project vault, and `-g` selects the global one
@@ -68,6 +76,8 @@ Requires Bun ≥ 1.3.
 
 ```sh
 typevault init                                   # creates .typevault/ here with a `default` tier; -g for global
+                                                 # (the first time, also your identity: a password and a Secret Key)
+typevault unlock                                 # once per session (8h by default); your agents use it too
 
 # With one tier, set needs no --tier
 printf '%s' "$OPENAI_KEY" | typevault set tv://openai --type api_key --stdin
@@ -82,7 +92,7 @@ printf '%s' "$STRIPE_KEY" | typevault set tv://stripe --type api_key --tier trus
 # Hand an agent a grant instead of a key (the daemon starts automatically)
 export TYPEVAULT_GRANT=$(typevault grant --tier default --label session:abc)
 
-typevault whoami                                 # live grant, sealed grant or local keys
+typevault whoami                                 # live grant, sealed grant, unlocked session or machine key
 typevault ls
 typevault run -- psql                            # secrets arrive as env vars; output is redacted
 typevault run --only tv://github/bot -- sh -c 'agent-browser fill @e3 "$GITHUB_BOT_PASSWORD"'
@@ -101,10 +111,39 @@ Without `-g`, a command run outside any project fails instead of falling back to
 lands in the wrong one. `-g` goes before `--` in `run`; `TYPEVAULT_GLOBAL=1` does the same, and an explicit
 `TYPEVAULT_DIR` always selects the vault kept whole at that path.
 
-A project vault holds only ciphertext and signed manifests, so commit `.typevault/` as is. Its keys live under
-`~/.config/typevault/vaults/<id>/`, where `<id>` comes from the vault's owner key, so every clone of the project
-finds them. Each checkout keeps its own trust pin, audit log and daemon under `~/.config/typevault/checkouts/<id>/`. A collaborator gets access with `TYPEVAULT_KEY` (`typevault key export`) or a
-grant, as with the global vault.
+A project vault holds only ciphertext, wrapped keys and signed manifests, so commit `.typevault/` as is. Each checkout
+keeps its own trust pin, audit log and daemon under `~/.config/typevault/checkouts/<id>/`. A collaborator gets access
+by joining as a member, or with a grant, as with the global vault.
+
+## Members and unlocking
+
+```sh
+typevault init                                   # the first time: choose a password, save the printed Secret Key
+typevault unlock --for 8h                        # your key goes to the daemon until then
+typevault lock                                   # ends the session now
+typevault passwd                                 # new password; your key and every vault stay the same
+
+# Someone joins (in their clone), then an owner adds them with the line it printed
+typevault join                                   # prints: typevault member add bob tvp1:... --tier <tiers>
+typevault member add bob tvp1:... --tier default # rotates every tier bob reaches
+typevault member rm bob                          # rotates again; lists what bob could read
+typevault member ls
+
+# A machine (CI, an agent host): no password, its own key
+typevault join --machine --name ci
+```
+
+Each device has one identity, `~/.config/typevault/identity.json` (0600), used in every vault it joins. A person's
+holds their Secret Key and their member key sealed by password and Secret Key; `init` and `join` also commit that
+sealed copy to `members/<name>.key`, so on a new device `typevault identity restore <name>` needs only the Secret Key
+and the password. Keep the Secret Key somewhere safe: `typevault identity export --to 1password --vault Backup`. A
+machine's identity holds its key directly, or the key comes from `TYPEVAULT_KEY`.
+
+While a person's vault is locked, an agent's command fails with `the vault is locked: ask a human to run typevault
+unlock`; in a terminal, the command asks for the password and unlocks on the spot. Owner commands (`tier`, `member`,
+`key rotate`, ...) ask for the password every time, because only they open the owner key. Scripts pass passwords on
+stdin with `--vault-password-stdin`, one per line. Removing an owner member isn't supported yet: every entry is also
+sealed to the owner key, which can't be rotated yet.
 
 ## Naming
 
@@ -183,7 +222,8 @@ TYPEVAULT_GRANT=@/run/agent/grant typevault run -- ./deploy.sh
 ```
 
 `TYPEVAULT_GRANT` takes a live grant (`tvl1.…`), a sealed one (`tvg1:…`) or `@path` to a file holding a sealed one.
-Without it, the CLI uses local keys (direct mode: the owner, or an issuer with `TYPEVAULT_KEY`).
+Without it, a person's CLI reads through their unlocked session, and a machine member reads with its own key (direct
+mode).
 
 ### Ceilings
 
@@ -241,16 +281,15 @@ const redactor = createRedactor(await vault.readValues())
 
 `createClient` takes `grant` (default `TYPEVAULT_GRANT`), `dir` and `env`; `dir` (default `TYPEVAULT_DIR`) selects a
 global-style vault, and without it the vault is chosen like the CLI's. Without a grant it
-refuses unless you pass `direct: true`, which loads this machine's keys into your process; keep that to issuers.
+refuses unless you pass `direct: true`, which reads through the unlocked session, or loads a machine member's key
+into your process; keep that to issuers.
 `createAdmin` takes `dir`, `ceiling` and `env`, and offers `grant`, `list` and `revoke`. Both take `global: true` to use
 the global vault, like `-g`.
 
 ## Owner tasks
 
 ```sh
-typevault key export member                      # TYPEVAULT_KEY for a CI issuer or remote daemon
-typevault key export member --to 1password --vault Infra   # store it as an API Credential instead
-typevault key export --owner --to 1password --vault Backup # owner key recovery backup
+typevault identity export --to 1password --vault Backup   # your Secret Key (or a machine's key)
 typevault key rotate member                      # new generation; lists every secret to rotate at its source
 typevault tier exclude trusted member           # drop an include (rotates member)
 typevault signer add ci-bot <ed25519-public-key> --tiers member
@@ -264,12 +303,14 @@ typevault daemon status                          # also: daemon start | stop | r
 
 `tier`, `ceiling` and `signer` each also have `ls` and `rm`.
 
-Owner key rotation and recovery are manual: back up `keys/owner.key` offline, or with `key export --owner --to 1password`.
+The owner key is never stored in the clear: it exists only wrapped to owner members, so an owner's password and
+Secret Key are the recovery path. Owner key rotation is not supported yet.
 
-`key export --to 1password` uses the `op` CLI when installed, else the 1Password app (`--via sdk|op` to choose; `--account` is required for
-the app or when several `op` accounts are signed in). The key goes in the item's `credential` field, so an issuer can run with
-`TYPEVAULT_KEY="op://Infra/TypeVault tier member <id>/credential"` under `op run`. An existing item with the same title is refused unless
-`--replace`, which archives it after storing the new one; re-export after `key rotate`.
+`identity export --to 1password` uses the `op` CLI when installed, else the 1Password app (`--via sdk|op` to choose;
+`--account` is required for the app or when several `op` accounts are signed in). The Secret Key, or a machine's key,
+goes in the item's `credential` field, so a machine can run with
+`TYPEVAULT_KEY="op://Infra/TypeVault identity ci/credential"` under `op run`. An existing item with the same title is
+refused unless `--replace`, which archives it after storing the new one.
 
 ### Importing from 1Password
 
@@ -313,11 +354,11 @@ typevault import csv secrets.csv --tier member
 
 | Variable                                        | Effect                                                                                                         |
 | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `TYPEVAULT_GRANT`                               | The grant this process uses; unset means direct mode                                                           |
+| `TYPEVAULT_GRANT`                               | The grant this process uses; unset means the unlocked session, or direct mode for a machine                    |
 | `TYPEVAULT_GLOBAL`                              | Same as `-g`                                                                                                   |
 | `TYPEVAULT_DIR`                                 | Use the vault kept whole at this path; the global one is `$XDG_CONFIG_HOME/typevault` or `~/.config/typevault` |
-| `TYPEVAULT_KEY`                                 | Use only this key instead of the local key directory (`key export`)                                            |
-| `TYPEVAULT_TIER`                                | Default tier for `set` in direct mode                                                                          |
+| `TYPEVAULT_KEY`                                 | A machine member's key, instead of the identity file (`identity export`)                                       |
+| `TYPEVAULT_TIER`                                | Default tier for `set`                                                                                         |
 | `TYPEVAULT_CEILING`                             | Admin socket to grant through (default `default`)                                                              |
 | `TYPEVAULT_OWNER`                               | Pin the owner key instead of trusting it on first use                                                          |
 | `TYPEVAULT_PROMPT_PORT`, `TYPEVAULT_PUBLIC_URL` | Where the daemon serves `request` pages                                                                        |
@@ -326,16 +367,18 @@ typevault import csv secrets.csv --tier member
 
 ```
 $TYPEVAULT_DIR/
-  vault/            # ciphertext only, safe to commit
+  identity.json     # this device's identity (0600), never commit
+  trust.json        # the owner key this machine trusts
+  vault/            # ciphertext and wrapped keys only, safe to commit
     entries/        # one signed file per entry, opaque names
-    tiers/         # wrapped tier keys
-    tiers.json signers.json ceilings.json   # owner-signed
+    tiers/          # tier keys wrapped to the owner, including tiers and members
+    owner/          # the owner key wrapped to each owner member
+    members/        # each person's member key, sealed by their password and Secret Key
+    tiers.json members.json signers.json ceilings.json   # owner-signed
     owner.json
     audit-anchors/  # one file per checkout's audit chain
-  keys/             # private keys (0600), never commit
   audit/            # full local audit log
-  run/              # sockets, lock, grants, staged transactions, revision high-water marks
-  vaults/<id>/keys/ # keys of each project vault, shared by its checkouts
+  run/              # sockets, lock, grants, session token, staged transactions, revision high-water marks
   checkouts/<id>/   # trust.json audit/ run/ of each project checkout
 
 <project>/.typevault/   # a project vault: the same files as vault/, all safe to commit
@@ -344,7 +387,8 @@ $TYPEVAULT_DIR/
 ## Git history
 
 Old ciphertext stays in history forever. If a key leaks, rotate the key **and** every secret it could reach.
-Removing an entry does not remove it from history.
+Removing an entry does not remove it from history. Adding a member rotates every tier they reach first, so their key
+opens none of the ciphertext from before they joined; removing one rotates again and lists what they could read.
 
 Every old revision is still validly signed, so each machine remembers the newest revision it has seen of every entry
 and manifest, and every entry it deleted, and refuses older or deleted ones restored from history. A fresh clone trusts
