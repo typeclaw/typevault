@@ -262,11 +262,12 @@ export class Vault {
   /**
    * Writes many entries as one transaction (an import): all of them land, or none do. An input with a `source` takes
    * over the entry imported from that item, renaming it when the item was renamed; a name held by another item's
-   * entry is a conflict, never overwritten.
+   * entry is a conflict, never overwritten. An entry it would replace that `allows` refuses fails the whole import.
    */
   putMany(
     inputs: readonly EntryInput[],
     signerFor: (tier: string) => Promise<SignerContext>,
+    allows: (found: StoredEntry) => boolean = () => true,
   ): Promise<readonly StoredEntry[]> {
     return withLock(this.layout.lockFile, 'exclusive', async () => {
       const { entries } = await this.scan()
@@ -300,7 +301,11 @@ export class Vault {
             `${input.name} already holds another entry; rename or remove it, then import again`,
           )
         }
-        return { input, found: own ?? other }
+        const found = own ?? other
+        if (found !== undefined && !allows(found)) {
+          throw new TypeVaultError('denied', `the name ${input.name} is not available to this grant`)
+        }
+        return { input, found }
       })
       for (const { input, found } of targets) {
         const signer = await signerFor(input.tier)
