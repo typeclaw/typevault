@@ -39,6 +39,27 @@ test('entry collection drops empty and unusable fields and resolves collisions o
   expect(result.warnings.join()).not.toContain('hunter2')
 })
 
+test('entry collection names a title with no Latin letters after its URL, and falls back to item without one', () => {
+  const result = collectEntries([
+    {
+      title: '코레일+',
+      container: 'Private',
+      preset: 'password',
+      url: 'app://TEAMID.com.korail.KorailTalk',
+      fields: {},
+    },
+    { title: '코레일', preset: 'password', url: 'https://www.letskorail.com/login', fields: {} },
+    { title: '네이버', preset: 'password', url: 'https://nid.naver.co.kr', fields: {} },
+    { title: '코레일', preset: 'password', fields: {} },
+  ])
+  expect(result.entries.map((entry) => String(entry.name))).toEqual([
+    'korailtalk/private',
+    'letskorail',
+    'naver',
+    'item',
+  ])
+})
+
 test('custom fields keep their labels but never repeat or replace a template field', () => {
   expect(
     withCustomFields({ key: 'k', username: undefined }, [
