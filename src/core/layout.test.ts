@@ -15,7 +15,7 @@ import { encodeSecretKey, type SecretKey } from './crypto'
 import { signerOf } from './entries'
 import { createIdentity } from './identity'
 import { type Founder, founderOf, initLocalVault } from './init'
-import { type Layout, localLayout } from './layout'
+import { hostId, type Layout, localLayout, readLinuxMachineId } from './layout'
 import { parseEntryName } from './naming'
 import { Vault } from './vault'
 
@@ -34,6 +34,36 @@ beforeEach(() => {
 afterEach(() => rmSync(base, { recursive: true, force: true }))
 
 const machineFounder = async (): Promise<Founder> => founderOf((await createIdentity('owner', 'machine')).identity)
+
+const hasMachineId =
+  process.platform === 'darwin' ||
+  (process.platform === 'linux' &&
+    existsSync('/etc/machine-id') &&
+    readFileSync('/etc/machine-id', 'utf8').trim() !== '')
+
+it.if(hasMachineId)('names this machine by a hash of its machine ID, not by its hostname', () => {
+  expect(hostId({})).toMatch(/^[0-9a-f]{16}$/)
+})
+
+it('reads a Linux machine ID, and finds none in a file that gives no ID', () => {
+  // given machine-id files in each state a machine can have
+  const file = join(base, 'machine-id')
+  const read = (content: string): string | undefined => {
+    writeFileSync(file, content)
+    return readLinuxMachineId(file)
+  }
+
+  // then only a real ID counts, and an unreadable path (a directory) falls back rather than throws
+  expect(read('abc123\n')).toBe('abc123')
+  expect(read('\n')).toBeUndefined()
+  expect(read('uninitialized\n')).toBeUndefined()
+  expect(readLinuxMachineId(join(base, 'missing'))).toBeUndefined()
+  expect(readLinuxMachineId(base)).toBeUndefined()
+})
+
+it('lets TYPEVAULT_HOST_ID name this machine', () => {
+  expect(hostId({ TYPEVAULT_HOST_ID: 'host-a' })).toBe('host-a')
+})
 
 it('rejects a project vault whose owner was replaced, even with a key from the environment', async () => {
   // given a project vault this checkout trusts, and a member's key in TYPEVAULT_KEY

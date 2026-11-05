@@ -1,4 +1,5 @@
-import { existsSync, realpathSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
@@ -89,10 +90,54 @@ const setting = (env: Env, name: string): string | undefined => {
   return value !== undefined && value !== '' ? resolve(value) : undefined
 }
 
-/** This machine, as daemon holders and audit anchors name it: `TYPEVAULT_HOST_ID`, else the hostname. */
+let detectedHost: string | undefined
+
+/**
+ * This machine, as daemon holders and audit anchors name it: `TYPEVAULT_HOST_ID`, else a hash of its machine ID, else
+ * the hostname. The hostname alone won't do where it can change under a running daemon (macOS takes it from the network).
+ */
 export function hostId(env: Env = process.env): string {
   const explicit = env['TYPEVAULT_HOST_ID']
-  return explicit !== undefined && explicit !== '' ? explicit : hostname()
+  if (explicit !== undefined && explicit !== '') return explicit
+  detectedHost ??= hashedMachineId() ?? hostname()
+  return detectedHost
+}
+
+// Hashed because anchor file names are committed, and a machine ID is not meant to leave its machine.
+function hashedMachineId(): string | undefined {
+  const id = readMachineId()
+  return id === undefined ? undefined : shortHash(`typevault-host\0${id}`)
+}
+
+function readMachineId(): string | undefined {
+  switch (process.platform) {
+    case 'darwin':
+      return readDarwinPlatformUuid()
+    case 'linux':
+      return readLinuxMachineId()
+    default:
+      return undefined
+  }
+}
+
+/** Undefined when the file gives no ID: missing or unreadable (a container), or not yet set up (`uninitialized`). */
+export function readLinuxMachineId(path = '/etc/machine-id'): string | undefined {
+  try {
+    const id = readFileSync(path, 'utf8').trim()
+    return id === '' || id === 'uninitialized' ? undefined : id
+  } catch {
+    return undefined
+  }
+}
+
+function readDarwinPlatformUuid(): string | undefined {
+  try {
+    const output = execFileSync('/usr/sbin/ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice'], { encoding: 'utf8' })
+    return /"IOPlatformUUID" = "([^"]+)"/.exec(output)?.[1]
+  } catch {
+    // A sandbox can deny the lookup: fall back to the hostname rather than refuse to open any vault.
+    return undefined
+  }
 }
 
 /**
