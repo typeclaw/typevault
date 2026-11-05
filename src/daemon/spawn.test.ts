@@ -6,6 +6,7 @@ import { join, parse } from 'node:path'
 import type { Subprocess } from 'bun'
 
 import { globalLayout, type Layout } from '../core/layout'
+import { isLockHeld } from '../core/lock'
 import { startBackground, stopDaemon } from './spawn'
 
 const LOCK_MODULE = join(import.meta.dir, '..', 'core', 'lock.ts')
@@ -229,6 +230,8 @@ it('keeps waiting for the daemon that won a race to start, even before it opens 
     await startBackground(layout, {}, [process.execPath, join(root, 'losing.ts'), layout.run, join(root, 'winner.ts')])
   } finally {
     process.kill(Number(readFileSync(join(layout.run, 'winner.pid'), 'utf8')), 'SIGKILL')
+    // Windows closes a killed process's handles after it returns; removing its files before then fails with EBUSY.
+    while (isLockHeld(join(layout.run, 'daemon.lock'))) await Bun.sleep(10)
   }
 })
 

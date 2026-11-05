@@ -31,7 +31,7 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "check": "bun run typecheck && bun run lint && bun run format:check",
-    "test": "bun test"
+    "test": "bun test --parallel"
   },
   "dependencies": {
     "@1password/sdk": "^0.5.0",
