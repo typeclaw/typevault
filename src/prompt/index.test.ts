@@ -5,6 +5,7 @@ import { TypeVaultError } from '../core/errors'
 import { startPromptServer, type PromptServer, type PromptView } from './index'
 
 let server: PromptServer | undefined
+type Signal = ReturnType<typeof Promise.withResolvers<void>>
 
 const view: PromptView = {
   name: 'stripe',
@@ -146,6 +147,51 @@ test('concurrent submissions have exactly one successful winner', async () => {
   const { handle } = await fixture()
   const responses = await Promise.all([upload(handle.url), upload(handle.url)])
   expect(responses.map((response) => response.status).sort()).toEqual([204, 410])
+})
+
+test('validated overlapping streams reject the upload that finishes second', async () => {
+  server = await startPromptServer()
+  const handle = server.open(view, { validate: true })
+  const firstReading = Promise.withResolvers<void>()
+  const secondReading = Promise.withResolvers<void>()
+  const releaseFirst = Promise.withResolvers<void>()
+  const releaseSecond = Promise.withResolvers<void>()
+  const body = (reading: Signal, release: Signal, bytes: readonly [number, number]): ReadableStream<Uint8Array> => {
+    let part = 0
+    return new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        if (part === 0) {
+          part++
+          controller.enqueue(new Uint8Array([bytes[0]]))
+          return
+        }
+        if (part === 1) {
+          part++
+          reading.resolve()
+          await release.promise
+          controller.enqueue(new Uint8Array([bytes[1]]))
+          controller.close()
+        }
+      },
+    })
+  }
+  const post = (stream: ReadableStream<Uint8Array>): Promise<Response> =>
+    fetch(handle.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: stream,
+    })
+  const first = post(body(firstReading, releaseFirst, [1, 2]))
+  const second = post(body(secondReading, releaseSecond, [3, 4]))
+  await Promise.all([firstReading.promise, secondReading.promise])
+
+  releaseFirst.resolve()
+  expect(await handle.done).toEqual(new Uint8Array([1, 2]))
+  releaseSecond.resolve()
+  expect((await second).status).toBe(410)
+  const accepted = handle.accept()
+  expect((await first).status).toBe(204)
+  await accepted
 })
 
 test('unknown tokens unsupported methods and other routes return empty 404 responses', async () => {

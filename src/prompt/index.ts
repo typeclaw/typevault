@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 
 import { TypeVaultError } from '../core/errors'
-import { pageAssets, promptPage, expiredPage } from './page'
+import { pageAssets, promptPage, expiredPage, rejectedPage } from './page'
 import type { PromptHandle, PromptServer, PromptView } from './types'
 
 export type { PromptHandle, PromptServer, PromptView } from './types'
@@ -11,7 +11,13 @@ type Pending = {
   readonly view: PromptView
   readonly resolve: (bytes: Uint8Array) => void
   readonly reject: (error: TypeVaultError) => void
+  readonly accepted: Promise<void>
+  readonly accept: () => void
+  readonly refuse: (error: TypeVaultError) => void
+  readonly responded: Promise<void>
+  readonly respond: () => void
   timer: ReturnType<typeof setTimeout> | undefined
+  submitted: boolean
 }
 
 const MAX_BODY = 64 * 1024
@@ -46,7 +52,9 @@ export async function startPromptServer(
 
   function expire(token: string, entry: Pending): void {
     retire(token, entry)
-    entry.reject(new TypeVaultError('expired', 'Prompt expired or was cancelled'))
+    const error = new TypeVaultError('expired', 'Prompt expired or was cancelled')
+    entry.reject(error)
+    if (entry.submitted) entry.refuse(error)
   }
 
   function schedule(token: string, entry: Pending): void {
@@ -77,6 +85,7 @@ export async function startPromptServer(
           return response(410, expiredPage())
         }
         if (request.method === 'GET') return response(200, promptPage(entry.view, assets.script))
+        if (entry.submitted) return response(410, expiredPage())
         if (Number(request.headers.get('content-length')) > MAX_BODY) return response(413)
         if (request.headers.get('content-type')?.split(';')[0]?.trim() !== 'application/octet-stream') {
           return response(415)
@@ -104,6 +113,7 @@ export async function startPromptServer(
           reader?.releaseLock()
         }
         // Another upload, cancellation or expiry may win while the body is being read.
+        if (entry.submitted) return response(410, expiredPage())
         if (pending.get(token) !== entry) return response(410, expiredPage())
         if (entry.view.expiresAt.getTime() <= Date.now()) {
           expire(token, entry)
@@ -115,9 +125,25 @@ export async function startPromptServer(
           bytes.set(chunk, offset)
           offset += chunk.byteLength
         }
-        retire(token, entry)
+        entry.submitted = true
+        clearTimeout(entry.timer)
+        entry.timer = undefined
         entry.resolve(bytes)
-        return response(204)
+        try {
+          await entry.accepted
+          retire(token, entry)
+          const accepted = response(204)
+          entry.respond()
+          return accepted
+        } catch (error) {
+          retire(token, entry)
+          if (error instanceof TypeVaultError) {
+            const rejected = response(error.code === 'tampered' ? 422 : 403, rejectedPage())
+            entry.respond()
+            return rejected
+          }
+          throw error
+        }
       },
       error() {
         return response(500)
@@ -138,23 +164,45 @@ export async function startPromptServer(
   }
   return {
     port,
-    open(view): PromptHandle {
+    open(view, openOptions = {}): PromptHandle {
       if (stopped) throw new TypeVaultError('unavailable', 'Prompt server is stopped')
       if (!Number.isFinite(view.expiresAt.getTime())) throw new TypeVaultError('invalid', 'Invalid prompt expiry')
       const token = randomBytes(16).toString('base64url')
       const id = randomBytes(16).toString('base64url')
       const { promise: done, resolve, reject } = Promise.withResolvers<Uint8Array>()
+      const { promise: accepted, resolve: accept, reject: refuse } = Promise.withResolvers<void>()
+      const { promise: responded, resolve: respond } = Promise.withResolvers<void>()
       const entry: Pending = {
         id,
         view: { ...view, recipients: [...view.recipients], expiresAt: new Date(view.expiresAt) },
         resolve,
         reject,
+        accepted,
+        accept,
+        refuse,
+        responded,
+        respond,
         timer: undefined,
+        submitted: false,
       }
       pending.set(token, entry)
       ids.set(id, token)
       schedule(token, entry)
-      return { id, url: `${options.publicUrl ?? `http://127.0.0.1:${port}`}/r/${token}`, done }
+      if (openOptions.validate !== true) accept()
+      return {
+        id,
+        url: `${options.publicUrl ?? `http://127.0.0.1:${port}`}/r/${token}`,
+        done,
+        accept: async () => {
+          accept()
+          await responded
+        },
+        reject: async (error) => {
+          if (!entry.submitted) return
+          refuse(error)
+          await responded
+        },
+      }
     },
     cancel(id) {
       const token = ids.get(id)
