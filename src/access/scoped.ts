@@ -22,6 +22,8 @@ export type ScopedIdentity = {
   readonly mode: AuditMode
   readonly grant?: string
   readonly label?: string
+  /** The owner's own session, never a grant delegated from it. */
+  readonly owner?: boolean
   /** Tiers held directly; see `Access.ownTiers`. */
   readonly ownTiers?: readonly string[]
   /** Tier used by `set` when the caller names none. */
@@ -78,9 +80,10 @@ export class ScopedVault implements Access {
   }
 
   async #signerFor(tier: string): Promise<ReturnType<typeof signerOf>> {
-    // Direct mode is the key holder acting itself, so the owner signs as the owner. The daemon writes on behalf
-    // of grants and signs with the tier's own key, so a grant's writes never look owner-authored.
-    const owner = this.#identity.mode === 'direct' ? this.#vault.keyring.owner : undefined
+    // The owner signs its own writes in direct mode or its own session. Delegated grants use tier keys,
+    // so a grant's writes never look owner-authored.
+    const owner =
+      this.#identity.mode === 'direct' || this.#identity.owner === true ? this.#vault.keyring.owner : undefined
     const key = owner ?? (await this.#vault.keyring.unlock(tier)) ?? this.#vault.keyring.owner
     if (key === undefined) throw new TypeVaultError('denied', `no key here can write tier "${tier}"`)
     return signerOf(key)
@@ -126,7 +129,18 @@ export class ScopedVault implements Access {
       ...(env === undefined ? {} : { env }),
       ...(origin === undefined ? {} : { origin }),
     }
-    const refreshed = await this.#vault.put(input, await this.#signerFor(entry.envelope.tier))
+    // A read must not promote the original writer's metadata to the reader's authority. Reuse its owner/tier
+    // key when held; certificates and unavailable signing keys narrow to the entry's own tier.
+    const { signer, tier } = entry.envelope
+    const original =
+      signer.kind === 'owner'
+        ? this.#vault.keyring.owner
+        : signer.kind === 'tier'
+          ? await this.#vault.keyring.unlock(signer.tier)
+          : undefined
+    const key = original ?? (await this.#vault.keyring.unlock(tier))
+    if (key === undefined) throw new TypeVaultError('denied', `no key here can refresh tier "${tier}"`)
+    const refreshed = await this.#vault.put(input, signerOf(key))
     await this.#audit({ action: 'refresh', entries: [name] })
     return refreshed
   }

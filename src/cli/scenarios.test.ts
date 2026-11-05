@@ -3,6 +3,10 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync
 import { tmpdir } from 'node:os'
 import { join, parse } from 'node:path'
 
+import { z } from 'zod'
+
+import { LiveAccess } from '../daemon/live-access'
+
 // Unix socket paths are limited to ~104 bytes (108 on Windows), too short under the default temp dir on macOS and
 // Windows CI runners.
 const SHORT_TMP = process.platform === 'win32' ? join(parse(tmpdir()).root, 'tmp') : '/tmp'
@@ -113,6 +117,86 @@ it(
     // and after she locks, it is refused again
     await ok(alice, ['lock'])
     expect(await fails(alice, check)).toContain('the vault is locked')
+  },
+  SCENARIO_MS,
+)
+
+it(
+  'the owner session preserves its env override before and after rotation (#63)',
+  async () => {
+    const alice = actor('alice')
+    await ok(alice, withPassword('init', '--name', 'alice'), line('a'))
+    await ok(alice, withPassword('unlock'), line('a'))
+    await ok(alice, ['set', 'custom', '--preset', 'api_key', '--env', 'MY_CUSTOM_KEY', '--stdin'], 'dummy-value')
+    const token = (await ok(alice, ['grant', '--tier', 'default', '--label', 'agent:qa'])).stdout.trim()
+    const agent = { ...alice, TYPEVAULT_GRANT: token }
+    const check = [
+      'run',
+      '--only',
+      'custom',
+      '--',
+      process.execPath,
+      '-e',
+      'console.log(JSON.stringify({ override: process.env.MY_CUSTOM_KEY === "dummy-value", derived: process.env.CUSTOM !== undefined }))',
+    ]
+
+    for (const caller of [alice, agent]) {
+      expect(JSON.parse((await ok(caller, check)).stdout)).toEqual({ override: true, derived: false })
+    }
+    await ok(alice, withPassword('key', 'rotate', 'default'), line('a'))
+    expect(JSON.parse((await ok(alice, check)).stdout)).toEqual({ override: true, derived: false })
+  },
+  SCENARIO_MS,
+)
+
+it.each(['live', 'sealed', 'derived'] as const)(
+  'a lower %s writer cannot aim an env override at the owner or a higher grant',
+  async (kind) => {
+    const alice = actor('alice')
+    await ok(alice, withPassword('init', '--name', 'alice'), line('a'))
+    await ok(alice, withPassword('tier', 'add', 'trusted'), line('a'))
+    await ok(alice, withPassword('tier', 'include', 'trusted', 'default'), line('a'))
+    await ok(alice, withPassword('unlock'), line('a'))
+    let token: string
+    if (kind === 'derived') {
+      const session = readFileSync(join(runDir('alice'), 'session.token'), 'utf8')
+      const derived = await new LiveAccess(join(runDir('alice'), 'agent.sock'), session).call(
+        '/v1/derive',
+        { tiers: ['default'], label: 'agent:lower' },
+        z.object({ token: z.string() }),
+      )
+      token = derived.token
+    } else {
+      token = (
+        await ok(alice, [
+          'grant',
+          '--tier',
+          'default',
+          '--label',
+          'agent:lower',
+          ...(kind === 'sealed' ? ['--sealed'] : []),
+        ])
+      ).stdout.trim()
+    }
+    const lower = { ...alice, TYPEVAULT_GRANT: token }
+    await ok(lower, ['set', 'custom', '--preset', 'api_key', '--env', 'MY_CUSTOM_KEY', '--stdin'], 'lower-value')
+    const higher = {
+      ...alice,
+      TYPEVAULT_GRANT: (await ok(alice, ['grant', '--tier', 'trusted', '--label', 'agent:higher'])).stdout.trim(),
+    }
+    const check = [
+      'run',
+      '--only',
+      'custom',
+      '--',
+      process.execPath,
+      '-e',
+      'console.log(JSON.stringify({ override: process.env.MY_CUSTOM_KEY !== undefined, derived: process.env.CUSTOM === "lower-value" }))',
+    ]
+
+    for (const caller of [alice, higher]) {
+      expect(JSON.parse((await ok(caller, check)).stdout)).toEqual({ override: false, derived: true })
+    }
   },
   SCENARIO_MS,
 )

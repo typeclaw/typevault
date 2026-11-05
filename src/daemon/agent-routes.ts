@@ -37,6 +37,7 @@ function session(context: DaemonContext, request: Request): { grant: ResolvedGra
     mode: 'live',
     grant: record.id,
     label: record.label,
+    owner: isSession && record.parent === undefined && context.vault.keyring.owner !== undefined,
     ownTiers: isSession ? (context.sessionTiers ?? []) : record.tiers,
     ...(isSession || record.tiers[0] === undefined ? {} : { defaultTier: record.tiers[0] }),
   })
