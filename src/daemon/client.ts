@@ -41,7 +41,10 @@ export async function callDaemon<T>(
       signal: AbortSignal.timeout(options.timeoutMs ?? 30_000),
     })
   } catch (error) {
-    if (error instanceof Error && error.name !== 'TimeoutError') {
+    if (error instanceof Error) {
+      if (error.name === 'TimeoutError') {
+        throw new TypeVaultError('unavailable', 'the typevault daemon request timed out', { cause: error })
+      }
       throw new TypeVaultError('unavailable', `the typevault daemon is not reachable at ${socket}`)
     }
     throw error
@@ -53,7 +56,11 @@ export async function callDaemon<T>(
       ? new TypeVaultError(toCode(parsed.data.error.code), parsed.data.error.message)
       : new TypeVaultError('unavailable', `daemon answered ${response.status}`)
   }
-  return schema.parse(payload)
+  const parsed = schema.safeParse(payload)
+  if (!parsed.success) {
+    throw new TypeVaultError('unavailable', 'the running typevault daemon does not match this CLI: restart it')
+  }
+  return parsed.data
 }
 
 /** The PID of the daemon answering on `socket`, or undefined when none answers (or it is too old to say). */

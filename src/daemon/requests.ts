@@ -54,7 +54,10 @@ export class PromptRequests {
     return this.#server
   }
 
-  async open(session: RequestSession, input: RequestInput): Promise<{ id: string; url: string; code: string }> {
+  async open(
+    session: RequestSession,
+    input: RequestInput,
+  ): Promise<{ id: string; url: string; code: string; expiresAt: number }> {
     const { chain, grant } = session
     const state = this.#vault.state
     const tier = input.tier ?? grant.tiers[0]
@@ -67,6 +70,7 @@ export class PromptRequests {
       throw new TypeVaultError('denied', `the name ${input.name} is not available to this grant`)
     }
     const code = matchCode()
+    const expiresAt = Date.now() + TTL_MS
     const handle = (await this.#prompt()).open({
       name: input.name,
       ...(input.preset === undefined ? {} : { preset: input.preset }),
@@ -75,7 +79,7 @@ export class PromptRequests {
       requester: grant.label,
       code,
       recipients: [meta.recipient, state.owner.recipient],
-      expiresAt: new Date(Date.now() + TTL_MS),
+      expiresAt: new Date(expiresAt),
     })
     // Whoever holds the URL can submit, the requesting agent included, so the daemon checks what it got instead
     // of signing it blind: it must be exactly the requested entry, and the grant must still be live.
@@ -116,17 +120,13 @@ export class PromptRequests {
       tiers: [tier],
       reason: input.reason,
     })
-    return { id: handle.id, url: handle.url, code }
+    return { id: handle.id, url: handle.url, code, expiresAt }
   }
 
   async wait(grantId: string, id: string): Promise<EntryName> {
     const pending = this.#pending.get(id)
     if (pending === undefined || pending.owner !== grantId) throw new TypeVaultError('not_found', 'no such request')
-    try {
-      return await pending.stored
-    } finally {
-      this.#pending.delete(id)
-    }
+    return pending.stored
   }
 
   async stop(): Promise<void> {

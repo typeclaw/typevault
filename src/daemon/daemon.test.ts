@@ -6,6 +6,7 @@ import { join, parse } from 'node:path'
 import { z } from 'zod'
 
 import { envFor } from '../access/env'
+import { ScopedVault } from '../access/scoped'
 import { readAudit } from '../audit/log'
 import { Admin } from '../core/admin'
 import { seal, type SecretKey } from '../core/crypto'
@@ -19,8 +20,9 @@ import { parseEntryName } from '../core/naming'
 import { Vault } from '../core/vault'
 import { callDaemon } from './client'
 import { type RunningDaemon, startDaemon } from './daemon'
-import { MAX_CHAIN } from './grants'
+import { GrantStore, MAX_CHAIN } from './grants'
 import { LiveAccess } from './live-access'
+import { PromptRequests } from './requests'
 
 // Unix socket paths are limited to ~104 bytes (108 on Windows), too short under the default temp dir on macOS and
 // Windows CI runners.
@@ -312,6 +314,73 @@ describe('secret prompt', () => {
     const done = await access.call('/v1/request/wait', { id: opened.id }, z.object({ stored: z.string() }))
     expect(done.stored).toBe('resend')
     expect((await access.get(n('resend'))).fields).toEqual({ key: { type: 'secret' as const, value: 're_test_1' } })
+  })
+
+  it('returns a stored result after a timed-out waiter reconnects', async () => {
+    const vault = await Vault.open(layout, [owner], {})
+    const { record } = new GrantStore(layout.grantsFile).issue({
+      tiers: ['member'],
+      only: [],
+      ttlMs: 60_000,
+      label: 'session:retry',
+      ceiling: 'default',
+    })
+    const chain = [{ tiers: record.tiers, only: record.only }]
+    const access = new ScopedVault(vault, chain, {
+      mode: 'live',
+      grant: record.id,
+      label: record.label,
+      ownTiers: record.tiers,
+      defaultTier: 'member',
+    })
+    const requests = new PromptRequests(vault, {})
+    try {
+      const opened = await requests.open(
+        { chain, grant: record, access, isLive: () => true },
+        { name: n('resend'), preset: 'api_key', reason: 'send mail' },
+      )
+      const abandoned = requests.wait(record.id, opened.id)
+      const timeout = AbortSignal.timeout(10)
+      const timedOut = new Promise<never>((_resolve, reject) => {
+        timeout.addEventListener('abort', () => reject(timeout.reason), { once: true })
+      })
+      await expect(Promise.race([abandoned, timedOut])).rejects.toMatchObject({ name: 'TimeoutError' })
+
+      const recipients = [vault.state.tiers['member']?.recipient ?? '', vault.state.owner.recipient]
+      const now = new Date().toISOString()
+      const payload = {
+        v: 1,
+        name: 'resend',
+        fields: { key: { type: 'secret' as const, value: 're_test_retry' } },
+        tags: [],
+        created: now,
+        rotated: now,
+      }
+      const body = new Uint8Array(await seal(recipients, utf8(JSON.stringify(payload))))
+      expect(
+        (
+          await fetch(opened.url, {
+            method: 'POST',
+            body,
+            headers: { 'content-type': 'application/octet-stream' },
+          })
+        ).status,
+      ).toBe(204)
+      expect(await abandoned).toBe(n('resend'))
+
+      expect(await requests.wait(record.id, opened.id)).toBe(n('resend'))
+      expect(
+        (
+          await fetch(opened.url, {
+            method: 'POST',
+            body,
+            headers: { 'content-type': 'application/octet-stream' },
+          })
+        ).status,
+      ).toBe(410)
+    } finally {
+      await requests.stop()
+    }
   })
 })
 
