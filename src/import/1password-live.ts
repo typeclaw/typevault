@@ -37,6 +37,9 @@ export type SdkClient = {
 export type ConnectSdk = (account: string) => Promise<SdkClient>
 
 const UNSUPPORTED = 'skipped unsupported 1Password item category'
+// Each `op item get` is its own process and each SDK vault read a round trip, so a few run at once; more would
+// mostly queue behind the desktop app and risk 1Password's rate limits.
+const CONCURRENCY = 8
 // Field types kept as custom fields; dates, menus, addresses and keys don't read as one string.
 const OP_TEXT_TYPES: ReadonlySet<string> = new Set(['STRING', 'CONCEALED', 'URL', 'EMAIL', 'PHONE', 'OTP'])
 const SDK_TEXT_TYPES: ReadonlySet<string> = new Set(['Text', 'Concealed', 'Url', 'Email', 'Phone', 'Totp'])
@@ -112,24 +115,47 @@ async function readOp(
       .filter((vault) => matchVault(vault.id, vault.name, filters.vaults, collected.matchedVaults))
       .map((vault) => ['--vault', vault.id])
   }
+  const listed: z.infer<typeof OpListSchema> = []
   for (const scope of scopes) {
-    const listed = parseJson(
+    const items = parseJson(
       await runOp(['item', 'list', '--format', 'json', ...scope, ...tags, ...account]),
       OpListSchema,
       'op',
     )
     // `op --tags` also matches nested tags (`tag/child`): those name the fields to import.
-    for (const entry of listed.filter((item) => tagSelection(item.tags, filters.tags) !== undefined)) {
-      const args = ['item', 'get', entry.id, '--vault', entry.vault.id, '--reveal', '--format', 'json', ...account]
-      const item = parseJson(await runOp(args), OpItemSchema, 'op')
-      const mapped = mapOpItem(item)
-      if (mapped === undefined) collected.warnings.push(UNSUPPORTED)
-      else {
-        const selected = selectFields(mapped, item.title, item.tags, filters.tags, collected.warnings)
-        if (selected !== undefined) collected.items.push({ ...selected, title: item.title, container: item.vault.name })
+    listed.push(...items.filter((item) => tagSelection(item.tags, filters.tags) !== undefined))
+  }
+  const fetched = await mapLimit(listed, CONCURRENCY, async (entry) => {
+    const args = ['item', 'get', entry.id, '--vault', entry.vault.id, '--reveal', '--format', 'json', ...account]
+    return parseJson(await runOp(args), OpItemSchema, 'op')
+  })
+  for (const item of fetched) {
+    const mapped = mapOpItem(item)
+    if (mapped === undefined) collected.warnings.push(UNSUPPORTED)
+    else {
+      const selected = selectFields(mapped, item.title, item.tags, filters.tags, collected.warnings)
+      if (selected !== undefined) collected.items.push({ ...selected, title: item.title, container: item.vault.name })
+    }
+  }
+}
+
+/** Maps `values` with at most `limit` calls in flight, keeping input order; stops starting new calls on a failure. */
+async function mapLimit<T, R>(values: readonly T[], limit: number, map: (value: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = []
+  let next = 0
+  const worker = async () => {
+    while (next < values.length) {
+      const index = next++
+      try {
+        results[index] = await map(values[index] as T)
+      } catch (error) {
+        next = values.length
+        throw error
       }
     }
   }
+  await Promise.all(Array.from({ length: Math.min(limit, values.length) }, worker))
+  return results
 }
 
 function mapOpItem(item: z.infer<typeof OpItemSchema>): Omit<ImportItem, 'title'> | undefined {
@@ -295,16 +321,19 @@ async function readSdk(account: string, filters: Filters, connect: ConnectSdk, c
     matchVault(vault.id, vault.title, filters.vaults, collected.matchedVaults),
   )
   const { items, warnings } = collected
-  for (const vault of vaults) {
+  const fetched = await mapLimit(vaults, CONCURRENCY, async (vault) => {
     const listed = (
       await client.items.list(vault.id, { type: 'ByState', content: { active: true, archived: false } })
     ).filter((item) => tagSelection(item.tags, filters.tags) !== undefined)
-    if (listed.length === 0) continue
-    const fetched = await client.items.getAll(
+    if (listed.length === 0) return []
+    const read = await client.items.getAll(
       vault.id,
       listed.map((item) => item.id),
     )
-    for (const response of fetched.individualResponses) {
+    return read.individualResponses
+  })
+  for (const [index, vault] of vaults.entries()) {
+    for (const response of fetched[index] ?? []) {
       if (response.content === undefined) {
         warnings.push('skipped a 1Password item that could not be read')
         continue

@@ -480,3 +480,57 @@ test('sdk import needs an account and an existing vault', async () => {
     read1Password({ via: 'sdk', accounts: ['Example'], vaults: ['Missing'] }, { connectSdk }),
   ).rejects.toMatchObject({ code: 'not_found' })
 })
+
+test('op import fetches up to eight items at once and keeps them in listed order', async () => {
+  // given: every item get waits until eight are in flight, then they finish in reverse
+  const ids = Array.from({ length: 10 }, (_, index) => `item${index}`)
+  let inFlight = 0
+  let maxInFlight = 0
+  const held: (() => void)[] = []
+  const runOp = async (args: readonly string[]) => {
+    if (args[1] === 'list') return JSON.stringify(ids.map((id) => ({ id, vault: { id: 'v1' } })))
+    inFlight += 1
+    maxInFlight = Math.max(maxInFlight, inFlight)
+    if (maxInFlight < 8) await new Promise<void>((resolve) => held.push(resolve))
+    else for (const release of held.splice(0).reverse()) release()
+    inFlight -= 1
+    const title = `Note ${args[2]?.slice('item'.length)}`
+    return JSON.stringify({ title, category: 'PASSWORD', vault: { name: 'Work' } })
+  }
+
+  // when
+  const result = await read1Password({ via: 'op' }, { runOp })
+
+  // then
+  expect(maxInFlight).toBe(8)
+  expect(result.entries.map((entry) => String(entry.name))).toEqual(ids.map((_, index) => `note-${index}/work`))
+})
+
+test('op import starts no more item fetches once one fails', async () => {
+  // given: eight fetches start and hold, then the first one fails
+  const ids = Array.from({ length: 10 }, (_, index) => `item${index}`)
+  const started: string[] = []
+  const held: (() => void)[] = []
+  let fail: (error: Error) => void = () => {}
+  const runOp = async (args: readonly string[]) => {
+    if (args[1] === 'list') return JSON.stringify(ids.map((id) => ({ id, vault: { id: 'v1' } })))
+    started.push(args[2] ?? '')
+    const done = new Promise<void>((resolve, reject) => {
+      if (args[2] === 'item0') fail = reject
+      else held.push(resolve)
+    })
+    if (started.length === 8) fail(new Error('op item get failed'))
+    await done
+    return JSON.stringify({ title: args[2], category: 'PASSWORD', vault: { name: 'Work' } })
+  }
+
+  // when
+  const result = read1Password({ via: 'op' }, { runOp })
+
+  // then
+  await expect(result).rejects.toThrow('op item get failed')
+  for (const release of held) release()
+  // Let the released fetches settle: every pending microtask runs before the next macrotask.
+  await new Promise((resolve) => setImmediate(resolve))
+  expect(started).toEqual(ids.slice(0, 8))
+})
