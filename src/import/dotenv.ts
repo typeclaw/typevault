@@ -8,8 +8,9 @@ import type { ImportResult } from './types'
 const VariableSchema = z.object({ name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), value: z.string() }).readonly()
 
 export function parseDotenv(text: string): ImportResult {
+  const variables = new Map(parseDotenvVariables(text).map((variable) => [variable.name, variable]))
   return collectEntries(
-    parseDotenvVariables(text).map(({ name, value }) => ({
+    [...variables.values()].map(({ name, value }) => ({
       title: name,
       preset: 'api_key',
       fields: { $default: value },
