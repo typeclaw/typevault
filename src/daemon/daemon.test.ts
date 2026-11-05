@@ -5,6 +5,7 @@ import { join, parse } from 'node:path'
 
 import { z } from 'zod'
 
+import { envFor } from '../access/env'
 import { readAudit } from '../audit/log'
 import { Admin } from '../core/admin'
 import { seal, type SecretKey } from '../core/crypto'
@@ -287,6 +288,66 @@ it.skipIf(process.platform === 'win32')('keeps sockets private to the owner', as
 })
 
 describe('unlocked session', () => {
+  it.each([
+    ['lower', 'owner'],
+    ['lower', 'higher'],
+    ['owner', 'owner'],
+    ['owner', 'higher'],
+  ] as const)('preserves %s-written env trust when the %s reader refreshes OAuth', async (writer, refresher) => {
+    let refreshes = 0
+    const endpoint = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: () => {
+        refreshes++
+        return Response.json({ access_token: 'fresh-token', expires_in: 3600 })
+      },
+    })
+    try {
+      await daemon.stop()
+      daemon = await startDaemon({ layout, env, keys: [owner], session: { ttlMs: 60_000 } })
+      const session = new LiveAccess(layout.agentSocket, readFileSync(layout.sessionFile, 'utf8'))
+      const lower = new LiveAccess(layout.agentSocket, (await grant('default', { tiers: ['member'] })).token)
+      const higher = new LiveAccess(layout.agentSocket, (await grant('default', { tiers: ['trusted'] })).token)
+      await (writer === 'owner' ? session : lower).set({
+        name: n('custom'),
+        tier: 'member',
+        env: 'MY_CUSTOM_KEY',
+        fields: {
+          $default: { type: 'secret', value: 'original-default' },
+          session: {
+            type: 'oauth',
+            value: {
+              access_token: 'stale-token',
+              refresh_token: 'refresh-token',
+              expires_at: '2000-01-01T00:00:00.000Z',
+              token_url: `http://127.0.0.1:${endpoint.port}/token`,
+            },
+          },
+        },
+      })
+      const expected = {
+        [writer === 'owner' ? 'MY_CUSTOM_KEY' : 'CUSTOM']: 'original-default',
+        CUSTOM_SESSION: 'fresh-token',
+      }
+      const readers = { owner: session, higher }
+      const environment = async (reader: LiveAccess) =>
+        envFor(await reader.values(['custom']), new Date(), {
+          ownTiers: await reader.ownTiers(),
+          explicit: ['custom'],
+        })
+
+      // The triggering read and later owner/higher reads must agree on the original metadata's authority.
+      expect(await environment(readers[refresher])).toEqual(expected)
+      for (const reader of [session, higher]) expect(await environment(reader)).toEqual(expected)
+      const stored = await (await Vault.open(layout, [owner], {})).find(n('custom'))
+      expect(stored?.payload.fields['session']?.value).toMatchObject({ access_token: 'fresh-token' })
+      expect(refreshes).toBe(1)
+    } finally {
+      await endpoint.stop(true)
+    }
+  })
+
   it('serves its grant from run/session.token and ends it with the daemon', async () => {
     // given a daemon started as an unlocked session
     await daemon.stop()
