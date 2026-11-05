@@ -54,7 +54,7 @@ function checkRel(rel: string): string {
 export function commitTxn(layout: Layout, txn: Txn): void {
   if (txn.isEmpty) return
   const dir = join(layout.txnDir, randomHex(8))
-  mkdirSync(join(dir, 'files'), { recursive: true })
+  mkdirSync(join(dir, 'files'), { recursive: true, mode: 0o700 })
   const puts = [...txn.puts.keys()]
   puts.forEach((rel, index) => atomicWrite(join(dir, 'files', String(index)), txn.puts.get(rel) ?? new Uint8Array()))
   atomicWrite(join(dir, 'manifest.json'), JSON.stringify({ puts, removes: [...txn.removes] }))

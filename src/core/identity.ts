@@ -13,7 +13,7 @@ import {
 } from './crypto'
 import { fromBase64Url, fromUtf8, toBase64Url, utf8 } from './encoding'
 import { TypeVaultError } from './errors'
-import { assertNoSymlinks, atomicWrite } from './fsx'
+import { assertNoSymlinks, atomicWrite, ensureDir } from './fsx'
 import { readJsonFile } from './json-file'
 import { configDir, type Layout } from './layout'
 import { generateSecretKeyCode, openWithPassword, sealWithPassword } from './password'
@@ -66,6 +66,7 @@ export function readIdentity(env: Env): Identity | undefined {
 }
 
 export function writeIdentity(env: Env, identity: Identity): void {
+  ensureDir(configDir(env), 0o700)
   atomicWrite(identityPath(env), `${JSON.stringify(identity, null, 2)}\n`, 0o600)
 }
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -29,6 +29,7 @@ it('applies puts and removes together', () => {
   commitTxn(layout, new Txn().put('a/b.txt', 'new').remove('old.txt'))
   expect(readFileSync(join(layout.vault, 'a/b.txt'), 'utf8')).toBe('new')
   expect(existsSync(join(layout.vault, 'old.txt'))).toBe(false)
+  if (process.platform !== 'win32') expect(statSync(layout.txnDir).mode & 0o777).toBe(0o700)
 })
 
 it('rolls a committed transaction forward on recovery', () => {

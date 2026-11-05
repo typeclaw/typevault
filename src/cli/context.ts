@@ -27,7 +27,10 @@ export type Env = Readonly<Record<string, string | undefined>>
 const isSet = (value: string | undefined): boolean => value !== undefined && value !== ''
 
 /** `-g` (`TYPEVAULT_GLOBAL`) or an explicit `TYPEVAULT_DIR` selects the global vault; otherwise the project's. */
-export const wantsGlobal = (env: Env): boolean => isSet(env['TYPEVAULT_GLOBAL']) || isSet(env['TYPEVAULT_DIR'])
+export const wantsGlobal = (env: Env): boolean => {
+  const global = env['TYPEVAULT_GLOBAL']?.toLowerCase()
+  return (isSet(global) && global !== '0' && global !== 'false') || isSet(env['TYPEVAULT_DIR'])
+}
 
 /** The selected vault, or undefined when no project vault is found from `cwd`. Never falls back to the global one. */
 export function findLayout(env: Env, cwd: string = process.cwd()): Layout | undefined {

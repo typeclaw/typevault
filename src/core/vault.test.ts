@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { Admin } from './admin'
-import { decodeSecretKey, seal, type SecretKey, unseal } from './crypto'
+import { decodeSecretKey, generateSigningKey, seal, type SecretKey, unseal } from './crypto'
 import { fromBase64, fromUtf8, utf8 } from './encoding'
 import { signerOf } from './entries'
 import { TypeVaultError } from './errors'
@@ -212,11 +212,27 @@ describe('integrity', () => {
   it('rejects a manifest rolled back to an older signed copy', async () => {
     const file = join(root, 'vault', 'signers.json')
     const before = readFileSync(file, 'utf8')
-    await admin.setSigner('ci', 'AAAA', ['member'])
+    await admin.setSigner('ci', generateSigningKey().signPublic, ['member'])
     await admin.removeSigner('ci')
     await open([owner])
     writeFileSync(file, before)
     await expect(open([owner])).rejects.toMatchObject({ code: 'tampered' })
+  })
+
+  it('validates signer ids, public keys and tiers', async () => {
+    const { signPublic } = generateSigningKey()
+    await expect(admin.setSigner('bad id', signPublic, ['member'])).rejects.toMatchObject({ code: 'invalid' })
+    await expect(admin.setSigner('ci', 'garbage', ['member'])).rejects.toMatchObject({ code: 'invalid' })
+    await expect(admin.setSigner('ci', signPublic, ['missing'])).rejects.toMatchObject({ code: 'not_found' })
+    await expect(admin.setSigner('ci', signPublic, [])).rejects.toMatchObject({ code: 'invalid' })
+    await expect(admin.setSigner('ci', signPublic, ['member'])).resolves.toBeUndefined()
+  })
+
+  it('errors without bumping manifests when signer or ceiling ids are missing', async () => {
+    const before = (await open([owner])).state.seqs
+    await expect(admin.removeSigner('missing')).rejects.toMatchObject({ code: 'not_found' })
+    await expect(admin.removeCeiling('missing')).rejects.toMatchObject({ code: 'not_found' })
+    expect((await open([owner])).state.seqs).toEqual(before)
   })
 
   it('rejects a vault whose owner key changed after it was first trusted', async () => {

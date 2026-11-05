@@ -22,27 +22,41 @@ export type WebEntry = {
 export async function promptFields(
   entry: WebEntry,
   show: (url: string, code: string) => void,
+  options: { readonly ttlMs?: number } = {},
 ): Promise<Record<string, Field>> {
   const identity = await generateX25519Identity()
   const server = await startPromptServer()
   try {
     const code = matchCode()
-    const handle = server.open({
-      name: entry.name,
-      ...(entry.preset === undefined ? {} : { preset: entry.preset }),
-      tier: entry.tier ?? 'your default tier',
-      reason: `Store ${entry.name} from your terminal`,
-      requester: 'typevault set',
-      code,
-      recipients: [await identityToRecipient(identity)],
-      expiresAt: new Date(Date.now() + TTL_MS),
-    })
+    const handle = server.open(
+      {
+        name: entry.name,
+        ...(entry.preset === undefined ? {} : { preset: entry.preset }),
+        tier: entry.tier ?? 'your default tier',
+        reason: `Store ${entry.name} from your terminal`,
+        requester: 'typevault set',
+        code,
+        recipients: [await identityToRecipient(identity)],
+        expiresAt: new Date(Date.now() + (options.ttlMs ?? TTL_MS)),
+      },
+      { validate: true },
+    )
     show(handle.url, code)
-    const payload = decodePayload(await unseal([identity], await handle.done))
-    if (payload.name !== entry.name) {
-      throw new TypeVaultError('tampered', 'the submitted secret does not match this entry')
+    try {
+      const payload = decodePayload(await unseal([identity], await handle.done))
+      if (payload.name !== entry.name) {
+        throw new TypeVaultError('tampered', 'the submitted secret does not match this entry')
+      }
+      await handle.accept()
+      return { ...payload.fields }
+    } catch (error) {
+      await handle.reject(
+        error instanceof TypeVaultError
+          ? error
+          : new TypeVaultError('unavailable', 'the submitted secret could not be read'),
+      )
+      throw error
     }
-    return { ...payload.fields }
   } finally {
     await server.stop()
   }

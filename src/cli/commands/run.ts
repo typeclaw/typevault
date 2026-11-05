@@ -7,7 +7,7 @@ import { envEligible, envFor, explicitNames, resolveEnvRefs, secretValues } from
 import { appendAudit } from '../../audit/log'
 import { signerOf } from '../../core/entries'
 import { TypeVaultError } from '../../core/errors'
-import { ENTRY_NAME_SYNTAX } from '../../core/naming'
+import { ENTRY_NAME_SYNTAX, matchesOnly } from '../../core/naming'
 import { importFrom, ONEPASSWORD_VIAS, type ImportSource, type OnePasswordVia, read1Password } from '../../import'
 import { createRedactor, type Redactor, scrubFile } from '../../redact'
 import { openDirect, resolveAccess } from '../context'
@@ -46,8 +46,10 @@ export const run = defineCommand({
     if (command.length === 0)
       throw new TypeVaultError('invalid', 'usage: typevault run [--only ...] -- <command> [args...]')
     const access = (await resolveAccess(process.env)).access
-    const only = csv(args.only)
+    const only = repeated(rawArgs.slice(0, dash), '--only').flatMap(csv)
     const values = await access.values(only, args.reason)
+    const unmatched = only.filter((pattern) => !values.some((value) => matchesOnly(value.name, [pattern])))
+    if (unmatched.length > 0) note(`warning: --only matched no entries: ${unmatched.join(', ')}`)
     const policy = { ownTiers: await access.ownTiers(), explicit: explicitNames(only) }
     const env = envFor(values, new Date(), policy)
     // The child gets its secrets, never the key or grant that opens the vault.
@@ -66,14 +68,28 @@ export const run = defineCommand({
       ...Object.values(env),
       ...Object.values(refs.env),
     ])
-    const child = Bun.spawn(command, {
-      env: { ...inherited, ...env, ...refs.env },
-      // Own the group so descendants receive forwarded signals, and terminal Ctrl-C reaches them only once.
-      detached: process.platform !== 'win32',
-      stdin: 'inherit',
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
+    const child = (() => {
+      try {
+        return Bun.spawn(command, {
+          env: { ...inherited, ...env, ...refs.env },
+          // Own the group so descendants receive forwarded signals, and terminal Ctrl-C reaches them only once.
+          detached: process.platform !== 'win32',
+          stdin: 'inherit',
+          stdout: 'pipe',
+          stderr: 'pipe',
+        })
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'EACCES')) {
+          note(error.message)
+          return error.code === 'ENOENT' ? 127 : 126
+        }
+        throw error
+      }
+    })()
+    if (typeof child === 'number') {
+      process.exitCode = child
+      return
+    }
     const signals = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const
     const forward = (signal: NodeJS.Signals): void => {
       if (process.platform === 'win32') {

@@ -82,3 +82,8 @@ it('selects the global vault with -g even inside a project', async () => {
   expect(layoutFrom({ ...env, TYPEVAULT_GLOBAL: '1' }, project).scope).toBe('global')
   expect(layoutFrom({ TYPEVAULT_DIR: join(base, 'elsewhere') }, project).vault).toBe(join(base, 'elsewhere'))
 })
+
+it.each(['0', 'false', 'FALSE'])('does not select the global vault for TYPEVAULT_GLOBAL=%s', async (value) => {
+  const { layout } = await initLocalVault(join(project, '.typevault'), await machineFounder(), env)
+  expect(layoutFrom({ ...env, TYPEVAULT_GLOBAL: value }, project).vault).toBe(layout.vault)
+})

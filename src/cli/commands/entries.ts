@@ -172,11 +172,9 @@ export const set = defineCommand({
     const given = parseFields(repeated(rawArgs, '--field'), { ...known, ...suggested })
     const tier = args.tier ?? existing?.tier ?? process.env['TYPEVAULT_TIER']
     const target = preset?.input ?? defaultFieldOf(previous) ?? '$default'
-    const fromStdin = args['stdin-json']
-      ? parseFieldsJson(await readStdin())
-      : args.stdin
-        ? { [target]: await readStdin() }
-        : {}
+    const stdin = args.stdin || args['stdin-json'] ? await readStdin() : undefined
+    if (args.stdin && stdin === '') throw new TypeVaultError('invalid', '--stdin did not contain a value')
+    const fromStdin = args['stdin-json'] ? parseFieldsJson(stdin ?? '') : args.stdin ? { [target]: stdin ?? '' } : {}
     const typed: Record<string, Field> = {}
     for (const [field, value] of Object.entries(fromStdin)) {
       if (typeof value !== 'string') {
@@ -215,6 +213,9 @@ export const set = defineCommand({
       : {}
     const fields = { ...given, ...typed, ...fromWeb }
     const merged = { ...(args.replace ? {} : previous), ...fields }
+    if (Object.keys(merged).length === 0) {
+      throw new TypeVaultError('invalid', 'set needs at least one field')
+    }
     if (args.env !== undefined && defaultFieldOf(merged) === undefined) {
       throw new TypeVaultError(
         'invalid',

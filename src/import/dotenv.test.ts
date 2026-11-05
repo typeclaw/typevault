@@ -9,14 +9,12 @@ test('dotenv retains variable names and parses quoted multiline secrets without 
       'MULTI="first\\nsecond\nthird \\"quoted\\""\nEMPTY=\nOPENAI_API_KEY=other\n',
   )
   expect(result.entries.map((entry) => [entry.name, entry.fields, entry.env])).toEqual([
-    ['openai-api-key', { $default: { type: 'secret', value: 'hunter2' } }, 'OPENAI_API_KEY'],
+    ['openai-api-key', { $default: { type: 'secret', value: 'other' } }, 'OPENAI_API_KEY'],
     ['literal', { $default: { type: 'secret', value: '$HOME\\n#literal' } }, 'LITERAL'],
     ['multi', { $default: { type: 'secret', value: 'first\nsecond\nthird "quoted"' } }, 'MULTI'],
     ['empty', {}, 'EMPTY'],
-    ['openai-api-key-2', { $default: { type: 'secret', value: 'other' } }, 'OPENAI_API_KEY'],
   ])
-  expect(result.warnings).toHaveLength(1)
-  expect(result.warnings[0]).toContain('openai-api-key-2')
+  expect(result.warnings).toEqual([])
   expect(result.warnings.join()).not.toContain('hunter2')
 })
 

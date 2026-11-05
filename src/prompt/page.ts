@@ -92,3 +92,11 @@ export function expiredPage(): string {
 <p class="reason">This one-time request is no longer available. Ask the agent for a new link and match code.</p>`,
   )
 }
+
+export function rejectedPage(): string {
+  return shell(
+    'Submission rejected',
+    `<p class="eyebrow">Secret request</p><h1>Secret not accepted</h1>
+<p class="reason">The encrypted submission did not match this request. Ask the agent for a new link and match code.</p>`,
+  )
+}

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { closeSync, existsSync, openSync, readFileSync, rmSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -182,7 +182,8 @@ export async function startBackground(
   ensureDir(layout.run, 0o700)
   // A background daemon has no terminal: its output goes to a log, so a failed start can say why.
   const logPath = join(layout.run, 'daemon.log')
-  const log = openSync(logPath, 'w', 0o600)
+  const logOffset = existsSync(logPath) ? statSync(logPath).size : 0
+  const log = openSync(logPath, 'a', 0o600)
   // The child starts in its private run directory, never the project's: Bun reads bunfig.toml (a preload) and .env from
   // its directory, and anyone who can edit a checkout (an agent) could have it read the key off stdin. So it is handed
   // the vault by path. Its private state is where this process resolved it: `env` may lack the HOME this process fell
@@ -215,17 +216,20 @@ export async function startBackground(
   }
   // Two starts racing: the one that loses exits with a conflict while the other's daemon is already serving.
   if (await isDaemonAlive(layout.agentSocket)) return
-  throw new TypeVaultError('unavailable', `the typevault daemon did not start: ${whyNotStarted(logPath)}`)
+  throw new TypeVaultError('unavailable', `the typevault daemon did not start: ${whyNotStarted(logPath, logOffset)}`)
 }
 
-/** Prefer the cause over a runtime's source excerpt, with where to read the rest. */
-function whyNotStarted(logPath: string): string {
+/** Prefer the current start's cause over a runtime's source excerpt, with where to read the rest. */
+function whyNotStarted(logPath: string, offset: number): string {
   const lines = existsSync(logPath)
-    ? readFileSync(logPath, 'utf8')
+    ? readFileSync(logPath)
+        .subarray(offset)
+        .toString('utf8')
         .split('\n')
         .map((line) => line.trim())
         .filter((line) => line !== '')
     : []
   const first = lines.find((line) => line.startsWith('typevault:') || /^\w*error:/i.test(line)) ?? lines[0]
-  return first === undefined ? `no output (see ${logPath})` : `${first} (full log: ${logPath})`
+  const message = first?.replace(/^typevault:\s*/, '')
+  return message === undefined ? `no output (see ${logPath})` : `${message} (full log: ${logPath})`
 }
