@@ -80,6 +80,15 @@ variables (`PATH`, `NODE_OPTIONS`, ...) are refused, and a reference naming a va
 - `typevault get` prints `text` fields but refuses other field types without `--reveal`;
   `--json` prints `{field: {type, value}}` with non-text values redacted. Prefer `run`.
 
+`redact` and `scrub` need known values: use the same active grant that read the secrets. A revoked or expired live
+grant is refused; a new grant with no read history also fails instead of reporting a clean transcript. Neither command
+recovers another grant's history or broadens its access. Values shorter than four Unicode characters are not matched;
+if no matchable values are available, the commands fail.
+
+`scrub` preserves bytes outside matches and refuses symbolic links; pass the target's path explicitly. Each failing
+path is reported with its reason, and the remaining files are still processed. Any failure makes the command exit
+nonzero. Use `typevault scrub -- -name.log` for filenames beginning with `-`.
+
 ---
 
 Back to the [README](../README.md).

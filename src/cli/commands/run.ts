@@ -110,6 +110,12 @@ async function redactorFor(): Promise<Redactor> {
     resolved.kind === 'direct'
       ? secretValues(await resolved.access.values([], 'redact'))
       : await resolved.access.readValues()
+  if (!values.some((value) => Array.from(value).length >= 4)) {
+    throw new TypeVaultError(
+      'unavailable',
+      'No redactable values are available; use the still-active grant that read the secrets',
+    )
+  }
   return createRedactor(values)
 }
 
@@ -128,10 +134,22 @@ export const scrub = defineCommand({
   },
   args: { files: { type: 'positional', description: 'Files to scrub', required: true } },
   async run({ args, rawArgs }) {
-    const redactor = await redactorFor()
-    const files = rawArgs.filter((arg) => !arg.startsWith('-'))
+    const dash = rawArgs.indexOf('--')
+    const before = dash === -1 ? rawArgs : rawArgs.slice(0, dash)
+    const option = before.find((arg) => arg.startsWith('-'))
+    if (option !== undefined) throw new TypeVaultError('invalid', `Unknown scrub option: ${option}`)
+    const files = dash === -1 ? before : [...before, ...rawArgs.slice(dash + 1)]
     if (files.length === 0) throw new TypeVaultError('invalid', `usage: typevault scrub <file>... (got ${args.files})`)
-    for (const file of files) if (await scrubFile(file, redactor)) print(file)
+    const redactor = await redactorFor()
+    for (const file of files) {
+      try {
+        if (await scrubFile(file, redactor)) print(file)
+      } catch (error) {
+        if (!(error instanceof TypeVaultError)) throw error
+        note(`typevault: ${error.message}`)
+        process.exitCode = 1
+      }
+    }
   },
 })
 
