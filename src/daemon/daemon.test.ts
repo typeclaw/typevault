@@ -67,8 +67,11 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-  await daemon.stop()
-  rmSync(base, { recursive: true, force: true })
+  try {
+    await daemon.stop()
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
 })
 
 it('stops cleanly when the host asks it to over the control socket', async () => {
@@ -216,6 +219,69 @@ describe('live grants', () => {
 })
 
 describe('secret prompt', () => {
+  it('retries failed binds on the next request without restarting (#53)', async () => {
+    await daemon.stop()
+    const other = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('other') })
+    const port = other.port
+    try {
+      if (port === undefined) throw new Error('Expected a TCP listener')
+      daemon = await startDaemon({ layout, env, keys: [owner], prompt: { port } })
+      const { token } = await grant('default', { tiers: ['member'] })
+      const access = new LiveAccess(layout.agentSocket, token)
+      const request = () =>
+        access.call(
+          '/v1/request',
+          { name: 'resend', preset: 'api_key', reason: 'mail' },
+          z.object({ id: z.string(), url: z.string(), code: z.string() }),
+        )
+      // Both requests share startup; neither failure may poison the next attempt.
+      await Promise.all([
+        expect(request()).rejects.toMatchObject({ code: 'unavailable' }),
+        expect(request()).rejects.toMatchObject({ code: 'unavailable' }),
+      ])
+      await other.stop(true)
+
+      const opened = await request()
+
+      expect(new URL(opened.url).port).toBe(String(port))
+      expect((await fetch(opened.url, { signal: AbortSignal.timeout(5_000) })).status).toBe(200)
+    } finally {
+      await other.stop(true)
+    }
+  })
+
+  it('finishes lock cleanup after a failed prompt bind (#53)', async () => {
+    await daemon.stop()
+    const other = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('other') })
+    try {
+      const port = other.port
+      if (port === undefined) throw new Error('Expected a TCP listener')
+      daemon = await startDaemon({ layout, env, keys: [owner], prompt: { port } })
+      const { token } = await grant('default', { tiers: ['member'] })
+      await expect(
+        new LiveAccess(layout.agentSocket, token).call('/v1/request', { name: 'resend', reason: 'mail' }, z.json()),
+      ).rejects.toMatchObject({ code: 'unavailable' })
+      const head = readAudit(layout).at(-1)
+      expect(head).toBeDefined()
+
+      await daemon.stop()
+
+      const files = [
+        layout.agentSocket,
+        layout.controlSocket,
+        ...daemon.ceilings.map((ceiling) => layout.adminSocket(ceiling.name)),
+        join(layout.run, 'daemon.pid'),
+      ]
+      expect(files.filter((file) => existsSync(file))).toEqual([])
+      expect(isLockHeld(layout.daemonLock)).toBe(false)
+      const anchor: unknown = JSON.parse(readFileSync(layout.anchorsFile, 'utf8').trim().split('\n').at(-1) ?? 'null')
+      expect(anchor).toMatchObject({ seq: head?.seq, hash: head?.hash })
+      daemon = await startDaemon({ layout, env, keys: [owner] })
+    } finally {
+      await other.stop(true)
+    }
+  })
+
   it('stores what the page submits, encrypted to the tier, without the daemon seeing plaintext', async () => {
     const { token } = await grant('default', { tiers: ['member'], label: 'session:p' })
     const access = new LiveAccess(layout.agentSocket, token)

@@ -47,9 +47,11 @@ export class PromptRequests {
   }
 
   #prompt(): Promise<PromptServer> {
-    const server = this.#server ?? startPromptServer(this.#options)
-    this.#server = server
-    return server
+    this.#server ??= startPromptServer(this.#options).catch((error: unknown) => {
+      this.#server = undefined
+      throw error
+    })
+    return this.#server
   }
 
   async open(session: RequestSession, input: RequestInput): Promise<{ id: string; url: string; code: string }> {
@@ -128,7 +130,11 @@ export class PromptRequests {
   }
 
   async stop(): Promise<void> {
-    if (this.#server !== undefined) await (await this.#server).stop()
+    // A failed startup has no listener to stop, including one still settling when shutdown begins.
+    await this.#server?.then(
+      (server) => server.stop(),
+      () => undefined,
+    )
   }
 }
 
