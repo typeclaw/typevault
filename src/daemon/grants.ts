@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 
 import { z } from 'zod'
 
@@ -8,6 +8,7 @@ import { randomHex, randomToken, sha256Hex } from '../core/crypto'
 import { utf8 } from '../core/encoding'
 import { TypeVaultError } from '../core/errors'
 import { atomicWrite } from '../core/fsx'
+import { readJsonFile } from '../core/json-file'
 
 const RecordSchema = z.object({
   id: z.string(),
@@ -54,7 +55,7 @@ export class GrantStore {
 
   constructor(path: string) {
     this.#path = path
-    this.#records = existsSync(path) ? z.array(RecordSchema).parse(JSON.parse(readFileSync(path, 'utf8'))) : []
+    this.#records = existsSync(path) ? readJsonFile(path, z.array(RecordSchema)) : []
   }
 
   #save(): void {

@@ -31,8 +31,13 @@ export function parseTtl(text: string): number {
     case 's':
     case 'm':
     case 'h':
-    case 'd':
-      return amount * UNITS[unit]
+    case 'd': {
+      const ms = amount * UNITS[unit]
+      if (ms <= 0 || ms > 3650 * UNITS.d) {
+        throw new TypeVaultError('invalid', 'TTL must be greater than zero and at most 3650 days')
+      }
+      return ms
+    }
     default:
       throw new TypeVaultError('invalid', `invalid TTL unit "${unit}"`)
   }

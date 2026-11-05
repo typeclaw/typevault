@@ -1,11 +1,12 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 
 import { z } from 'zod'
 
 import { type PublicKey, type SecretKey, sign, verifySignature } from './crypto'
-import { canonicalJson, fromUtf8, type Json, utf8 } from './encoding'
+import { canonicalJson, type Json, utf8 } from './encoding'
 import { TypeVaultError } from './errors'
 import { atomicWrite } from './fsx'
+import { readJsonFile } from './json-file'
 import type { Layout } from './layout'
 import { RevisionMarks } from './revisions'
 
@@ -96,11 +97,13 @@ export const ceilingsDoc = (ceilings: VaultState['ceilings'], key: SecretKey, se
   signedDoc({ v: 1, seq, ceilings }, key)
 
 function readSigned<T extends Json>(path: string, schema: z.ZodType<T>, owner: PublicKey): T {
-  const doc = z.object({ body: z.json(), sig: z.string() }).parse(JSON.parse(fromUtf8(readFileSync(path))))
+  const doc = readJsonFile(path, z.object({ body: z.json(), sig: z.string() }))
   if (!verifySignature(owner.signPublic, utf8(canonicalJson(doc.body)), doc.sig)) {
     throw new TypeVaultError('tampered', `${path} is not signed by the vault owner`)
   }
-  return schema.parse(doc.body)
+  const parsed = schema.safeParse(doc.body)
+  if (!parsed.success) throw new TypeVaultError('tampered', `${path} has a malformed manifest body`)
+  return parsed.data
 }
 
 /** The owner key is trusted on first use (or pinned via TYPEVAULT_OWNER); a changed key is tampering. */
@@ -114,7 +117,7 @@ function checkTrust(layout: Layout, owner: PublicKey, env: Readonly<Record<strin
     atomicWrite(layout.trustFile, JSON.stringify({ ownerSignPublic: owner.signPublic }), 0o600)
     return
   }
-  const trust = TrustSchema.parse(JSON.parse(fromUtf8(readFileSync(layout.trustFile))))
+  const trust = readJsonFile(layout.trustFile, TrustSchema)
   if (trust.ownerSignPublic !== owner.signPublic) {
     throw new TypeVaultError('tampered', 'vault owner key changed since this machine first trusted it')
   }
@@ -123,7 +126,7 @@ function checkTrust(layout: Layout, owner: PublicKey, env: Readonly<Record<strin
 export function readOwner(layout: Layout): PublicKey {
   if (!existsSync(layout.ownerFile))
     throw new TypeVaultError('not_found', `no vault at ${layout.vault} (run typevault init)`)
-  return PublicKeySchema.parse(JSON.parse(fromUtf8(readFileSync(layout.ownerFile))))
+  return readJsonFile(layout.ownerFile, PublicKeySchema)
 }
 
 export function loadState(layout: Layout, env: Readonly<Record<string, string | undefined>> = process.env): VaultState {

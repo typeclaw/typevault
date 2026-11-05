@@ -503,6 +503,13 @@ describe('sealed grants', () => {
   const issue = (ttlMs = 60_000) =>
     issueSealedGrant(vault, { tiers: ['member'], only: ['github/*'], ttlMs, label: 'ci:deploy' })
 
+  it('rejects truncated and lowercased sealed grants as invalid input', async () => {
+    const token = await issue()
+    for (const malformed of [token.slice(0, -8), token.toLowerCase()]) {
+      await expect(readSealedGrant(malformed)).rejects.toMatchObject({ code: 'invalid' })
+    }
+  })
+
   it('carries exactly the granted entries', async () => {
     const access = new SealedAccess(await readSealedGrant(await issue()), globalLayout(envIn(root)), {})
     expect((await access.values([])).map((value) => value.fields['password']?.value)).toEqual(

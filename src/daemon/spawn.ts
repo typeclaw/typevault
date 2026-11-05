@@ -193,13 +193,14 @@ export async function startBackground(
   throw new TypeVaultError('unavailable', `the typevault daemon did not start: ${whyNotStarted(logPath)}`)
 }
 
-/** The first line the daemon wrote before dying, with where to read the rest. */
+/** Prefer the cause over a runtime's source excerpt, with where to read the rest. */
 function whyNotStarted(logPath: string): string {
-  const first = existsSync(logPath)
+  const lines = existsSync(logPath)
     ? readFileSync(logPath, 'utf8')
         .split('\n')
         .map((line) => line.trim())
-        .find((line) => line !== '')
-    : undefined
+        .filter((line) => line !== '')
+    : []
+  const first = lines.find((line) => line.startsWith('typevault:') || /^\w*error:/i.test(line)) ?? lines[0]
   return first === undefined ? `no output (see ${logPath})` : `${first} (full log: ${logPath})`
 }
