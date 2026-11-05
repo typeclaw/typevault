@@ -19,8 +19,10 @@ import {
   sealMemberKey,
   writeIdentity,
 } from '../../core/identity'
-import { vaultIdOf } from '../../core/layout'
+import { type Layout, localLayout, vaultIdOf } from '../../core/layout'
+import { readOwner } from '../../core/state'
 import { Vault } from '../../core/vault'
+import { worktreeVaults } from '../../core/worktrees'
 import { endLiveGrants, stopDaemon } from '../../daemon/spawn'
 import { export1Password, identityTitle } from '../../export/1password'
 import { ONEPASSWORD_VIAS } from '../../import/1password-live'
@@ -243,19 +245,42 @@ export const lock = defineCommand({
   async run() {
     const layout = findLayout(process.env)
     if (layout === undefined) throw new TypeVaultError('not_found', 'no vault here')
-    // A session unlocked in another worktree would only be shared here again on the next read.
-    const worktrees = await worktreeSessions(layout, process.env)
+    const env = process.env
+    // An owner that can't be read doesn't prove another vault, so lock still reaches it.
+    const ownerOf = (target: Layout): string | undefined => {
+      try {
+        return readOwner(target).signPublic
+      } catch (error) {
+        if (error instanceof TypeVaultError) return undefined
+        throw error
+      }
+    }
+    const own = ownerOf(layout)
+    const vaults = layout.scope === 'local' ? await worktreeVaults(layout.vault) : []
+    // A grant issued in a worktree outlives its daemon, so this vault's worktrees all count, running or not.
+    const sameVault = vaults
+      .map((vault) => localLayout(vault, env))
+      .filter((worktree) => {
+        const other = ownerOf(worktree)
+        return own === undefined || other === undefined || other === own
+      })
+    // A session unlocked in any other worktree would only be shared here again on the next read, so it stops too, but
+    // the grants of a different vault are its own.
+    const sessions = await worktreeSessions(layout, env)
+    const otherSessions = sessions.filter((session) => !sameVault.some((worktree) => worktree.vault === session.vault))
+    const stop = (target: Layout): Promise<boolean> =>
+      stopDaemon(target).then(
+        () => true,
+        (error: unknown) => {
+          if (error instanceof TypeVaultError && error.code === 'not_found') return false
+          throw error
+        },
+      )
     let locked = false
-    for (const target of [...worktrees, layout]) {
-      locked =
-        (await stopDaemon(target).then(
-          () => true,
-          (error: unknown) => {
-            if (error instanceof TypeVaultError && error.code === 'not_found') return false
-            throw error
-          },
-        )) || locked
-      await endLiveGrants(target, process.env)
+    for (const target of otherSessions) locked = (await stop(target)) || locked
+    for (const target of [...sameVault, layout]) {
+      locked = (await stop(target)) || locked
+      await endLiveGrants(target, env)
     }
     print(locked ? 'locked' : 'already locked')
   },
