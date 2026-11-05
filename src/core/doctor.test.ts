@@ -51,6 +51,69 @@ it('resolves a git merge conflict by keeping the highest valid revision', async 
   expect((await vault.find(name))?.payload.fields).toEqual({ key: { type: 'secret' as const, value: 'two' } })
 })
 
+it.each(['main', 'incoming'])('resolves every hunk from a real git merge on %s', async (branch) => {
+  const git = async (...args: string[]): Promise<number> => {
+    const proc = Bun.spawn(
+      ['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', ...args],
+      {
+        cwd: vault.layout.entries,
+        env: {
+          PATH: process.env['PATH'],
+          HOME: root,
+          GIT_MASTER: '1',
+          GIT_CONFIG_NOSYSTEM: '1',
+          GIT_CONFIG_GLOBAL: join(root, 'gitconfig'),
+        },
+        stdin: 'ignore',
+        stdout: 'ignore',
+        stderr: 'ignore',
+        timeout: 10_000,
+      },
+    )
+    return proc.exited
+  }
+  const tier = await vault.keyring.unlock('team')
+  if (tier === undefined) throw new Error('team key is unavailable')
+  const signer = signerOf(tier)
+  const base = await vault.put(
+    { name, fields: { key: { type: 'secret' as const, value: 'base' } }, tier: 'team' },
+    signer,
+  )
+  const file = join(vault.layout.entries, `${base.envelope.id}.json`)
+  const side = (rev: number, value: string) =>
+    sealEntry(
+      {
+        ...base.envelope,
+        rev,
+        at: new Date(Date.parse(base.envelope.at) + rev).toISOString(),
+        payload: { ...base.payload, fields: { key: { type: 'secret' as const, value } } },
+      },
+      vault.state,
+      signer,
+    )
+  const newest = await side(3, 'newest')
+  const older = await side(2, 'older')
+  expect(await git('init', '-q', '-b', 'main')).toBe(0)
+  expect(await git('add', '.')).toBe(0)
+  expect(await git('commit', '-qm', 'base')).toBe(0)
+  expect(await git('checkout', '-qb', 'incoming')).toBe(0)
+  writeFileSync(file, `${JSON.stringify(newest, null, 2)}\n`)
+  expect(await git('commit', '-qam', 'incoming')).toBe(0)
+  expect(await git('checkout', '-q', 'main')).toBe(0)
+  writeFileSync(file, `${JSON.stringify(older, null, 2)}\n`)
+  expect(await git('commit', '-qam', 'main')).toBe(0)
+  expect(await git('checkout', '-q', branch)).toBe(0)
+  expect(await git('merge', branch === 'main' ? 'incoming' : 'main')).toBe(1)
+  expect(readFileSync(file, 'utf8').match(/^<<<<<<< /gm)).toHaveLength(2)
+
+  const report = await doctor(vault, true)
+
+  expect(report.problems).toEqual([])
+  expect(report.mergesResolved).toEqual([`${newest.id}.json`])
+  expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(newest)
+  expect((await vault.find(name))?.payload.fields).toEqual({ key: { type: 'secret' as const, value: 'newest' } })
+})
+
 it('removes the older copy when two files hold the same name', async () => {
   await vault.put({ name, fields: { key: { type: 'secret' as const, value: 'zero' } }, tier: 'team' }, signerOf(owner))
   const kept = await vault.put(
