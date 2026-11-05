@@ -1,3 +1,5 @@
+import { pipeline } from 'node:stream/promises'
+
 import { defineCommand } from 'citty'
 import { z } from 'zod'
 
@@ -11,8 +13,25 @@ import { createRedactor, type Redactor, scrubFile } from '../../redact'
 import { openDirect, resolveAccess } from '../context'
 import { csv, note, print, readStdin, repeated } from '../output'
 
-async function pump(stream: ReadableStream<Uint8Array>, redactor: Redactor, sink: NodeJS.WriteStream): Promise<void> {
-  for await (const chunk of stream.pipeThrough(redactor.stream())) sink.write(chunk)
+async function pump(
+  stream: ReadableStream<Uint8Array>,
+  redactor: Redactor,
+  sink: NodeJS.WriteStream,
+  onClosed: () => void = () => {},
+): Promise<void> {
+  const isClosed = (error: unknown): boolean =>
+    error instanceof Error && 'code' in error && (error.code === 'EPIPE' || error.code === 'ENOTCONN')
+  const onError = (error: Error) => {
+    if (isClosed(error)) onClosed()
+  }
+  sink.on('error', onError)
+  try {
+    await pipeline(stream.pipeThrough(redactor.stream()), sink, { end: false })
+  } catch (error) {
+    if (!isClosed(error)) throw error
+  } finally {
+    sink.off('error', onError)
+  }
 }
 
 export const run = defineCommand({
@@ -68,12 +87,14 @@ export const run = defineCommand({
         if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error
       }
     }
+    // A closed reader must not leave the child or its descendants blocked on their output pipes.
+    const onClosed = () => forward('SIGKILL')
     for (const signal of signals) process.on(signal, forward)
     try {
       const [code] = await Promise.all([
         child.exited,
-        pump(child.stdout, redactor, process.stdout),
-        pump(child.stderr, redactor, process.stderr),
+        pump(child.stdout, redactor, process.stdout, onClosed),
+        pump(child.stderr, redactor, process.stderr, onClosed),
       ])
       process.exitCode = code
     } finally {
