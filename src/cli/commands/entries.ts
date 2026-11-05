@@ -24,19 +24,9 @@ import { accessOf, resolveAccess } from '../context'
 import { csv, note, print, readStdin, repeated, table } from '../output'
 import { openBrowser, promptFields } from '../web-prompt'
 
-/** Runs after the listing it annotates. A daemon from before an upgrade lacks the route, and its listing is still good. */
+/** Runs after the listing it annotates. */
 async function noteUnreadableEntries(access: Access): Promise<void> {
-  let unreadable: number
-  try {
-    unreadable = await access.unreadableEntries()
-  } catch (error) {
-    if (error instanceof TypeVaultError && error.code === 'not_found') {
-      return note(
-        'this daemon is too old to report entry files it skips: restart it (typevault daemon stop) to see them',
-      )
-    }
-    throw error
-  }
+  const unreadable = await access.unreadableEntries()
   if (unreadable > 0)
     note(`${unreadable} entry file(s) could not be trusted or read and are not listed: run typevault doctor`)
 }
