@@ -114,9 +114,14 @@ async function shareWorktreeSession(layout: Layout, env: Env): Promise<boolean> 
   const [unlocked] = await worktreeSessions(layout, env)
   if (unlocked === undefined) return false
   const token = readFileSync(unlocked.sessionFile, 'utf8').trim()
-  await callDaemon(unlocked.agentSocket, '/v1/attach', { vault: layout.vault }, z.object({ ok: z.literal(true) }), {
-    token,
-  })
+  try {
+    await callDaemon(unlocked.agentSocket, '/v1/attach', { vault: layout.vault }, z.object({ ok: z.literal(true) }), {
+      token,
+    })
+  } catch (error) {
+    if (error instanceof TypeVaultError) return false
+    throw error
+  }
   return true
 }
 

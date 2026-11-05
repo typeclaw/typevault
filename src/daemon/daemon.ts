@@ -9,7 +9,7 @@ import { atomicWrite, ensureDir } from '../core/fsx'
 import { claimDaemon, type DaemonClaim, refuseForeignDaemon } from '../core/holder'
 import { type Layout, localLayout } from '../core/layout'
 import { holdLock, isLockHeld } from '../core/lock'
-import { loadState } from '../core/state'
+import { loadState, readOwner } from '../core/state'
 import { Vault } from '../core/vault'
 import { worktreeVaults } from '../core/worktrees'
 import { adminRoutes, type Ceiling } from './admin-routes'
@@ -238,6 +238,9 @@ async function worktreeLayout(vault: Vault, env: DaemonOptions['env'], target: s
     throw new TypeVaultError('denied', `${target} is not this vault in a worktree of its repository`)
   }
   const layout = localLayout(target, env)
+  if (readOwner(layout).signPublic !== vault.state.owner.signPublic) {
+    throw new TypeVaultError('tampered', "this worktree's vault has a different owner")
+  }
   loadState(layout, { ...env, TYPEVAULT_OWNER: vault.state.owner.signPublic })
   return layout
 }

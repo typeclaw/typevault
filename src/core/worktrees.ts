@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from 'node:fs'
-import { dirname, join, relative } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 
 /** git's own variables (set inside hooks, say) would point it at another repository than the vault's. */
 const gitEnv = (): Record<string, string | undefined> =>
@@ -29,11 +29,23 @@ export async function worktreeVaults(vault: string): Promise<readonly string[]> 
   if (top === undefined || top === '') return []
   const path = relative(realpathSync(top), own)
   const listed = (await git(dirname(own), ['worktree', 'list', '--porcelain'])) ?? ''
-  return listed
+  const checkouts = listed
     .split('\n')
     .filter((line) => line.startsWith('worktree '))
-    .map((line) => join(line.slice('worktree '.length), path))
-    .filter((candidate) => existsSync(join(candidate, 'owner.json')))
-    .map((candidate) => realpathSync(candidate))
-    .filter((candidate) => candidate !== own)
+    .map((line) => line.slice('worktree '.length))
+  if (!checkouts.some((checkout) => existsSync(checkout) && realpathSync(checkout) === realpathSync(top))) return []
+  const common = (await git(dirname(own), ['rev-parse', '--git-common-dir']))?.trim()
+  if (common === undefined) return []
+  const repository = realpathSync(resolve(dirname(own), common))
+  const vaults: string[] = []
+  for (const checkout of checkouts) {
+    const candidate = join(checkout, path)
+    if (!existsSync(join(candidate, 'owner.json')) || realpathSync(candidate) === own) continue
+    // A copied .git can still list the original repository's worktrees. They must point back to this repository.
+    const other = (await git(checkout, ['rev-parse', '--git-common-dir']))?.trim()
+    if (other !== undefined && realpathSync(resolve(checkout, other)) === repository) {
+      vaults.push(realpathSync(candidate))
+    }
+  }
+  return vaults
 }

@@ -120,10 +120,14 @@ function checkTrust(layout: Layout, owner: PublicKey, env: Readonly<Record<strin
   }
 }
 
-export function loadState(layout: Layout, env: Readonly<Record<string, string | undefined>> = process.env): VaultState {
+export function readOwner(layout: Layout): PublicKey {
   if (!existsSync(layout.ownerFile))
     throw new TypeVaultError('not_found', `no vault at ${layout.vault} (run typevault init)`)
-  const owner = PublicKeySchema.parse(JSON.parse(fromUtf8(readFileSync(layout.ownerFile))))
+  return PublicKeySchema.parse(JSON.parse(fromUtf8(readFileSync(layout.ownerFile))))
+}
+
+export function loadState(layout: Layout, env: Readonly<Record<string, string | undefined>> = process.env): VaultState {
+  const owner = readOwner(layout)
   checkTrust(layout, owner, env)
   const tiers = readSigned(layout.tiersFile, TiersBody, owner)
   const members = readSigned(layout.membersFile, MembersBody, owner)
