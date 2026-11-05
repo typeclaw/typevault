@@ -4,13 +4,11 @@ import { defineCommand } from 'citty'
 import { z } from 'zod'
 
 import { envEligible, envFor, explicitNames, resolveEnvRefs, secretValues } from '../../access/env'
-import { appendAudit } from '../../audit/log'
-import { signerOf } from '../../core/entries'
 import { TypeVaultError } from '../../core/errors'
 import { ENTRY_NAME_SYNTAX, matchesOnly } from '../../core/naming'
 import { importFrom, ONEPASSWORD_VIAS, type ImportSource, type OnePasswordVia, read1Password } from '../../import'
 import { createRedactor, type Redactor, scrubFile } from '../../redact'
-import { openDirect, resolveAccess } from '../context'
+import { resolveAccess } from '../context'
 import { csv, note, print, readStdin, repeated } from '../output'
 
 async function pump(
@@ -239,7 +237,7 @@ const isVia = (value: string): value is OnePasswordVia => ONEPASSWORD_VIAS.some(
 export const importCommand = defineCommand({
   meta: {
     name: 'import',
-    description: 'Import a password-manager export, or 1Password directly, into a tier (owner, one transaction)',
+    description: 'Import a password-manager export, or 1Password directly, into a tier (one transaction)',
   },
   args: {
     source: { type: 'positional', required: true, description: SOURCES.join(' | ') },
@@ -262,7 +260,10 @@ export const importCommand = defineCommand({
     }
     const via = args.via ?? 'sdk'
     if (!isVia(via)) throw new TypeVaultError('invalid', `--via must be one of: ${ONEPASSWORD_VIAS.join(', ')}`)
-    const vault = await openDirect(process.env)
+    const resolved = await resolveAccess(process.env)
+    if (resolved.kind === 'sealed') {
+      throw new TypeVaultError('unavailable', 'import needs an unlocked vault or a live grant, not a sealed grant')
+    }
     const password = args['password-stdin'] ? await readStdin() : undefined
     const result =
       args.path === undefined
@@ -273,22 +274,8 @@ export const importCommand = defineCommand({
             tags: repeated(rawArgs, '--tag'),
           })
         : await importFrom(args.source, { path: args.path, ...(password === undefined ? {} : { password }) })
-    const tier = args.tier
-    const stored = await vault.putMany(
-      result.entries.map((entry) => ({ ...entry, tier })),
-      async (target) => {
-        const key = vault.keyring.owner ?? (await vault.keyring.unlock(target))
-        if (key === undefined) throw new TypeVaultError('denied', `no key here can write tier "${target}"`)
-        return signerOf(key)
-      },
-    )
-    await appendAudit(vault.layout, {
-      action: 'import',
-      mode: 'direct',
-      tiers: [tier],
-      entries: stored.map((e) => e.payload.name),
-    })
+    const stored = await resolved.access.importEntries(result.entries, args.tier)
     for (const warning of result.warnings) note(`warning: ${warning}`)
-    note(`imported ${stored.length} entries into ${tier}`)
+    note(`imported ${stored.length} entries into ${args.tier}`)
   },
 })

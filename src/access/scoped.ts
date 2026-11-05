@@ -200,13 +200,32 @@ export class ScopedVault implements Access {
     throw new TypeVaultError('invalid', `choose a tier with --tier (one of: ${writable.join(', ')})${viaEnv}`)
   }
 
-  async #write(input: SetInput, tier: string): Promise<EntrySummary> {
-    if (
-      !allowsTier(this.#chain, this.#vault.state, tier) ||
-      !allowsEntry(this.#chain, this.#vault.state, tier, input.name)
-    ) {
-      throw new TypeVaultError('denied', `this grant cannot write ${input.name} in tier "${tier}"`)
+  /**
+   * Writes every input into `tier` as one transaction (an import): all of them land, or none do. As in `set`, the
+   * scope is checked under the write's lock against freshly read state.
+   */
+  importEntries(inputs: readonly SetInput[], tier: string): Promise<readonly EntrySummary[]> {
+    return withLock(this.#vault.layout.lockFile, 'exclusive', async () => {
+      this.#vault.refresh()
+      for (const input of inputs) this.#checkWritable(input.name, tier)
+      const stored = await this.#vault.putMany(
+        inputs.map((input) => entryInputOf(input, tier)),
+        (target) => this.#signerFor(target),
+        (found) => this.#allows(found),
+      )
+      await this.#audit({ action: 'import', entries: stored.map((entry) => entry.payload.name), tiers: [tier] })
+      return stored.map((entry) => toSummary(valueOf(entry)))
+    })
+  }
+
+  #checkWritable(name: EntryName, tier: string): void {
+    if (!allowsTier(this.#chain, this.#vault.state, tier) || !allowsEntry(this.#chain, this.#vault.state, tier, name)) {
+      throw new TypeVaultError('denied', `this grant cannot write ${name} in tier "${tier}"`)
     }
+  }
+
+  async #write(input: SetInput, tier: string): Promise<EntrySummary> {
+    this.#checkWritable(input.name, tier)
     const existing = await this.#vault.find(input.name)
     if (existing !== undefined && !this.#allows(existing)) {
       throw new TypeVaultError('denied', `the name ${input.name} is not available to this grant`)

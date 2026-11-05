@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto'
+
 import { parseTtl } from '../access/scope'
 import { ScopedVault } from '../access/scoped'
 import { appendAudit } from '../audit/log'
@@ -6,7 +8,19 @@ import type { Vault } from '../core/vault'
 import { PACKAGE_VERSION } from '../core/version'
 import { type GrantStore, type ResolvedGrant, SESSION_CEILING } from './grants'
 import { type Handler, json, parseBody } from './http'
-import { AttachBody, DeriveBody, MoveBody, NameBody, RequestBody, SetBody, ValuesBody, WaitBody } from './protocol'
+import {
+  AttachBody,
+  DeriveBody,
+  ImportBody,
+  ImportEntries,
+  ImportStageBody,
+  MoveBody,
+  NameBody,
+  RequestBody,
+  SetBody,
+  ValuesBody,
+  WaitBody,
+} from './protocol'
 import type { PromptRequests } from './requests'
 
 export type DaemonContext = {
@@ -46,8 +60,29 @@ function session(context: DaemonContext, request: Request): { grant: ResolvedGra
   return { grant, access }
 }
 
+type StagedImport = {
+  readonly grant: string
+  readonly parts: Uint8Array[]
+  bytes: number
+  exp: number
+}
+
+/** What staged imports may hold in memory at once, across every grant. */
+const MAX_STAGED_BYTES = 64 << 20
+const STAGED_TTL_MS = 10 * 60_000
+
 /** Routes on the agent socket. Every call needs a live grant; none can create a grant from nothing. */
 export function agentRoutes(context: DaemonContext): Readonly<Record<string, Handler>> {
+  // An import, or even one entry, can exceed a request body, so its serialized JSON arrives in chunks and is written
+  // by one final call, all or nothing.
+  const staged = new Map<string, StagedImport>()
+  const stagedBy = (upload: string, grant: string): StagedImport => {
+    const found = staged.get(upload)
+    if (found === undefined || found.grant !== grant || found.exp <= Date.now()) {
+      throw new TypeVaultError('not_found', 'no such import upload (it may have expired)')
+    }
+    return found
+  }
   return {
     // The PID lets `stopDaemon` signal exactly the process that answers here, never one a stale PID file names. The
     // version lets a CLI from another release tell this daemon isn't its own.
@@ -69,6 +104,44 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
       return json(await session(context, request).access.values(only, reason))
     },
     '/v1/set': async (request) => json(await session(context, request).access.set(await parseBody(request, SetBody))),
+    '/v1/import/stage': async (request) => {
+      const { grant } = session(context, request)
+      const body = await parseBody(request, ImportStageBody)
+      const now = Date.now()
+      for (const [id, upload] of staged) if (upload.exp <= now) staged.delete(id)
+      const part = Buffer.from(body.chunk, 'base64')
+      const bytes = part.byteLength
+      const held = [...staged.values()].reduce((sum, upload) => sum + upload.bytes, 0)
+      if (held + bytes > MAX_STAGED_BYTES) throw new TypeVaultError('invalid', 'this import is too large (over 64 MiB)')
+      const id = body.upload ?? randomBytes(16).toString('base64url')
+      const upload =
+        body.upload === undefined
+          ? { grant: grant.record.id, parts: [], bytes: 0, exp: 0 }
+          : stagedBy(id, grant.record.id)
+      upload.parts.push(part)
+      upload.bytes += bytes
+      upload.exp = now + STAGED_TTL_MS
+      staged.set(id, upload)
+      return json({ upload: id })
+    },
+    '/v1/import': async (request) => {
+      const { grant, access } = session(context, request)
+      const { upload, tier } = await parseBody(request, ImportBody)
+      const { parts } = stagedBy(upload, grant.record.id)
+      staged.delete(upload)
+      let value: unknown
+      try {
+        value = JSON.parse(Buffer.concat(parts).toString('utf8'))
+      } catch (error) {
+        if (error instanceof SyntaxError) throw new TypeVaultError('invalid', 'the staged import is not JSON')
+        throw error
+      }
+      const entries = ImportEntries.safeParse(value)
+      if (!entries.success) {
+        throw new TypeVaultError('invalid', `bad import: ${entries.error.issues[0]?.message ?? 'invalid'}`)
+      }
+      return json(await access.importEntries(entries.data, tier))
+    },
     '/v1/remove': async (request) => {
       const { name, tier } = await parseBody(request, NameBody)
       await session(context, request).access.remove(name, tier)

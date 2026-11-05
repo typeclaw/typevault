@@ -452,6 +452,23 @@ it.skipIf(process.platform === 'win32')('keeps sockets private to the owner', as
   expect(mode & 0o777).toBe(0o600)
 })
 
+it('checks an import against tiers as they are when it writes, not as the daemon last read them', async () => {
+  // given a trusted grant the daemon has already served while trusted included member
+  const access = new LiveAccess(layout.agentSocket, (await grant('default', { tiers: ['trusted'] })).token)
+  await access.list()
+
+  // when another process drops that include, and the grant imports into member right away
+  await new Admin(await Vault.open(layout, [owner], {})).exclude('trusted', 'member')
+  const importing = access.importEntries(
+    [{ name: n('acme/new'), fields: { key: { type: 'secret', value: 'v' } }, tags: [], source: 'csv:1' }],
+    'member',
+  )
+
+  // then it is refused, and nothing is written
+  await expect(importing).rejects.toMatchObject({ code: 'denied' })
+  expect(await (await Vault.open(layout, [owner], {})).find(n('acme/new'))).toBeUndefined()
+})
+
 describe('unlocked session', () => {
   it.each([
     ['lower', 'owner'],
@@ -528,6 +545,64 @@ describe('unlocked session', () => {
     expect(existsSync(layout.sessionFile)).toBe(false)
     daemon = await startDaemon({ layout, env, keys: [owner] })
     await expect(new LiveAccess(layout.agentSocket, token).list()).rejects.toMatchObject({ code: 'denied' })
+  })
+
+  it('imports through the session in one transaction, and never past a grant', async () => {
+    // given a daemon started as an unlocked session, and a grant for member only
+    await daemon.stop()
+    daemon = await startDaemon({ layout, env, keys: [owner], session: { ttlMs: 60_000 } })
+    const session = new LiveAccess(layout.agentSocket, readFileSync(layout.sessionFile, 'utf8'))
+    const member = new LiveAccess(layout.agentSocket, (await grant('default', { tiers: ['member'] })).token)
+    const item = (name: string, source: string) => ({
+      name: n(name),
+      fields: { key: { type: 'secret' as const, value: `value of ${name}` } },
+      tags: [],
+      source,
+    })
+
+    // when the session imports two items
+    const stored = await session.importEntries([item('acme/one', 'csv:1'), item('acme/two', 'csv:2')], 'member')
+
+    // then both land in member, audited as one import
+    expect(stored.map((e): string => e.name)).toEqual(['acme/one', 'acme/two'])
+    expect(readAudit(layout).at(-1)).toMatchObject({
+      action: 'import',
+      mode: 'live',
+      tiers: ['member'],
+      entries: ['acme/one', 'acme/two'],
+    })
+    expect((await member.get(n('acme/two'))).fields['key']?.value).toBe('value of acme/two')
+
+    // and the member grant can't take over stripe, which only trusted reaches, nor write anything with it
+    await expect(
+      member.importEntries([item('acme/three', 'csv:3'), item('stripe', 'csv:4')], 'member'),
+    ).rejects.toMatchObject({ code: 'denied' })
+    const vault = await Vault.open(layout, [owner], {})
+    expect((await vault.find(n('stripe')))?.envelope.tier).toBe('trusted')
+    expect(await vault.find(n('acme/three'))).toBeUndefined()
+  })
+
+  it('imports more than one request body can carry, even in a single entry, as one transaction', async () => {
+    // given an unlocked session, and three items, one of them alone over 1 MiB once serialized
+    await daemon.stop()
+    daemon = await startDaemon({ layout, env, keys: [owner], session: { ttlMs: 60_000 } })
+    const session = new LiveAccess(layout.agentSocket, readFileSync(layout.sessionFile, 'utf8'))
+    const sizes = { one: 1_200_000, two: 600_000, three: 10 }
+    const items = Object.entries(sizes).map(([name, size], index) => ({
+      name: n(`big/${name}`),
+      fields: { note: { type: 'text' as const, value: 'é'.repeat(size / 2) } },
+      tags: [],
+      source: `csv:${index}`,
+    }))
+
+    // when the session imports them
+    const stored = await session.importEntries(items, 'member')
+
+    // then all three land, audited as one import
+    expect(stored.map((e): string => e.name)).toEqual(['big/one', 'big/two', 'big/three'])
+    expect(readAudit(layout).filter((record) => record['action'] === 'import')).toHaveLength(1)
+    const big = await (await Vault.open(layout, [owner], {})).find(n('big/one'))
+    expect(big?.payload.fields['note']?.value).toBe('é'.repeat(600_000))
   })
 
   it('stays out of reach of a ceiling named "session"', async () => {
