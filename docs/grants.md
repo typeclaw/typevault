@@ -20,7 +20,7 @@ timestamp and a digest, and the owner keeps one only by pinning that exact write
 and the forgery gets a different digest.
 
 ```sh
-typevault grant --tier member --only 'tv://github/*' --ttl 30m --label ci:deploy
+typevault grant --tier member --only 'typevault://github/*' --ttl 30m --label ci:deploy
 typevault grant ls
 typevault grant revoke --label ci:deploy         # also revokes grants derived from it
 TYPEVAULT_GRANT=@/run/agent/grant typevault run -- ./deploy.sh

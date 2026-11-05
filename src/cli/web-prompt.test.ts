@@ -4,7 +4,7 @@ import { seal } from '../core/crypto'
 import { parseEntryName } from '../core/naming'
 import { promptFields } from './web-prompt'
 
-const name = parseEntryName('tv://openai')
+const name = parseEntryName('typevault://openai')
 
 async function submit(url: string, payloadName: string): Promise<void> {
   const page = await (await fetch(url)).text()
@@ -43,6 +43,9 @@ test('returns the fields typed on the page', async () => {
 })
 
 test('rejects a submission for another entry', async () => {
-  const fields = promptFields({ name, preset: 'api_key', tier: 'default' }, (url) => void submit(url, 'tv://stripe'))
+  const fields = promptFields(
+    { name, preset: 'api_key', tier: 'default' },
+    (url) => void submit(url, 'typevault://stripe'),
+  )
   await expect(fields).rejects.toMatchObject({ code: 'tampered' })
 })

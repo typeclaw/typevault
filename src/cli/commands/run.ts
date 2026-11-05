@@ -41,7 +41,7 @@ export const run = defineCommand({
     if (skipped.length > 0) note(`not loaded (from included tiers; name them in --only): ${skipped.join(', ')}`)
     const clash = Object.keys(refs.env).find((name) => Object.hasOwn(env, name))
     if (clash !== undefined)
-      throw new TypeVaultError('conflict', `${clash} is both a tv:// reference and an entry's variable`)
+      throw new TypeVaultError('conflict', `${clash} is both a typevault:// reference and an entry's variable`)
     const redactor = createRedactor([
       ...secretValues([...values, ...refs.values]),
       ...Object.values(env),

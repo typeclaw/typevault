@@ -33,7 +33,7 @@ typevault ls                     # entries your grant reaches
 typevault ls --json
 ```
 
-Entries are named `tv://<service>[/<account>][#<field>]`: `tv://openai`, `tv://github/bot#password` (`github/bot`
+Entries are named `typevault://<service>[/<account>][#<field>]`: `typevault://openai`, `typevault://github/bot#password` (`github/bot`
 works too). Field names keep their case; a ref matches exactly, else the one field equal ignoring case.
 
 Each field stores its own type: `secret` (sensitive string), `text` (public string), `totp` (seed or otpauth URI), or `oauth` (an object with `access_token` and optional `refresh_token`, `expires_at`, `token_url`, `client_id`, `client_secret`). OAuth reads yield the access token and refresh expired credentials when possible.
@@ -55,13 +55,13 @@ Without a preset, `set --stdin` stores `$default` (or overwrites the existing de
 
 ```sh
 typevault run --reason "run migrations" -- psql
-typevault run --only tv://github/bot --reason "log in to GitHub" -- sh -c 'agent-browser fill @e3 "$GITHUB_BOT_PASSWORD"'
-typevault run --only 'tv://openai,tv://stripe' -- bun run deploy
+typevault run --only typevault://github/bot --reason "log in to GitHub" -- sh -c 'agent-browser fill @e3 "$GITHUB_BOT_PASSWORD"'
+typevault run --only 'typevault://openai,typevault://stripe' -- bun run deploy
 ```
 
-- Env names are derived from the name: `tv://github/bot#password` -> `GITHUB_BOT_PASSWORD`, `tv://openai` -> `OPENAI`,
-  `tv://stripe#Webhook Secret` -> `STRIPE_WEBHOOK_SECRET`, unless the entry sets `--env`. To pick the name yourself, set the variable to a reference:
-  `DATABASE_URL=tv://postgres/prod#url typevault run -- ...` (the scheme is required here).
+- Env names are derived from the name: `typevault://github/bot#password` -> `GITHUB_BOT_PASSWORD`, `typevault://openai` -> `OPENAI`,
+  `typevault://stripe#Webhook Secret` -> `STRIPE_WEBHOOK_SECRET`, unless the entry sets `--env`. To pick the name yourself, set the variable to a reference:
+  `DATABASE_URL=typevault://postgres/prod#url typevault run -- ...` (the scheme is required here).
 - Write `$VAR` references in single quotes or as arguments the child expands, so your shell doesn't expand them
   first: `typevault run -- sh -c 'curl -H "Authorization: Bearer $OPENAI" ...'`.
 - TOTP fields hold the current code, never the seed.
@@ -83,13 +83,13 @@ Redaction is best effort: values under 4 characters, hex or composed encodings (
 ## Store secrets
 
 ```sh
-printf '%s' "$VALUE" | typevault set tv://openai --preset api_key --stdin
-typevault set tv://github/bot --preset password --field username=bot --stdin < password.txt
-typevault set tv://google --preset oauth --stdin < oauth.json   # a file the human wrote; don't read it
+printf '%s' "$VALUE" | typevault set typevault://openai --preset api_key --stdin
+typevault set typevault://github/bot --preset password --field username=bot --stdin < password.txt
+typevault set typevault://google --preset oauth --stdin < oauth.json   # a file the human wrote; don't read it
 # JSON accepts strings or typed fields: {"$default":"...","Webhook Secret":{"type":"secret","value":"..."}}
 # OAuth JSON: {"access_token":"...","refresh_token":"..."}
-typevault mv tv://github/bot tv://github/ci
-typevault rm tv://github/ci
+typevault mv typevault://github/bot typevault://github/ci
+typevault rm typevault://github/ci
 ```
 
 Never type a secret value into a command, even piped: the command text lands in your transcript. Read it from an
@@ -130,7 +130,7 @@ be revoked. Never let it reach output; capture it into a variable, or a sealed o
 ```sh
 typevault init                                         # new project vault with a `default` tier
 export TYPEVAULT_GRANT=$(typevault grant --tier default --ttl 1h --label session:abc)
-DEPLOY_GRANT=$(typevault grant --tier member --only 'tv://github/*' --ttl 30m --label ci:deploy)
+DEPLOY_GRANT=$(typevault grant --tier member --only 'typevault://github/*' --ttl 30m --label ci:deploy)
 (umask 077; typevault grant --tier member --sealed --label ci:build > build.grant)   # offline, for CI; no revocation
 TYPEVAULT_GRANT=@build.grant typevault ls
 typevault grant ls                                     # metadata only, no tokens

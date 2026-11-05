@@ -246,7 +246,9 @@ describe('ScopedVault', () => {
     expect(envFor([lower], new Date(0), { ownTiers: ['member'], explicit: ['planted'] })).toEqual({
       PLANTED_PASSWORD: 'x',
     })
-    expect(envFor([lower], new Date(0), { ownTiers: ['member'], explicit: explicitNames(['tv://Planted']) })).toEqual({
+    expect(
+      envFor([lower], new Date(0), { ownTiers: ['member'], explicit: explicitNames(['typevault://Planted']) }),
+    ).toEqual({
       PLANTED_PASSWORD: 'x',
     })
   })
@@ -336,7 +338,7 @@ describe('ScopedVault', () => {
     expect(env).toEqual({ GITHUB_BOT_RECOVERY_CODE: 'r' })
   })
 
-  it('resolves a tv:// reference to a custom field, ignoring case when only one field matches', async () => {
+  it('resolves a typevault:// reference to a custom field, ignoring case when only one field matches', async () => {
     const base = await member().get(n('github/bot'))
     const get = async () => ({
       ...base,
@@ -344,9 +346,9 @@ describe('ScopedVault', () => {
     })
     const resolved = await resolveEnvRefs(
       {
-        EXACT: 'tv://github/bot#Recovery Code',
-        LOOSE: 'tv://github/bot#recovery code',
-        OLD: 'tv://github/bot#PASSWORD',
+        EXACT: 'typevault://github/bot#Recovery Code',
+        LOOSE: 'typevault://github/bot#recovery code',
+        OLD: 'typevault://github/bot#PASSWORD',
       },
       get,
       new Date(0),
@@ -354,13 +356,13 @@ describe('ScopedVault', () => {
     expect(resolved.env).toEqual({ EXACT: 'r', LOOSE: 'r', OLD: 'hunter2-bot' })
   })
 
-  it('resolves tv:// references in env values and leaves other variables alone', async () => {
+  it('resolves typevault:// references in env values and leaves other variables alone', async () => {
     const scope = member()
     const resolved = await resolveEnvRefs(
       {
-        BOT_PASSWORD: 'tv://github/bot#password',
+        BOT_PASSWORD: 'typevault://github/bot#password',
         BOT_USER: 'typevault://github/bot#username',
-        ME: 'TV://GitHub/Personal#password',
+        ME: 'TYPEVAULT://GitHub/Personal#password',
         HOME_PAGE: 'https://example.com',
       },
       (name) => scope.get(name),
@@ -369,23 +371,23 @@ describe('ScopedVault', () => {
     expect(resolved.env).toEqual({ BOT_PASSWORD: 'hunter2-bot', BOT_USER: 'bot', ME: 'hunter2-me' })
   })
 
-  it('refuses a tv:// reference outside the scope, to a missing field or in a loader variable', async () => {
+  it('refuses a typevault:// reference outside the scope, to a missing field or in a loader variable', async () => {
     const scope = member()
     const resolve = (env: Record<string, string>) => resolveEnvRefs(env, (name) => scope.get(name), new Date(0))
-    await expect(resolve({ KEY: 'tv://stripe' })).rejects.toMatchObject({ code: 'not_found' })
-    await expect(resolve({ KEY: 'tv://github/bot#url' })).rejects.toMatchObject({ code: 'not_found' })
-    await expect(resolve({ NODE_OPTIONS: 'tv://github/bot' })).rejects.toMatchObject({ code: 'invalid' })
+    await expect(resolve({ KEY: 'typevault://stripe' })).rejects.toMatchObject({ code: 'not_found' })
+    await expect(resolve({ KEY: 'typevault://github/bot#url' })).rejects.toMatchObject({ code: 'not_found' })
+    await expect(resolve({ NODE_OPTIONS: 'typevault://github/bot' })).rejects.toMatchObject({ code: 'invalid' })
   })
 
   it.each(['http_proxy', 'https_proxy', 'npm_config_userconfig'])(
-    'refuses a tv:// reference in lowercase %p before reading the entry',
+    'refuses a typevault:// reference in lowercase %p before reading the entry',
     async (variable) => {
       const reads: string[] = []
       const get = async (name: string) => {
         reads.push(name)
         return member().get(n(name))
       }
-      await expect(resolveEnvRefs({ [variable]: 'tv://github/bot' }, get, new Date(0))).rejects.toMatchObject({
+      await expect(resolveEnvRefs({ [variable]: 'typevault://github/bot' }, get, new Date(0))).rejects.toMatchObject({
         code: 'invalid',
       })
       expect(reads).toEqual([])

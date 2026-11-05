@@ -25,22 +25,22 @@ const SEGMENT = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const MAX_SEGMENTS = 2
 
 /**
- * The one way to point at an entry: `tv://<service>[/<account>][#<field>]`. `typevault://` is an alias, and the
- * scheme may be left out (`github/bot#password`) as shorthand. Every name, `--only` pattern and env reference goes
- * through the parsers below.
+ * The one way to point at an entry: `typevault://<service>[/<account>][#<field>]`. The scheme may be left out
+ * (`github/bot#password`) as shorthand. Every name, `--only` pattern and env reference goes through the parsers
+ * below.
  */
-export const ENTRY_NAME_SYNTAX = 'tv://<service>[/<account>]'
+export const ENTRY_NAME_SYNTAX = 'typevault://<service>[/<account>]'
 export const ENTRY_REF_SYNTAX = `${ENTRY_NAME_SYNTAX}[#<field>]`
 
-const REF_SCHEME = /^(?:tv|typevault):\/\//i
+const REF_SCHEME = /^typevault:\/\//i
 
-/** True when `input` carries the `tv://` (or `typevault://`) scheme, as an env value `run` resolves. */
+/** True when `input` carries the `typevault://` scheme, as an env value `run` resolves. */
 export const hasRefScheme = (input: string): boolean => REF_SCHEME.test(input.trim())
 
 /** An `--only` pattern (a name or a glob) in the form names are stored in: no scheme, lowercase. */
 export const entryPattern = (input: string): string => input.trim().replace(REF_SCHEME, '').toLowerCase()
 
-/** Parses `[tv://]<service>[/<account>]`. Names are case-insensitive and stored lowercase, without the scheme. */
+/** Parses `[typevault://]<service>[/<account>]`. Names are case-insensitive, stored lowercase and without the scheme. */
 export function parseEntryName(input: string): EntryName {
   const name = entryPattern(input)
   const segments = name.split('/')
@@ -68,7 +68,7 @@ export const isFieldName = (field: string): boolean =>
   field.trim() === field &&
   !/[\p{Cc}=]/u.test(field)
 
-/** Parses `[tv://]<service>[/<account>][#<field>]`. The field is everything after the first `#`. */
+/** Parses `[typevault://]<service>[/<account>][#<field>]`. The field is everything after the first `#`. */
 export function parseEntryRef(input: string): EntryRef {
   const hash = input.indexOf('#')
   if (hash === -1) return { name: parseEntryName(input), field: undefined }
@@ -156,7 +156,7 @@ function assertNever(value: never): never {
 /**
  * `github/bot` + `password` becomes `GITHUB_BOT_PASSWORD`, and `Secret Access Key` becomes `..._SECRET_ACCESS_KEY`.
  * Undefined when no letter or digit of the field survives (a non-Latin name): such a field is reachable only
- * through a `tv://` ref.
+ * through a `typevault://` ref.
  */
 export function deriveEnvName(name: EntryName, field: string): string | undefined {
   if (field === '$default') return name.toUpperCase().replace(/[/-]/g, '_')

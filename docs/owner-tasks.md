@@ -51,7 +51,7 @@ account has is fine) for items tagged `agents`. To import only some fields of an
 tag it `<tag>/<field>` instead (`myproject-typevault/Account Id`, one tag per field): the name matches the field as
 TypeVault stores it (`password`, `totp`, or a custom field's label), ignoring case. The plain tag wins when an item
 carries both, and the `<tag>/...` tags aren't copied into the vault.
-Logins, passwords, secure notes, API credentials and SSH keys are imported as `tv://<title>/<vault>`; other categories
+Logins, passwords, secure notes, API credentials and SSH keys are imported as `typevault://<title>/<vault>`; other categories
 and archived items are skipped.
 
 ### Importing from files
