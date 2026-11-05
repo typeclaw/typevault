@@ -1,4 +1,4 @@
-import { watch } from 'node:fs'
+import { existsSync, watch } from 'node:fs'
 
 import { defineCommand } from 'citty'
 import { z } from 'zod'
@@ -85,6 +85,16 @@ export const audit = defineCommand({
       shown = records.length
     }
     show()
-    if (args.follow) await new Promise<never>(() => watch(layout.auditLog, show))
+    if (args.follow) {
+      if (!existsSync(layout.auditLog)) {
+        throw new TypeVaultError(
+          'not_found',
+          `no audit log at ${layout.auditLog}; retry after the first audited action`,
+        )
+      }
+      await new Promise<never>((_resolve, reject) => {
+        watch(layout.auditLog, show).on('error', reject)
+      })
+    }
   },
 })

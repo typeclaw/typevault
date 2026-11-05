@@ -1,9 +1,10 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, rmSync, writeFileSync } from 'node:fs'
 
 import { z } from 'zod'
 
 import { randomHex } from './crypto'
 import { TypeVaultError } from './errors'
+import { readJsonFile } from './json-file'
 import { hostId, type Layout } from './layout'
 
 type Env = Readonly<Record<string, string | undefined>>
@@ -62,16 +63,18 @@ export function claimDaemon(layout: Layout, env: Env): DaemonClaim {
 
 function readHolder(layout: Layout): Holder | undefined {
   if (!existsSync(layout.daemonHolder)) return undefined
-  let text: string
   try {
-    text = readFileSync(layout.daemonHolder, 'utf8')
+    return readJsonFile(layout.daemonHolder, HolderSchema)
   } catch (error) {
     if (isCode(error, 'ENOENT')) return undefined
+    if (error instanceof TypeVaultError && error.code === 'tampered') {
+      throw new TypeVaultError(
+        'tampered',
+        `${layout.daemonHolder} is malformed; if its daemon is gone for good, delete this file and retry`,
+      )
+    }
     throw error
   }
-  const parsed = HolderSchema.safeParse(JSON.parse(text))
-  if (!parsed.success) throw new TypeVaultError('tampered', `${layout.daemonHolder} is malformed`)
-  return parsed.data
 }
 
 const inUse = (layout: Layout, holder: Holder): TypeVaultError =>

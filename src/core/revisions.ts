@@ -1,8 +1,9 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 
 import { z } from 'zod'
 
 import { atomicWrite } from './fsx'
+import { readJsonFile } from './json-file'
 
 const MarksSchema = z.record(z.string(), z.number().int())
 
@@ -17,7 +18,7 @@ export class RevisionMarks {
 
   constructor(path: string) {
     this.#path = path
-    this.#marks = existsSync(path) ? MarksSchema.parse(JSON.parse(readFileSync(path, 'utf8'))) : {}
+    this.#marks = existsSync(path) ? readJsonFile(path, MarksSchema) : {}
   }
 
   /** False when `rev` is older than a revision already seen for `id`. */

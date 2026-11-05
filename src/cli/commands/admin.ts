@@ -12,8 +12,9 @@ import { founderOf, initGlobalVault, initLocalVault } from '../../core/init'
 import { globalLayout, type Layout, LOCAL_VAULT_DIR, localLayout } from '../../core/layout'
 import { parseEntryName } from '../../core/naming'
 import { Vault } from '../../core/vault'
+import { GrantStore } from '../../daemon/grants'
 import { stopDaemon } from '../../daemon/spawn'
-import { openAdmin, openDirect, openPublic, wantsGlobal } from '../context'
+import { layoutFrom, openAdmin, openDirect, openPublic, wantsGlobal } from '../context'
 import { csv, note, print, table } from '../output'
 import { ensureIdentity, identityArgs } from './members'
 
@@ -189,6 +190,7 @@ export const doctor = defineCommand({
     },
   },
   async run({ args }) {
+    new GrantStore(layoutFrom(process.env).grantsFile)
     const vault = await openDirect(process.env)
     if (args.fix === true) {
       const adoption = await adoptCertWrites(vault, { expired: csv(args['adopt-expired'] ?? '').map(parseExpiredPin) })

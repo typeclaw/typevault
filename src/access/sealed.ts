@@ -95,19 +95,32 @@ async function memberTierKey(vault: Vault, tiers: readonly string[]): Promise<Se
 
 /** Opens `tvg1:...` or `@/path/to/file` holding one. */
 export async function readSealedGrant(raw: string): Promise<SealedBundle> {
-  const text = (raw.startsWith('@') ? readFileSync(raw.slice(1), 'utf8') : raw).trim()
-  const [identity, ciphertext] = text.slice(PREFIX.length).split('.')
-  if (!text.startsWith(PREFIX) || identity === undefined || ciphertext === undefined) {
-    throw new TypeVaultError('invalid', 'not a sealed typevault grant')
+  let text = raw
+  if (raw.startsWith('@')) {
+    try {
+      text = readFileSync(raw.slice(1), 'utf8')
+    } catch (error) {
+      if (!(error instanceof Error)) throw error
+      throw new TypeVaultError('invalid', `cannot read the sealed grant file "${raw.slice(1)}"`)
+    }
   }
-  const plaintext = await unseal([fromUtf8(fromBase64Url(identity))], fromBase64Url(ciphertext))
-  const parsed = BundleSchema.safeParse(JSON.parse(fromUtf8(plaintext)))
-  if (!parsed.success) throw new TypeVaultError('invalid', 'malformed sealed grant')
-  const { tiers, only, entries, ...rest } = parsed.data
-  return {
-    ...rest,
-    scope: { tiers, only },
-    entries: entries.map(toEntryValue),
+  try {
+    const token = text.trim()
+    const [identity, ciphertext, extra] = token.slice(PREFIX.length).split('.')
+    if (!token.startsWith(PREFIX) || !identity || !ciphertext || extra !== undefined) {
+      throw new TypeVaultError('invalid', 'not a sealed typevault grant')
+    }
+    const plaintext = await unseal([fromUtf8(fromBase64Url(identity))], fromBase64Url(ciphertext))
+    const parsed = BundleSchema.parse(JSON.parse(fromUtf8(plaintext)))
+    const { tiers, only, entries, ...rest } = parsed
+    return {
+      ...rest,
+      scope: { tiers, only },
+      entries: entries.map(toEntryValue),
+    }
+  } catch (error) {
+    if (!(error instanceof Error)) throw error
+    throw new TypeVaultError('invalid', 'TYPEVAULT_GRANT is not a sealed typevault grant')
   }
 }
 

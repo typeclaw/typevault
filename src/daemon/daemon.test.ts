@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, parse } from 'node:path'
 
@@ -100,6 +100,27 @@ it('refuses to stop for a caller on the agent socket, which sandboxes reach', as
 })
 
 describe('live grants', () => {
+  it('keeps a malformed request body distinct from a corrupt manifest', async () => {
+    const response = await fetch('http://typevault/v1/grant', {
+      unix: layout.adminSocket('default'),
+      method: 'POST',
+      body: '{',
+    })
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({ error: { code: 'invalid' } })
+
+    const { token } = await grant('default', { tiers: ['member'] })
+    writeFileSync(layout.tiersFile, '<<<<<<< HEAD\n{}\n=======\n{}\n>>>>>>> branch\n')
+    await expect(new LiveAccess(layout.agentSocket, token).list()).rejects.toMatchObject({
+      code: 'tampered',
+      message: expect.stringContaining(layout.tiersFile),
+    })
+  })
+
+  it.each(['0s', '99999999999d'])('rejects TTL %s through the admin socket', async (ttl) => {
+    await expect(grant('default', { tiers: ['member'], ttl })).rejects.toMatchObject({ code: 'invalid' })
+  })
+
   it('serves values within the grant and audits each read with its label', async () => {
     const { token } = await grant('default', { tiers: ['member'], label: 'session:abc' })
     const access = new LiveAccess(layout.agentSocket, token)

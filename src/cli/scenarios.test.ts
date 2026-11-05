@@ -345,8 +345,8 @@ it(
     // when the owner unlocks
     const error = await fails(alice, withPassword('unlock'), line('a'))
 
-    // then the error carries the daemon's own first line and where its full log is
-    expect(error).toContain('the typevault daemon did not start: ZodError')
+    // then the error identifies the broken state and where its full log is
+    expect(error).toContain(join(runDir('alice'), 'grants.json'))
     expect(error).toContain(join(runDir('alice'), 'daemon.log'))
   },
   SCENARIO_MS,

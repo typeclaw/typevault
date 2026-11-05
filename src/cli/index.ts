@@ -75,6 +75,11 @@ if (wantsUsage) {
     }
     // citty's usage errors (unknown command, missing argument): its own runner prints usage for them.
     if (error instanceof Error && error.name === 'CLIError') await runMain(main)
-    else throw error
+    else {
+      const message = error instanceof Error ? error.message : 'unexpected error'
+      process.stderr.write(`typevault: ${message.replaceAll(/[\r\n]+/g, ' ')}\n`)
+      if (process.env['TYPEVAULT_DEBUG'] === '1') console.error(error)
+      process.exit(1)
+    }
   }
 }

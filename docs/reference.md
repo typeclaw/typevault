@@ -17,6 +17,7 @@ Environment variables, on-disk layout, and known limits.
 | `TYPEVAULT_STATE_DIR`                           | The vault's private state, instead of `checkouts/<id>/`; one machine at a time              |
 | `TYPEVAULT_RUN_DIR`                             | Where the daemon's sockets live, for a state directory too deep for a socket path           |
 | `TYPEVAULT_HOST_ID`                             | This machine's name in `daemon.holder` and audit anchors (default: the hostname)            |
+| `TYPEVAULT_DEBUG`                               | Set to `1` to include unexpected CLI error stacks in diagnostics                            |
 
 ## Layout
 

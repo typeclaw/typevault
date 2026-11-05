@@ -30,7 +30,14 @@ export function errorResponse(error: unknown): Response {
 
 export async function parseBody<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
   const text = await request.text()
-  const parsed = schema.safeParse(text === '' ? {} : JSON.parse(text))
+  let body: unknown
+  try {
+    body = text === '' ? {} : JSON.parse(text)
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new TypeVaultError('invalid', 'request body is not JSON')
+    throw error
+  }
+  const parsed = schema.safeParse(body)
   if (!parsed.success)
     throw new TypeVaultError('invalid', `bad request: ${parsed.error.issues[0]?.message ?? 'invalid'}`)
   return parsed.data
@@ -47,7 +54,6 @@ export function router(routes: Readonly<Record<string, Handler>>): (request: Req
     try {
       return await handler(request)
     } catch (error) {
-      if (error instanceof SyntaxError) return errorResponse(new TypeVaultError('invalid', 'request body is not JSON'))
       return errorResponse(error)
     }
   }

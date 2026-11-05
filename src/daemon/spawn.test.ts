@@ -136,6 +136,16 @@ async function tellToStop(daemon: Subprocess): Promise<void> {
 
 const cleaned = (): boolean => existsSync(join(layout.run, 'cleaned'))
 
+it.each(['Error', 'RangeError'])('quotes %s rather than the source excerpt before it', async (kind) => {
+  const script = join(root, 'failed.ts')
+  writeFileSync(script, `throw new ${kind}('STARTUP_CAUSE')`)
+
+  await expect(startBackground(layout, {}, [process.execPath, script])).rejects.toMatchObject({
+    code: 'unavailable',
+    message: expect.stringMatching(/: (?:error|RangeError): STARTUP_CAUSE/),
+  })
+})
+
 it('returns only once the daemon has finished cleaning up, not when its socket goes quiet', async () => {
   await standIn(SLOW_DAEMON)
 
