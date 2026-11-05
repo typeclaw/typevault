@@ -231,3 +231,26 @@ it('keeps waiting for the daemon that won a race to start, even before it opens 
     process.kill(Number(readFileSync(join(layout.run, 'winner.pid'), 'utf8')), 'SIGKILL')
   }
 })
+
+it('appends failed starts and removes the child CLI prefix from the reported reason', async () => {
+  const log = join(layout.run, 'daemon.log')
+  writeFileSync(log, 'earlier start\n')
+  const script = join(root, 'fails.ts')
+  writeFileSync(script, "console.error('typevault: no ceilings configured'); process.exit(1)\n")
+
+  await expect(startBackground(layout, {}, [process.execPath, script])).rejects.toMatchObject({
+    message: expect.stringContaining('did not start: no ceilings configured'),
+  })
+  expect(readFileSync(log, 'utf8')).toStartWith('earlier start\n')
+})
+
+it('finds the current failure after an earlier log with multibyte text', async () => {
+  // Three bytes per character: a byte offset applied to the decoded text would land past the new output.
+  writeFileSync(join(layout.run, 'daemon.log'), `${'시작'.repeat(100)}\n`)
+  const script = join(root, 'fails.ts')
+  writeFileSync(script, "console.error('typevault: no ceilings configured'); process.exit(1)\n")
+
+  await expect(startBackground(layout, {}, [process.execPath, script])).rejects.toMatchObject({
+    message: expect.stringContaining('did not start: no ceilings configured'),
+  })
+})
