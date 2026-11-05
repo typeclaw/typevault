@@ -131,8 +131,8 @@ describe('stream', () => {
     await writer.write(new TextEncoder().encode('h'))
     await writer.close()
     // Then
-    expect(new TextDecoder().decode(emitted.value)).toBe('s')
-    expect(await tail).toBe('afe [redacted]')
+    expect(new TextDecoder().decode(emitted.value)).toBe('safe ')
+    expect(await tail).toBe('[redacted]')
   })
 
   it('keeps longest matches and replacement semantics across chunks', async () => {
@@ -159,5 +159,48 @@ describe('stream', () => {
     // Then
     expect(output).toBe(text)
     expect(new Uint8Array(bytes)).toEqual(new TextEncoder().encode(text))
+  })
+
+  it('preserves arbitrary bytes around secrets at every boundary', async () => {
+    const input = Buffer.concat([
+      Buffer.from([0xff, 0xfe, 0]),
+      Buffer.from('dummy-value-0001'),
+      Buffer.from([0x80, 0xc3]),
+    ])
+    const expected = Buffer.concat([Buffer.from([0xff, 0xfe, 0]), Buffer.from('[redacted]'), Buffer.from([0x80, 0xc3])])
+    for (let boundary = 0; boundary <= input.length; boundary++) {
+      const source = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(input.subarray(0, boundary))
+          controller.enqueue(input.subarray(boundary))
+          controller.close()
+        },
+      })
+      const result = await new Response(source.pipeThrough(createRedactor(['dummy-value-0001']).stream())).arrayBuffer()
+      expect(Buffer.from(result)).toEqual(expected)
+    }
+  })
+
+  it('emits a prompt before the next input arrives', async () => {
+    const stream = createRedactor(['dummy-value-0001', 'x'.repeat(3000)]).stream()
+    const reader = stream.readable.getReader()
+    const writer = stream.writable.getWriter()
+    try {
+      const output = reader.read()
+      await writer.write(Buffer.from('Enter name: '))
+      const result = await output
+      expect(Buffer.from(result.value ?? []).toString()).toBe('Enter name: ')
+    } finally {
+      await reader.cancel()
+      await writer.close().catch((error: unknown) => {
+        if (!(error instanceof TypeError)) throw error
+      })
+    }
+  }, 2000)
+
+  it('retains a complete shorter match until a longer variant is decided', async () => {
+    expect(await streamChunks(createRedactor(['abcd', 'abcdef']), [Buffer.from('abcd'), Buffer.from('ef!')])).toBe(
+      '[redacted]!',
+    )
   })
 })
