@@ -72,7 +72,10 @@ machine's identity holds its key directly, or the key comes from `TYPEVAULT_KEY`
 `unlock` starts a daemon that holds your key until `--for` runs out (8h by default) or `typevault lock`. The vault counts
 as unlocked only while that session is running: a daemon without one (a machine member's, or one left from an older
 release) is stopped and replaced, once the password checks out. Without a grant, your CLI and your agents read through
-the session. Agents never see the password or the key, and live grants you issue work only while it runs.
+the session. Agents never see the password or the key. Live grants issued under the session, including derived grants,
+expire no later than the session and end permanently when it locks or expires. `lock` also ends abandoned sessions
+when no daemon is running. After a crash, any replacement daemon revokes the old session's token and all its grants
+before serving, even when started with a machine key instead of an unlock.
 
 One unlock serves every git worktree of the repository. An agent working in another worktree reads through a session
 the unlocked one starts there, with the worktree's own files and state, until the original session ends; `typevault

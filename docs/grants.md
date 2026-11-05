@@ -30,6 +30,12 @@ TYPEVAULT_GRANT=@/run/agent/grant typevault run -- ./deploy.sh
 Without it, a person's CLI reads through their unlocked session, and a machine member reads with its own key (direct
 mode).
 
+Live grants issued while a human session is unlocked belong to that session, even through a ceiling socket. Their
+expiry is capped at the session's, and `lock` or session expiry ends them and their descendants permanently.
+Unlocking again never revives them. Machine-member ceiling sockets running without an unlocked session issue
+independent grants: those survive daemon restarts until their own expiry or revocation. Sealed grants are independent
+of sessions and cannot be revoked by `lock`.
+
 ### Ceilings
 
 Each admin socket (`run/admin-<name>.sock`) may issue grants only up to its ceiling, signed by the owner:
