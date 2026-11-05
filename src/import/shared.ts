@@ -28,7 +28,8 @@ export function collectEntries(items: readonly ImportItem[], warnings: readonly 
   const messages = [...warnings]
   const used = new Set<string>()
   for (const item of items) {
-    const service = slugifySegment(item.title)
+    // A title with no Latin letters or digits ("코레일+") slugs to nothing, so its URL names the entry instead.
+    const service = slugifySegment(item.title, siteName(item.url))
     const base = item.container ? `${service}/${slugifySegment(item.container)}` : service
     let name = base
     let suffix = 2
@@ -72,6 +73,34 @@ export function collectEntries(items: readonly ImportItem[], warnings: readonly 
     })
   }
   return { entries, warnings: messages }
+}
+
+const GENERIC_SECOND_LEVEL: ReadonlySet<string> = new Set([
+  'ac',
+  'co',
+  'com',
+  'edu',
+  'go',
+  'gov',
+  'ne',
+  'net',
+  'or',
+  'org',
+])
+
+/**
+ * The site a web URL points at (`www.korail.com` gives `korail`) or the app an app URL opens, the last part of its
+ * bundle ID (`app://TEAMID.com.korail.KorailTalk` gives `korailtalk`).
+ */
+function siteName(raw: string | undefined): string | undefined {
+  const url = raw === undefined ? null : URL.parse(raw)
+  if (url === null) return undefined
+  const labels = url.hostname.split('.').filter((label) => label !== '')
+  const web = url.protocol === 'http:' || url.protocol === 'https:'
+  // `www.korail.co.kr` names `korail`, not `co`.
+  const site = labels.length > 2 && GENERIC_SECOND_LEVEL.has(labels.at(-2) ?? '') ? -3 : -2
+  const label = web ? (labels.at(site) ?? labels[0]) : labels.at(-1)
+  return label === undefined ? undefined : slugifySegment(label)
 }
 
 /**

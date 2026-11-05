@@ -170,14 +170,14 @@ export function deriveEnvName(name: EntryName, field: string): string | undefine
 }
 
 /** Turns arbitrary text (an import title, a vault name) into a valid name segment. */
-export function slugifySegment(raw: string): string {
+export function slugifySegment(raw: string, fallback = 'item'): string {
   const slug = raw
     .normalize('NFKD')
     .replace(/\p{M}/gu, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-  return slug === '' ? 'item' : slug
+  return slug === '' ? fallback : slug
 }
 
 /** True when `name` matches any `--only` pattern (exact names or globs such as `github/*`). */
