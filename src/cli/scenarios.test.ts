@@ -14,6 +14,7 @@ import { dirname, join, parse } from 'node:path'
 
 import { z } from 'zod'
 
+import { isLockHeld } from '../core/lock'
 import { LiveAccess } from '../daemon/live-access'
 
 // Unix socket paths are limited to ~104 bytes (108 on Windows), too short under the default temp dir on macOS and
@@ -369,6 +370,45 @@ async function unlockedVault(): Promise<Actor> {
   await ok(alice, ['set', 'typevault://openai', '--preset', 'api_key', '--stdin'], 'sk-test')
   return alice
 }
+
+const issueGrant = async (alice: Actor): Promise<string> =>
+  (await ok(alice, ['grant', '--tier', 'default', '--ttl', '1h', '--label', 'agent'])).stdout.trim()
+
+it(
+  "a daemon killed before its cleanup doesn't bring its session token back with the next unlock",
+  async () => {
+    // given an unlocked session whose daemon is killed, which leaves the grant live and the token on disk
+    const alice = await unlockedVault()
+    const run = runDir('alice')
+    const token = readFileSync(join(run, 'session.token'), 'utf8').trim()
+    process.kill(Number(readFileSync(join(run, 'daemon.pid'), 'utf8')), 'SIGKILL')
+    while (isLockHeld(join(run, 'daemon.lock'))) await Bun.sleep(10)
+
+    // when the vault is unlocked again
+    await ok(alice, withPassword('unlock'), line('a'))
+
+    // then the old token is refused
+    expect(await fails({ ...alice, TYPEVAULT_GRANT: token }, ['ls'])).toContain('this grant was revoked')
+  },
+  SCENARIO_MS,
+)
+
+it(
+  'an issued grant survives a daemon restart',
+  async () => {
+    // given a grant issued by a running session
+    const alice = await unlockedVault()
+    const token = await issueGrant(alice)
+
+    // when the daemon stops and the vault is unlocked again
+    await ok(alice, ['daemon', 'stop'])
+    await ok(alice, withPassword('unlock'), line('a'))
+
+    // then the grant still reads
+    await ok({ ...alice, TYPEVAULT_GRANT: token }, ['ls'])
+  },
+  SCENARIO_MS,
+)
 
 it(
   'audit --verify reports a damaged log as broken',
