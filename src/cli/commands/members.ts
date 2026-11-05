@@ -248,7 +248,7 @@ export const lock = defineCommand({
     let locked = false
     for (const target of [...worktrees, layout]) {
       locked =
-        (await stopDaemon(target).then(
+        (await stopDaemon(target, process.env).then(
           () => true,
           (error: unknown) => {
             if (error instanceof TypeVaultError && error.code === 'not_found') return false

@@ -67,7 +67,7 @@ export const daemon = defineCommand({
     }),
     stop: defineCommand({
       meta: { name: 'stop' },
-      run: async () => stopDaemon(layoutFrom(process.env)),
+      run: async () => stopDaemon(layoutFrom(process.env), process.env),
     }),
     status: defineCommand({
       meta: { name: 'status' },

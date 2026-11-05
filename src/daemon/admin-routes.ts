@@ -65,6 +65,7 @@ export function adminRoutes(context: DaemonContext, ceiling: Ceiling): Readonly<
         ttlMs,
         label: body.label,
         ceiling: ceiling.name,
+        ...(context.session === undefined ? {} : { parent: context.session }),
       })
       await appendAudit(context.vault.layout, {
         action: 'grant.issue',

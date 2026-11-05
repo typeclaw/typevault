@@ -8,13 +8,15 @@ import { Admin } from '../../core/admin'
 import { adoptCertWrites, type ExpiredPin } from '../../core/adopt'
 import { doctor as runDoctor } from '../../core/doctor'
 import { TypeVaultError } from '../../core/errors'
+import { claimDaemon } from '../../core/holder'
 import { founderOf, initGlobalVault, initLocalVault } from '../../core/init'
 import { globalLayout, type Layout, LOCAL_VAULT_DIR, localLayout } from '../../core/layout'
+import { withLock } from '../../core/lock'
 import { parseEntryName } from '../../core/naming'
 import { Vault } from '../../core/vault'
 import { GrantStore } from '../../daemon/grants'
 import { stopDaemon } from '../../daemon/spawn'
-import { layoutFrom, openAdmin, openDirect, openPublic, wantsGlobal } from '../context'
+import { type Env, layoutFrom, openAdmin, openDirect, openPublic, wantsGlobal } from '../context'
 import { csv, note, print, table } from '../output'
 import { ensureIdentity, identityArgs } from './members'
 
@@ -26,9 +28,17 @@ export const init = defineCommand({
     const founder = founderOf(await ensureIdentity(env, args))
     const global = wantsGlobal(env)
     const dir = join(process.cwd(), LOCAL_VAULT_DIR)
-    await stopStaleDaemon(global ? globalLayout(env) : localLayout(dir, env))
-    const { layout, owner } = global ? await initGlobalVault(founder, env) : await initLocalVault(dir, founder, env)
-    await new Admin(await Vault.open(layout, [owner], env)).addTier(STARTER_TIER)
+    const layout = global ? globalLayout(env) : localLayout(dir, env)
+    await stopStaleDaemon(layout, env)
+    await withLock(layout.daemonLock, 'exclusive', async () => {
+      const claim = claimDaemon(layout, env)
+      try {
+        const { owner } = global ? await initGlobalVault(founder, env) : await initLocalVault(dir, founder, env)
+        await new Admin(await Vault.open(layout, [owner], env)).addTier(STARTER_TIER)
+      } finally {
+        claim.release()
+      }
+    })
     print(`vault created at ${layout.vault} with tier "${STARTER_TIER}", owned by ${founder.name}`)
     note(
       global
@@ -40,9 +50,9 @@ export const init = defineCommand({
 })
 
 /** A daemon still running here served a vault that no longer exists; a new vault can't start beside it. */
-async function stopStaleDaemon(layout: Layout): Promise<void> {
+async function stopStaleDaemon(layout: Layout, env: Env): Promise<void> {
   if (existsSync(layout.ownerFile)) return
-  await stopDaemon(layout).catch((error: unknown) => {
+  await stopDaemon(layout, env).catch((error: unknown) => {
     if (!(error instanceof TypeVaultError && error.code === 'not_found')) throw error
   })
 }

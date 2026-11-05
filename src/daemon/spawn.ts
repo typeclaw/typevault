@@ -9,10 +9,11 @@ import { machineKeys } from '../access/keys'
 import { encodeSecretKey, type SecretKey } from '../core/crypto'
 import { TypeVaultError } from '../core/errors'
 import { ensureDir } from '../core/fsx'
-import { refuseForeignDaemon } from '../core/holder'
+import { claimDaemon, refuseForeignDaemon } from '../core/holder'
 import { configDir, type Layout } from '../core/layout'
-import { isLockHeld } from '../core/lock'
+import { holdLock, isLockHeld } from '../core/lock'
 import { callDaemon, isDaemonAlive, servingPid } from './client'
+import { GrantStore, SESSION_CEILING } from './grants'
 
 type Env = Readonly<Record<string, string | undefined>>
 
@@ -48,10 +49,8 @@ export async function startSession(
   const ttl = `${Math.ceil(ttlMs / 1000)}s`
   const command = [process.execPath, CLI, 'daemon', 'run', ...vaultArgs(layout), '--key-stdin', '--ttl', ttl]
   if (sourceLock !== undefined) command.push('--source-lock', sourceLock)
-  // A token left by a daemon that died would pass for this session's before it writes its own.
-  rmSync(layout.sessionFile, { force: true })
   await startBackground(layout, env, command, encodeSecretKey(key))
-  // The agent socket answers before the session's grant is written, and a caller reads that grant next.
+  // A caller reads the session grant next, so don't return before it is present.
   const deadline = Date.now() + START_TIMEOUT_MS
   while (!existsSync(layout.sessionFile)) {
     if (Date.now() > deadline) throw new TypeVaultError('unavailable', 'the unlocked session did not start')
@@ -64,7 +63,8 @@ export async function startSession(
  * Only the process that answers on the checkout's socket is signaled, by the PID it reports itself, so a stale PID
  * file can never aim the signal at an unrelated process.
  */
-export async function stopDaemon(layout: Layout): Promise<void> {
+export async function stopDaemon(layout: Layout, env: Env = process.env): Promise<void> {
+  refuseForeignDaemon(layout, env)
   const serving = await servingPid(layout.agentSocket)
   if (!isLockHeld(layout.daemonLock)) {
     const pidFile = join(layout.run, 'daemon.pid')
@@ -84,7 +84,25 @@ export async function stopDaemon(layout: Layout): Promise<void> {
         `${pidFile} names a running process (pid ${pid}) that holds no daemon lock: if it is an older typevault daemon, wait for it to exit or stop it; if not, delete ${pidFile}`,
       )
     }
-    throw new TypeVaultError('not_found', 'no daemon is running')
+    // A crashed session still has persisted grants. Fence a replacement daemon before ending them on disk.
+    const release = holdLock(layout.daemonLock)
+    if (release !== undefined) {
+      try {
+        const claim = claimDaemon(layout, env)
+        try {
+          // A deleted vault's state is discarded by init under its own fence, without parsing obsolete grants.
+          if (existsSync(layout.ownerFile) && existsSync(layout.grantsFile)) {
+            new GrantStore(layout.grantsFile).revoke((record) => record.ceiling === SESSION_CEILING)
+          }
+          rmSync(layout.sessionFile, { force: true })
+        } finally {
+          claim.release()
+        }
+      } finally {
+        release()
+      }
+      throw new TypeVaultError('not_found', 'no daemon is running')
+    }
   }
   // With the lock held but no socket answering, the daemon is already shutting down: another signal would only cut
   // its cleanup short, so this just waits.

@@ -88,7 +88,7 @@ export async function unlockSession(env: Env, passwords: Passwords, ttlMs: numbe
   // A daemon without a session (a machine member's, or one left from before the vault was re-created) holds no key
   // of this person's, so it can't serve them: the session replaces it.
   if (await isDaemonAlive(layout.agentSocket)) {
-    await stopDaemon(layout)
+    await stopDaemon(layout, env)
     note('replaced a running daemon that held no unlocked session')
   }
   await startSession(layout, env, key, ttlMs)

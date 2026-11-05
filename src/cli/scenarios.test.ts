@@ -313,14 +313,15 @@ it(
   SCENARIO_MS,
 )
 
-it(
-  're-creating a vault in the same checkout starts clean, even with the old daemon running',
-  async () => {
+it.each([true, false])(
+  're-creating a vault discards unreadable runtime state (old daemon running: %p)',
+  async (running) => {
     // given a vault unlocked here, whose daemon is still running and whose state is from an older release
     const alice = actor('alice')
     await ok(alice, withPassword('init', '--name', 'alice'), line('a'))
     await ok(alice, withPassword('unlock'), line('a'))
     await ok(alice, ['set', 'typevault://openai', '--preset', 'api_key', '--stdin'], 'sk-old')
+    if (!running) await ok(alice, ['lock'])
     writeFileSync(join(runDir('alice'), 'grants.json'), OLD_FORMAT_GRANTS)
 
     // when the vault is deleted and created again in the same place

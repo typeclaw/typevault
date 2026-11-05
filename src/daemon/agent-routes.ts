@@ -14,6 +14,8 @@ export type DaemonContext = {
   /** One ScopedVault per live grant, so redaction knows every value that grant has read. */
   readonly sessions: Map<string, ScopedVault>
   readonly requests: PromptRequests
+  /** The root grant of this unlocked session; admin-issued live grants belong to it. */
+  readonly session?: string
   /** The tiers an unlocked session's member holds directly: what `run` loads in bulk, as in direct mode. */
   readonly sessionTiers?: readonly string[]
   /** An unlocked session's: starts the same session in another worktree of this vault's repository, until `exp`. */

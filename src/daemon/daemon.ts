@@ -51,7 +51,7 @@ function ceilingsOf(vault: Vault): readonly Ceiling[] {
   return owner ? [...signed, { name: 'default', tier: '*' }] : signed
 }
 
-async function openSession(context: DaemonContext, ttlMs: number): Promise<string> {
+async function openSession(context: Pick<DaemonContext, 'vault' | 'grants'>, ttlMs: number): Promise<string> {
   const { vault, grants } = context
   const tiers = [...(await vault.keyring.reachableTiers())].sort()
   const { token, record } = grants.issue({ tiers, only: [], ttlMs, label: 'session', ceiling: SESSION_CEILING })
@@ -129,14 +129,20 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
             attaching.delete(started)
           }
         }
+  const grants = new GrantStore(layout.grantsFile)
+  // Every new daemon replaces any crashed session, including a machine daemon started without an unlock.
+  grants.revoke((record) => record.ceiling === SESSION_CEILING)
+  rmSync(layout.sessionFile, { force: true })
+  const session =
+    options.session === undefined ? undefined : await openSession({ vault, grants }, options.session.ttlMs)
   const context: DaemonContext = {
     vault,
-    grants: new GrantStore(layout.grantsFile),
+    grants,
     sessions: new Map(),
     requests: new PromptRequests(vault, options.prompt ?? {}),
-    ...(options.session === undefined
+    ...(session === undefined
       ? {}
-      : { sessionTiers: member?.tiers ?? [], ...(attach === undefined ? {} : { attach }) }),
+      : { session, sessionTiers: member?.tiers ?? [], ...(attach === undefined ? {} : { attach }) }),
   }
   // A shared session whose source is gone answers nothing but ping (how `stopDaemon` finds it) until it stops.
   const bound =
@@ -168,7 +174,6 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
     ),
   ]
   atomicWrite(join(layout.run, 'daemon.pid'), String(process.pid), 0o600)
-  const session = options.session === undefined ? undefined : await openSession(context, options.session.ttlMs)
   const adopt = (): void => {
     adoptCertWrites(vault).then(undefined, (error: unknown) =>
       console.error('typevault daemon: adopting sealed writes failed', error),
@@ -198,7 +203,7 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
           return
         }
         // Worktrees share this session, so they lock with it.
-        for (const worktree of worktrees.values()) await stopWorktree(worktree)
+        for (const worktree of worktrees.values()) await stopWorktree(worktree, options.env)
         if (session !== undefined) {
           context.grants.revoke((record) => record.id === session)
           if (existsSync(layout.sessionFile)) rmSync(layout.sessionFile)
@@ -254,14 +259,14 @@ async function startWorktreeSession(
 ): Promise<void> {
   if (await isDaemonAlive(layout.agentSocket)) {
     if (existsSync(layout.sessionFile)) return
-    await stopDaemon(layout)
+    await stopDaemon(layout, env)
   }
   await startSession(layout, env, key, exp - Date.now(), sessionLock)
 }
 
-async function stopWorktree(layout: Layout): Promise<void> {
+async function stopWorktree(layout: Layout, env: DaemonOptions['env']): Promise<void> {
   try {
-    await stopDaemon(layout)
+    await stopDaemon(layout, env)
   } catch (error) {
     if (error instanceof TypeVaultError && error.code === 'not_found') return
     console.error(`typevault daemon: locking the worktree at ${layout.vault} failed`, error)
