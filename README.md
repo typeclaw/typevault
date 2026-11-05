@@ -100,7 +100,8 @@ typevault member add bob tvp1:... --tier default # rotates every tier bob reache
 typevault join --machine --name ci               # CI or an agent host: no password, its own key
 ```
 
-More: [vaults, members and git history](docs/vaults-and-members.md).
+More: [vaults, members and git history](docs/vaults-and-members.md), and [working with a teammate](docs/vaults-and-members.md#working-with-a-teammate):
+what each person does by hand.
 
 ### Running with secrets
 
