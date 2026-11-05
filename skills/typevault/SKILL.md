@@ -153,6 +153,8 @@ they lock it; a machine member's daemon starts on its own.
 - **Signature or merge problems after a git pull**: `typevault doctor --fix` (owner).
 - **Daemon trouble with a live grant**: check `typevault daemon status`, then ask the owner. Don't stop the daemon
   yourself: restarting it needs keys a grant doesn't carry.
+- **`the running typevault daemon is version ...`**: it is from another typevault release. Ask the user to run the
+  command the message names; don't stop the daemon yourself.
 - **`the typevault daemon did not start: ...`**: the message quotes the daemon's first line and names
   `run/daemon.log`. Show the user both; don't delete runtime state yourself.
 
