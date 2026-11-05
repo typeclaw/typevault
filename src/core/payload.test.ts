@@ -45,3 +45,11 @@ test('rejects reserved stored field names when encoding', () => {
     expect.objectContaining({ code: 'invalid' }),
   )
 })
+test.each(['PATH', 'CURL_HOME', 'SERVICE_PROXY'])('refuses the reserved override %s when encoding a write', (env) => {
+  expect(() => encodePayload({ ...payload, env })).toThrow(expect.objectContaining({ code: 'invalid' }))
+})
+test.each(['lowercase', '1START', 'HAS-DASH', 'HAS=EQUALS'])('rejects malformed stored env syntax %s', (env) => {
+  expect(() => decodePayload(utf8(JSON.stringify({ ...payload, env })))).toThrow(
+    expect.objectContaining({ code: 'tampered' }),
+  )
+})

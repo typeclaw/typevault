@@ -53,13 +53,13 @@ function parsePayload(value: unknown, code: 'invalid' | 'tampered'): z.infer<typ
   const parsed = PayloadSchema.safeParse(value)
   if (!parsed.success)
     throw new TypeVaultError(code, `malformed entry payload: ${parsed.error.issues[0]?.message ?? 'invalid'}`)
-  const { env } = parsed.data
-  if (env !== undefined && !isUsableEnvName(env)) throw new TypeVaultError(code, `${env} is not a usable env name`)
   return parsed.data
 }
 
 export function encodePayload(payload: EntryPayload): Uint8Array {
   parsePayload(payload, 'invalid')
+  const { env } = payload
+  if (env !== undefined && !isUsableEnvName(env)) throw new TypeVaultError('invalid', `${env} is not a usable env name`)
   return utf8(JSON.stringify(payload))
 }
 
