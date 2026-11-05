@@ -3,6 +3,7 @@ import { ScopedVault } from '../access/scoped'
 import { appendAudit } from '../audit/log'
 import { TypeVaultError } from '../core/errors'
 import type { Vault } from '../core/vault'
+import { PACKAGE_VERSION } from '../core/version'
 import { type GrantStore, type ResolvedGrant, SESSION_CEILING } from './grants'
 import { type Handler, json, parseBody } from './http'
 import { AttachBody, DeriveBody, MoveBody, NameBody, RequestBody, SetBody, ValuesBody, WaitBody } from './protocol'
@@ -48,8 +49,9 @@ function session(context: DaemonContext, request: Request): { grant: ResolvedGra
 /** Routes on the agent socket. Every call needs a live grant; none can create a grant from nothing. */
 export function agentRoutes(context: DaemonContext): Readonly<Record<string, Handler>> {
   return {
-    // The PID lets `stopDaemon` signal exactly the process that answers here, never one a stale PID file names.
-    '/v1/ping': async () => json({ ok: true, pid: process.pid }),
+    // The PID lets `stopDaemon` signal exactly the process that answers here, never one a stale PID file names. The
+    // version lets a CLI from another release tell this daemon isn't its own.
+    '/v1/ping': async () => json({ ok: true, pid: process.pid, version: PACKAGE_VERSION }),
     '/v1/whoami': async (request) => {
       const { grant, access } = session(context, request)
       const { hash: _hash, ...record } = grant.record

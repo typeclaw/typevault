@@ -13,13 +13,17 @@ import {
 import { tmpdir } from 'node:os'
 import { join, parse } from 'node:path'
 
+import type { Subprocess } from 'bun'
+
 import { issueSealedGrant, readSealedGrant, sealedSigningSecret } from '../../access/sealed'
 import { Admin } from '../../core/admin'
 import { createIdentity, writeIdentity } from '../../core/identity'
 import { founderOf, initGlobalVault } from '../../core/init'
-import { globalLayout } from '../../core/layout'
+import { globalLayout, type Layout, localLayout } from '../../core/layout'
 import { parseEntryName } from '../../core/naming'
 import { Vault } from '../../core/vault'
+import { PACKAGE_VERSION } from '../../core/version'
+import { servingVersion } from '../../daemon/client'
 
 const envIn = (dir: string) => ({ TYPEVAULT_DIR: join(dir, 'vault'), XDG_CONFIG_HOME: dir })
 
@@ -36,6 +40,7 @@ type Run = { readonly code: number; readonly stdout: string; readonly stderr: st
 let base: string
 let project: string
 let owner: Record<string, string>
+let standIn: Subprocess | undefined
 
 async function cli(args: readonly string[], env: Record<string, string>, stdin = ''): Promise<Run> {
   const proc = Bun.spawn([process.execPath, CLI, ...args], {
@@ -69,6 +74,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await cli(['lock'], owner)
+  standIn?.kill('SIGKILL')
+  standIn = undefined
   rmSync(base, { recursive: true, force: true })
 })
 
@@ -286,8 +293,8 @@ it.each([
   expect(readFileSync(outside, 'utf8')).toBe('keep me')
 })
 
-it('replaces a daemon that holds no session when its owner unlocks', async () => {
-  // given a daemon for this checkout that holds no session: here a machine member's, started without a password
+/** Adds a machine member, `ci`, and a ceiling its daemon can serve. Returns its key. */
+async function addMachineMember(): Promise<string> {
   const machine = { PATH: owner['PATH'] ?? '', XDG_CONFIG_HOME: join(base, 'ci') }
   const joined = succeeds(await cli(['join', '--machine', '--name', 'ci'], machine))
   const publicKey = joined.stdout.split(' ').find((word) => word.startsWith('tvp1:')) ?? ''
@@ -299,7 +306,82 @@ it('replaces a daemon that holds no session when its owner unlocks', async () =>
     ),
   )
   succeeds(await cli(['ceiling', 'set', 'bot', 'default', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
-  const { key } = JSON.parse(readFileSync(join(base, 'ci', 'typevault', 'identity.json'), 'utf8'))
+  return JSON.parse(readFileSync(join(base, 'ci', 'typevault', 'identity.json'), 'utf8')).key
+}
+
+// Stands in for a daemon from another release: like a real one it holds the daemon lock and answers pings with its
+// PID, but with another version. Told to stop (SIGTERM, or over its control socket on Windows), it exits.
+const OTHER_RELEASE_DAEMON = `
+import { holdLock } from ${JSON.stringify(join(import.meta.dir, '..', '..', 'core', 'lock.ts'))}
+const [lock, agent, control] = process.argv.slice(2)
+if (holdLock(lock) === undefined) process.exit(2)
+const stop = () => {
+  server.stop(true)
+  shutdown.stop(true)
+  process.exit(0)
+}
+const server = Bun.serve({ unix: agent, fetch: () => Response.json({ ok: true, pid: process.pid, version: '0.0.0-other' }) })
+const shutdown = Bun.serve({
+  unix: control,
+  fetch: () => {
+    setTimeout(stop, 0)
+    return Response.json({ ok: true })
+  },
+})
+process.once('SIGTERM', stop)
+console.log('ready')
+`
+
+async function otherReleaseDaemon(layout: Layout): Promise<Subprocess> {
+  const script = join(base, 'other-release.ts')
+  writeFileSync(script, OTHER_RELEASE_DAEMON)
+  mkdirSync(layout.run, { recursive: true, mode: 0o700 })
+  mkdirSync(layout.sockets, { recursive: true, mode: 0o700 })
+  const daemon = Bun.spawn([process.execPath, script, layout.daemonLock, layout.agentSocket, layout.controlSocket], {
+    stdout: 'pipe',
+  })
+  standIn = daemon
+  const { value } = await daemon.stdout.getReader().read()
+  expect(new TextDecoder().decode(value)).toContain('ready')
+  return daemon
+}
+
+it('replaces a machine daemon from another release with this one', async () => {
+  // given a machine member, and a daemon from another release serving this checkout
+  const key = await addMachineMember()
+  const layout = localLayout(join(project, '.typevault'), owner)
+  const other = await otherReleaseDaemon(layout)
+
+  // when the machine member uses the vault
+  succeeds(await cli(['daemon', 'start'], { ...owner, TYPEVAULT_KEY: key }))
+
+  // then that daemon stopped, and this release's serves instead
+  expect(await other.exited).toBe(0)
+  expect(await servingVersion(layout.agentSocket)).toBe(PACKAGE_VERSION)
+}, 30_000)
+
+it('refuses an unlocked session from another release, and leaves it running', async () => {
+  // given a session daemon from another release serving this checkout
+  const layout = localLayout(join(project, '.typevault'), owner)
+  const other = await otherReleaseDaemon(layout)
+  writeFileSync(layout.sessionFile, 'tvl1.from-another-release', { mode: 0o600 })
+
+  // when the owner reads through it
+  const run = await cli(['ls'], owner)
+
+  // then they are told how to replace it, and the session keeps its key until they do
+  expect({ code: run.code, stderr: run.stderr }).toEqual({
+    code: 1,
+    stderr:
+      `typevault: the running typevault daemon is version 0.0.0-other, not ${PACKAGE_VERSION}: ` +
+      'run `typevault lock`, then `typevault unlock`\n',
+  })
+  expect(other.exitCode).toBeNull()
+})
+
+it('replaces a daemon that holds no session when its owner unlocks', async () => {
+  // given a daemon for this checkout that holds no session: here a machine member's, started without a password
+  const key = await addMachineMember()
   succeeds(await cli(['daemon', 'start'], { ...owner, TYPEVAULT_KEY: key }))
   expect((await cli(['ls'], owner)).stderr).toContain('the vault is locked')
 

@@ -13,7 +13,8 @@ import { ensureDir } from '../core/fsx'
 import { claimDaemon, type DaemonClaim, refuseForeignDaemon } from '../core/holder'
 import { configDir, type Layout } from '../core/layout'
 import { holdLock, isLockHeld } from '../core/lock'
-import { callDaemon, isDaemonAlive, servingPid } from './client'
+import { PACKAGE_VERSION } from '../core/version'
+import { callDaemon, isDaemonAlive, servingPid, servingVersion } from './client'
 
 type Env = Readonly<Record<string, string | undefined>>
 
@@ -26,12 +27,35 @@ export const LOCKED_MESSAGE = 'the vault is locked: ask a human to run `typevaul
 /**
  * Starts the daemon in the background if it isn't running, like gpg-agent. Only a machine member can start one
  * unattended; a human's daemon is started by `typevault unlock`, so a locked vault stays locked.
+ *
+ * A daemon from another release is replaced when it is a machine member's and this process can start one. An
+ * unlocked session is never replaced: its key is gone with it, and only its human can type the password again.
  */
 export async function ensureDaemon(layout: Layout, env: Env): Promise<void> {
-  if (await isDaemonAlive(layout.agentSocket)) return
+  const running = await servingVersion(layout.agentSocket)
+  if (running !== undefined) {
+    if (running === PACKAGE_VERSION) return
+    if (existsSync(layout.sessionFile) || machineKeys(env).length === 0) {
+      throw versionMismatch(layout, running, PACKAGE_VERSION)
+    }
+    try {
+      await stopDaemon(layout)
+    } catch (error) {
+      // Another command replacing it at the same time already stopped it.
+      if (!(error instanceof TypeVaultError && error.code === 'not_found')) throw error
+    }
+  }
   if (machineKeys(env).length === 0) throw new TypeVaultError('locked', LOCKED_MESSAGE)
   refuseForeignDaemon(layout, env)
   await startBackground(layout, env, [process.execPath, CLI, 'daemon', 'run', ...vaultArgs(layout)])
+}
+
+function versionMismatch(layout: Layout, running: string | null, version: string): TypeVaultError {
+  const from = running === null ? 'is from an older release' : `is version ${running}`
+  const fix = existsSync(layout.sessionFile)
+    ? 'run `typevault lock`, then `typevault unlock`'
+    : 'run `typevault daemon stop`; a machine member starts the new one'
+  return new TypeVaultError('conflict', `the running typevault daemon ${from}, not ${version}: ${fix}`)
 }
 
 /**
