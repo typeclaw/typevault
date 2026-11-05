@@ -40,8 +40,8 @@ Requires Bun ≥ 1.3.
 typevault init                                   # creates .typevault/ here; the first time, also your password and Secret Key
 typevault unlock                                 # once per session (8h by default); your agents read through it
 
-printf '%s' "$OPENAI_KEY" | typevault set tv://openai --preset api_key --stdin
-typevault set tv://anthropic --preset api_key    # from a terminal: type it in a one-time local page
+printf '%s' "$OPENAI_KEY" | typevault set typevault://openai --preset api_key --stdin
+typevault set typevault://anthropic --preset api_key    # from a terminal: type it in a one-time local page
 
 export TYPEVAULT_GRANT=$(typevault grant --tier default --label session:abc)
 typevault run -- ./deploy.sh                     # OPENAI and ANTHROPIC arrive as env vars; output is redacted
@@ -62,11 +62,11 @@ sequenceDiagram
   participant I as Issuer
   participant D as Daemon
   participant A as Agent
-  I->>D: grant --tier member --only 'tv://github/*' --ttl 30m --label ci:deploy
+  I->>D: grant --tier member --only 'typevault://github/*' --ttl 30m --label ci:deploy
   Note over I,D: through its admin socket, never above its ceiling
   D-->>I: live grant (tvl1.…)
   I->>A: TYPEVAULT_GRANT
-  A->>D: read tv://github/bot, with a reason
+  A->>D: read typevault://github/bot, with a reason
   D->>D: check tiers, names and TTL, then log the read
   D-->>A: value, into run's child only
   I->>D: grant revoke --label ci:deploy
@@ -105,11 +105,11 @@ More: [vaults, members and git history](docs/vaults-and-members.md).
 ### Running with secrets
 
 `run` loads what the grant reaches as env vars, never sets loader variables like `PATH` or `NODE_OPTIONS`, and
-redacts the child's output. A variable whose value is a `tv://` reference gets that field, so you pick the name.
+redacts the child's output. A variable whose value is a `typevault://` reference gets that field, so you pick the name.
 
 ```mermaid
 flowchart LR
-  agent[Agent] -- "typevault run -- ./deploy.sh" --> load["Load entries and tv:// references"]
+  agent[Agent] -- "typevault run -- ./deploy.sh" --> load["Load entries and typevault:// references"]
   daemon[Daemon] -- "values, through the grant" --> load
   load -- "env vars, never PATH, NODE_OPTIONS, ..." --> child["./deploy.sh"]
   child -- "stdout, stderr" --> redact[Redact values]
@@ -117,8 +117,8 @@ flowchart LR
 ```
 
 ```sh
-DATABASE_URL=tv://postgres/prod#url typevault run -- ./migrate.sh
-typevault run --only tv://github/bot -- ./login.sh
+DATABASE_URL=typevault://postgres/prod#url typevault run -- ./migrate.sh
+typevault run --only typevault://github/bot -- ./login.sh
 ```
 
 More: [naming, field types and what `run` loads](docs/entries.md).
@@ -141,7 +141,7 @@ sequenceDiagram
   B->>B: encrypts to the tier
   B->>D: ciphertext only, safe through tunnels and proxies
   D->>D: decrypts, checks it is the requested entry, re-encrypts, signs, stores
-  D-->>A: stored as tv://resend, the value never comes back
+  D-->>A: stored as typevault://resend, the value never comes back
 ```
 
 ```sh
@@ -167,7 +167,7 @@ const grant = await createAdmin({ ceiling: 'bot' }).grant({ tiers: ['member'], t
 
 // ...and the agent side reads through it (live via the daemon, or sealed in-process).
 const vault = await createClient({ grant })
-const { fields } = await vault.get(parseEntryName('tv://openai'), 'send the weekly digest')
+const { fields } = await vault.get(parseEntryName('typevault://openai'), 'send the weekly digest')
 
 // Nothing is redacted for you: scrub anything that can reach output.
 const redactor = createRedactor(await vault.readValues())

@@ -82,7 +82,7 @@ beforeEach(async () => {
   owner = { PATH: process.env['PATH'] ?? '', HOME: base, XDG_CONFIG_HOME: join(base, 'alice') }
   succeeds(await cli(['init', '--name', 'alice', '--vault-password-stdin'], main, `${PASSWORD}\n`))
   succeeds(await cli(['unlock', '--vault-password-stdin'], main, `${PASSWORD}\n`))
-  succeeds(await cli(['set', 'tv://openai', '--preset', 'api_key', '--stdin'], main, 'sk-test-1'))
+  succeeds(await cli(['set', 'typevault://openai', '--preset', 'api_key', '--stdin'], main, 'sk-test-1'))
   succeeds(await cli(['lock'], main))
   succeeds(await git(['init', '-q'], main))
   succeeds(await git(['add', '-A'], main))

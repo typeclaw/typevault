@@ -59,9 +59,9 @@ export function envFor(values: readonly EntryValue[], now: Date, policy: EnvPoli
 export type ResolvedRefs = { readonly env: Readonly<Record<string, string>>; readonly values: readonly EntryValue[] }
 
 /**
- * Replaces each variable whose whole value is a `tv://` reference (`FOO=tv://github/bot#password`) with the
- * referenced field, the default one when none is named. The caller picked the variable, but a lower tier can
- * still write the value, so loader variables are refused here as they are for entries.
+ * Replaces each variable whose whole value is a `typevault://` reference (`FOO=typevault://github/bot#password`)
+ * with the referenced field, the default one when none is named. The caller picked the variable, but a lower tier
+ * can still write the value, so loader variables are refused here as they are for entries.
  */
 export async function resolveEnvRefs(
   env: Readonly<Record<string, string | undefined>>,

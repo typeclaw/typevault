@@ -114,13 +114,13 @@ beforeEach(async () => {
   env = { PATH: process.env['PATH'] ?? '', XDG_CONFIG_HOME: join(base, 'config') }
   expect((await cli(['init', '--machine'])).code).toBe(0)
   const fields = JSON.stringify({ username: 'alice', password: PASSWORD, PIN })
-  expect((await cli(['set', 'tv://svc', '--preset', 'password', '--stdin-json'], fields)).code).toBe(0)
+  expect((await cli(['set', 'typevault://svc', '--preset', 'password', '--stdin-json'], fields)).code).toBe(0)
 })
 afterEach(() => rmSync(base, { recursive: true, force: true }))
 
 it.each([
-  ['the password field', 'tv://svc#password', PASSWORD],
-  ['a custom field', 'tv://svc#PIN', PIN],
+  ['the password field', 'typevault://svc#password', PASSWORD],
+  ['a custom field', 'typevault://svc#PIN', PIN],
 ])('refuses to print %s without --reveal and leaks nothing about it', async (_, ref, secret) => {
   // when
   const result = await cli(['get', ref])
@@ -133,16 +133,16 @@ it.each([
 })
 
 it('prints a secret field with --reveal', async () => {
-  expect(await cli(['get', 'tv://svc#PIN', '--reveal'])).toMatchObject({ code: 0, stdout: `${PIN}\n` })
+  expect(await cli(['get', 'typevault://svc#PIN', '--reveal'])).toMatchObject({ code: 0, stdout: `${PIN}\n` })
 })
 
 it('prints a plain field without --reveal', async () => {
-  expect(await cli(['get', 'tv://svc#username'])).toMatchObject({ code: 0, stdout: 'alice\n' })
+  expect(await cli(['get', 'typevault://svc#username'])).toMatchObject({ code: 0, stdout: 'alice\n' })
 })
 
 it('redacts secret fields in --json without --reveal and leaks nothing about them', async () => {
   // when
-  const result = await cli(['get', 'tv://svc', '--json'])
+  const result = await cli(['get', 'typevault://svc', '--json'])
 
   // then
   expect(result.code).toBe(0)
@@ -158,17 +158,20 @@ const WEB_KEY = 'sk-web-test-1'
 
 it('prompts on the page for a new entry from a terminal and stores what was typed there', async () => {
   // when
-  const result = await setViaPage(['tv://web', '--preset', 'api_key'], { tty: true, fields: { $default: WEB_KEY } })
+  const result = await setViaPage(['typevault://web', '--preset', 'api_key'], {
+    tty: true,
+    fields: { $default: WEB_KEY },
+  })
 
   // then
   expect(result).toMatchObject({ code: 0, prompted: true })
   expect(result.output).not.toContain(WEB_KEY)
-  expect(await cli(['get', 'tv://web', '--reveal'])).toMatchObject({ code: 0, stdout: `${WEB_KEY}\n` })
+  expect(await cli(['get', 'typevault://web', '--reveal'])).toMatchObject({ code: 0, stdout: `${WEB_KEY}\n` })
 })
 
 it('prompts with --web without a terminal', async () => {
   // when
-  const result = await setViaPage(['tv://web', '--preset', 'api_key', '--web'], {
+  const result = await setViaPage(['typevault://web', '--preset', 'api_key', '--web'], {
     tty: false,
     fields: { $default: WEB_KEY },
   })
@@ -176,50 +179,53 @@ it('prompts with --web without a terminal', async () => {
   // then
   expect(result).toMatchObject({ code: 0, prompted: true })
   expect(result.output).not.toContain(WEB_KEY)
-  expect(await cli(['get', 'tv://web', '--reveal'])).toMatchObject({ code: 0, stdout: `${WEB_KEY}\n` })
+  expect(await cli(['get', 'typevault://web', '--reveal'])).toMatchObject({ code: 0, stdout: `${WEB_KEY}\n` })
 })
 
 it.each([
-  ['--no-web', ['tv://web', '--preset', 'api_key', '--no-web'], undefined],
-  ['an existing entry', ['tv://svc', '--field', 'username=bob'], undefined],
-  ['--stdin', ['tv://web', '--preset', 'api_key', '--stdin'], WEB_KEY],
+  ['--no-web', ['typevault://web', '--preset', 'api_key', '--no-web'], undefined],
+  ['an existing entry', ['typevault://svc', '--field', 'username=bob'], undefined],
+  ['--stdin', ['typevault://web', '--preset', 'api_key', '--stdin'], WEB_KEY],
 ])('does not prompt from a terminal with %s', async (_, args, typed) => {
   expect(await setViaPage(args, { tty: true, typed })).toMatchObject({ code: 0, prompted: false })
 })
 
 it('stores a value without a preset and resolves its bare reference', async () => {
-  expect(await cli(['set', 'tv://simple', '--stdin'], 'private-value')).toMatchObject({ code: 0 })
-  const result = await cli(['get', 'tv://simple', '--json', '--reveal'])
+  expect(await cli(['set', 'typevault://simple', '--stdin'], 'private-value')).toMatchObject({ code: 0 })
+  const result = await cli(['get', 'typevault://simple', '--json', '--reveal'])
   expect(JSON.parse(result.stdout)).toEqual({ $default: { type: 'secret', value: 'private-value' } })
-  expect(await cli(['get', 'tv://simple', '--reveal'])).toMatchObject({ code: 0, stdout: 'private-value\n' })
+  expect(await cli(['get', 'typevault://simple', '--reveal'])).toMatchObject({ code: 0, stdout: 'private-value\n' })
 })
 it('lists fields when a bare login reference is ambiguous', async () => {
-  const result = await cli(['get', 'tv://svc', '--reveal'])
+  const result = await cli(['get', 'typevault://svc', '--reveal'])
   expect(result.code).toBe(1)
   expect(result.stderr).toContain('svc has several fields, name one: username, password, PIN')
 })
 it('preserves field types during merges and accepts explicit types', async () => {
   expect(
-    await cli(['set', 'tv://typed', '--stdin-json'], JSON.stringify({ custom: { type: 'text', value: 'first' } })),
+    await cli(
+      ['set', 'typevault://typed', '--stdin-json'],
+      JSON.stringify({ custom: { type: 'text', value: 'first' } }),
+    ),
   ).toMatchObject({ code: 0 })
-  expect(await cli(['set', 'tv://typed', '--stdin'], 'second')).toMatchObject({ code: 0 })
-  const result = await cli(['get', 'tv://typed', '--json'])
+  expect(await cli(['set', 'typevault://typed', '--stdin'], 'second')).toMatchObject({ code: 0 })
+  const result = await cli(['get', 'typevault://typed', '--json'])
   expect(JSON.parse(result.stdout)).toEqual({ custom: { type: 'text', value: 'second' } })
 })
 it('writes arbitrary argv fields as text', async () => {
-  expect(await cli(['set', 'tv://text', '--field', 'label=public'])).toMatchObject({ code: 0 })
-  expect(await cli(['get', 'tv://text#label'])).toMatchObject({ code: 0, stdout: 'public\n' })
+  expect(await cli(['set', 'typevault://text', '--field', 'label=public'])).toMatchObject({ code: 0 })
+  expect(await cli(['get', 'typevault://text#label'])).toMatchObject({ code: 0, stdout: 'public\n' })
 })
 it.each([
-  ['an existing secret field', ['tv://svc', '--field', 'password=leaked']],
-  ["a preset's secret field", ['tv://login', '--preset', 'password', '--field', 'password=leaked']],
+  ['an existing secret field', ['typevault://svc', '--field', 'password=leaked']],
+  ["a preset's secret field", ['typevault://login', '--preset', 'password', '--field', 'password=leaked']],
 ])('refuses %s as an argument', async (_, args) => {
   const result = await cli(['set', ...args, '--no-web'])
   expect(result.code).toBe(1)
   expect(result.stderr).toContain('pass "password" on stdin')
 })
 it('refuses --env for an entry with several fields and no default', async () => {
-  const result = await cli(['set', 'tv://svc', '--env', 'SVC_TOKEN'])
+  const result = await cli(['set', 'typevault://svc', '--env', 'SVC_TOKEN'])
   expect(result.code).toBe(1)
   expect(result.stderr).toContain('--env names the default field')
 })
@@ -231,23 +237,25 @@ it('replaces expired OAuth credentials without refreshing them first', async () 
     expires_at: '2000-01-01T00:00:00.000Z',
     token_url: 'http://127.0.0.1:9/token',
   }
-  expect(await cli(['set', 'tv://google', '--preset', 'oauth', '--stdin'], JSON.stringify(stale))).toMatchObject({
-    code: 0,
-  })
+  expect(await cli(['set', 'typevault://google', '--preset', 'oauth', '--stdin'], JSON.stringify(stale))).toMatchObject(
+    {
+      code: 0,
+    },
+  )
 
   // when they are replaced
   const replacement = JSON.stringify({ access_token: 'replacement' })
-  const result = await cli(['set', 'tv://google', '--replace', '--preset', 'oauth', '--stdin'], replacement)
+  const result = await cli(['set', 'typevault://google', '--replace', '--preset', 'oauth', '--stdin'], replacement)
 
   // then the write succeeds and holds only the new token
   expect(result).toMatchObject({ code: 0 })
-  expect(await cli(['get', 'tv://google', '--reveal'])).toMatchObject({ code: 0, stdout: 'replacement\n' })
+  expect(await cli(['get', 'typevault://google', '--reveal'])).toMatchObject({ code: 0, stdout: 'replacement\n' })
 })
 it('rejects malformed OAuth stdin and accepts typed fields through stdin JSON', async () => {
-  expect(await cli(['set', 'tv://oauth', '--preset', 'oauth', '--stdin'], 'token')).toMatchObject({ code: 1 })
+  expect(await cli(['set', 'typevault://oauth', '--preset', 'oauth', '--stdin'], 'token')).toMatchObject({ code: 1 })
   const fields = { session: { type: 'oauth', value: { access_token: 'access', refresh_token: 'refresh' } } }
-  expect(await cli(['set', 'tv://oauth', '--stdin-json'], JSON.stringify(fields))).toMatchObject({ code: 0 })
-  expect(await cli(['get', 'tv://oauth#session.refresh_token', '--reveal'])).toMatchObject({
+  expect(await cli(['set', 'typevault://oauth', '--stdin-json'], JSON.stringify(fields))).toMatchObject({ code: 0 })
+  expect(await cli(['get', 'typevault://oauth#session.refresh_token', '--reveal'])).toMatchObject({
     code: 0,
     stdout: 'refresh\n',
   })

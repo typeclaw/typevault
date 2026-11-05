@@ -5,17 +5,17 @@ How entries are named and typed, what `run` loads, and how output is redacted.
 ## Writing entries
 
 ```sh
-printf '%s' "$OPENAI_KEY" | typevault set tv://openai --preset api_key --stdin
-typevault set tv://anthropic --preset api_key        # from a terminal: type it in a one-time local page (--web)
-typevault set tv://github/bot --preset password --field username=bot --stdin < password.txt
-echo '{"access_token":"…","refresh_token":"…"}' | typevault set tv://google --preset oauth --stdin
-printf '%s' "$STRIPE_KEY" | typevault set tv://stripe --preset api_key --tier trusted --stdin
+printf '%s' "$OPENAI_KEY" | typevault set typevault://openai --preset api_key --stdin
+typevault set typevault://anthropic --preset api_key        # from a terminal: type it in a one-time local page (--web)
+typevault set typevault://github/bot --preset password --field username=bot --stdin < password.txt
+echo '{"access_token":"…","refresh_token":"…"}' | typevault set typevault://google --preset oauth --stdin
+printf '%s' "$STRIPE_KEY" | typevault set typevault://stripe --preset api_key --tier trusted --stdin
 ```
 
 ## Naming
 
-`tv://<service>[/<account>][#<field>]`: `tv://openai`, `tv://github/bot#password`, `tv://github/personal#totp`.
-That is the canonical form. For convenience, `typevault://github/bot` and the bare `github/bot` work everywhere too.
+`typevault://<service>[/<account>][#<field>]`: `typevault://openai`, `typevault://github/bot#password`, `typevault://github/personal#totp`.
+That is the canonical form. For convenience, the bare `github/bot` works everywhere too.
 No environments, no domains, no tier in the name.
 
 Each field stores its own type: `secret` (sensitive string), `text` (public string), `totp` (seed or otpauth URI), or `oauth` (an object with `access_token` and optional `refresh_token`, `expires_at`, `token_url`, `client_id`, `client_secret`). OAuth reads yield the access token and refresh expired credentials when possible.
@@ -36,13 +36,13 @@ Without a preset, `set --stdin` stores `$default` (or overwrites the existing de
 Field names keep their case, with up to 64 characters and no `=`, controls or surrounding spaces. Names starting with `$` are reserved except `$default`:
 
 ```sh
-echo '{"$default":"…","Webhook Secret":"…"}' | typevault set tv://stripe --preset api_key --stdin-json
-typevault get 'tv://stripe#Webhook Secret' --reveal   # an exact match, else the one field equal ignoring case
+echo '{"$default":"…","Webhook Secret":"…"}' | typevault set typevault://stripe --preset api_key --stdin-json
+typevault get 'typevault://stripe#Webhook Secret' --reveal   # an exact match, else the one field equal ignoring case
 ```
 
-Env names are derived: `tv://github/bot#password` becomes `GITHUB_BOT_PASSWORD` and `tv://stripe#Webhook Secret`
+Env names are derived: `typevault://github/bot#password` becomes `GITHUB_BOT_PASSWORD` and `typevault://stripe#Webhook Secret`
 becomes `STRIPE_WEBHOOK_SECRET`. A field with no Latin letter or digit gets no variable; reach it with a reference.
-The `$default` field uses the entry name alone: `tv://openai` becomes `OPENAI`. Override the default field's variable with `--env`.
+The `$default` field uses the entry name alone: `typevault://openai` becomes `OPENAI`. Override the default field's variable with `--env`.
 In `run`, TOTP fields carry the current code; `otp [ref]` prints a selected TOTP field, the default when typed TOTP, or the only TOTP field. `get` keeps the raw stored seed.
 `--field k=v` always writes a `text` field. Pass secrets through stdin or the browser. `--stdin-json` accepts strings or full `{"type":"secret","value":"…"}` objects. Updates merge existing fields and preserve their types; `--replace` replaces all fields.
 
@@ -50,7 +50,7 @@ In `run`, TOTP fields carry the current code; `otp [ref]` prints a selected TOTP
 
 A lower tier can write entries a higher tier reads, so `run` only loads, in bulk, entries from the tiers the
 caller holds directly. An entry from an included tier is loaded only when `--only` names it exactly
-(`--only tv://github/bot`, not `--only 'tv://github/*'`). Two entries setting the same variable is an error, and variables that
+(`--only typevault://github/bot`, not `--only 'typevault://github/*'`). Two entries setting the same variable is an error, and variables that
 change how programs load code or route traffic (`PATH`, `LD_*`, `NODE_OPTIONS`, `GIT_*`, `HTTPS_PROXY`, ...) are never set
 from the vault. The child never receives `TYPEVAULT_*` variables.
 
@@ -66,7 +66,7 @@ unrelated tiers hold it, reads of that name fail until the owner keeps one: `typ
 Here the scheme is required: a bare `github/bot` stays a plain string.
 
 ```sh
-DATABASE_URL=tv://postgres/prod#url BOT_TOKEN=tv://github/bot#password typevault run -- ./deploy.sh
+DATABASE_URL=typevault://postgres/prod#url BOT_TOKEN=typevault://github/bot#password typevault run -- ./deploy.sh
 ```
 
 A reference names its entry exactly, so it resolves anything your grant reaches, like `--only <name>`. Loader

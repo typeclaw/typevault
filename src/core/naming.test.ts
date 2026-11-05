@@ -19,7 +19,7 @@ describe('parseEntryName', () => {
     ['openai', 'openai'],
     ['GitHub/Bot', 'github/bot'],
     ['google-workspace/team-1', 'google-workspace/team-1'],
-    ['tv://github/bot', 'github/bot'],
+    ['typevault://github/bot', 'github/bot'],
     ['typevault://GitHub/Bot', 'github/bot'],
   ])('accepts %p as %p', (input, expected) => {
     expect<string>(parseEntryName(input)).toBe(expected)
@@ -36,7 +36,7 @@ describe('parseEntryRef', () => {
   })
 
   it('takes everything after the first # as the field', () => {
-    expect(parseEntryRef('tv://aws/prod#Secret Access Key #2').field).toBe('Secret Access Key #2')
+    expect(parseEntryRef('typevault://aws/prod#Secret Access Key #2').field).toBe('Secret Access Key #2')
   })
 
   it.each(['github/bot#', 'github/bot#a=b', 'github/bot# padded', 'github/bot#$default', 'github/bot#$other'])(
@@ -46,16 +46,19 @@ describe('parseEntryRef', () => {
     },
   )
 
-  it.each(['tv://github/bot#password', 'typevault://github/bot#password', 'TV://GitHub/Bot#password'])(
+  it.each(['typevault://github/bot#password', 'TYPEVAULT://GitHub/Bot#password'])(
     'accepts the %p scheme form',
     (input) => {
       expect(parseEntryRef(input)).toEqual({ name: parseEntryName('github/bot'), field: 'password' })
     },
   )
 
-  it.each(['op://github/bot#password', 'tv:github/bot', 'tv:///github/bot'])('rejects %p', (input) => {
-    expect(() => parseEntryRef(input)).toThrow(TypeVaultError)
-  })
+  it.each(['op://github/bot#password', 'tv://github/bot#password', 'typevault:github/bot', 'typevault:///github/bot'])(
+    'rejects %p',
+    (input) => {
+      expect(() => parseEntryRef(input)).toThrow(TypeVaultError)
+    },
+  )
 
   it('leaves the field undefined when no selector is given', () => {
     expect(parseEntryRef('openai').field).toBeUndefined()
@@ -153,8 +156,8 @@ describe('matchesOnly', () => {
 
   it.each([
     [['github/*'], true],
-    [['tv://github/*'], true],
-    [['TV://GitHub/Bot'], true],
+    [['typevault://github/*'], true],
+    [['TYPEVAULT://GitHub/Bot'], true],
     [['github/bot'], true],
     [['openai', 'github/personal'], false],
     [['*'], false],
