@@ -21,7 +21,7 @@ import {
 } from '../../core/identity'
 import { vaultIdOf } from '../../core/layout'
 import { Vault } from '../../core/vault'
-import { stopDaemon } from '../../daemon/spawn'
+import { endLiveGrants, stopDaemon } from '../../daemon/spawn'
 import { export1Password, identityTitle } from '../../export/1password'
 import { ONEPASSWORD_VIAS } from '../../import/1password-live'
 import {
@@ -239,7 +239,7 @@ export const unlock = defineCommand({
 })
 
 export const lock = defineCommand({
-  meta: { name: 'lock', description: 'Lock this vault now: stops the daemon and ends every session' },
+  meta: { name: 'lock', description: 'Lock this vault now: stops the daemon and ends every session and live grant' },
   async run() {
     const layout = findLayout(process.env)
     if (layout === undefined) throw new TypeVaultError('not_found', 'no vault here')
@@ -255,6 +255,7 @@ export const lock = defineCommand({
             throw error
           },
         )) || locked
+      await endLiveGrants(target, process.env)
     }
     print(locked ? 'locked' : 'already locked')
   },

@@ -46,7 +46,7 @@ export const SESSION_CEILING = ':session'
 export const MAX_CHAIN = 8
 
 /**
- * Live grants, persisted (hashed) so a daemon restart doesn't cut sessions off.
+ * Live grants, persisted (hashed) so a daemon restart doesn't cut issued grants off. `typevault lock` ends them.
  * A token is `tvl1.<id>.<secret>`; only sha256(secret) is stored.
  */
 export class GrantStore {

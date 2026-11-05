@@ -411,6 +411,46 @@ it(
 )
 
 it(
+  'lock clears a grants file the daemon cannot read',
+  async () => {
+    // given runtime state this release can't read, which keeps the daemon from starting
+    const alice = actor('alice')
+    await ok(alice, withPassword('init', '--name', 'alice'), line('a'))
+    writeFileSync(join(runDir('alice'), 'grants.json'), OLD_FORMAT_GRANTS)
+    await fails(alice, withPassword('unlock'), line('a'))
+
+    // when the owner locks
+    await ok(alice, ['lock'])
+
+    // then the next unlock starts
+    await ok(alice, withPassword('unlock'), line('a'))
+  },
+  SCENARIO_MS,
+)
+
+it(
+  "an issued grant doesn't come back after lock",
+  async () => {
+    // given a grant issued by a running session
+    const alice = await unlockedVault()
+    const token = await issueGrant(alice)
+
+    // when the vault is locked and unlocked again
+    await ok(alice, ['lock'])
+    await ok(alice, withPassword('unlock'), line('a'))
+
+    // then the grant is refused, and the lock is on the trail
+    expect(await fails({ ...alice, TYPEVAULT_GRANT: token }, ['ls'])).toContain('unknown grant')
+    const trail = (await ok(alice, ['audit'])).stdout
+      .trim()
+      .split('\n')
+      .map((record): unknown => JSON.parse(record))
+    expect(trail).toContainEqual(expect.objectContaining({ action: 'grant.revoke', reason: 'typevault lock' }))
+  },
+  SCENARIO_MS,
+)
+
+it(
   'audit --verify reports a damaged log as broken',
   async () => {
     // given a trail with a line that isn't a record
