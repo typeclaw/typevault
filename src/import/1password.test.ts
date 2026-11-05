@@ -66,7 +66,7 @@ test('1PUX maps login, password, secure note, API, SSH, and tags without unsuppo
   )
   expect(result.entries.map((entry) => [String(entry.name), entry.fields])).toEqual([
     [
-      'github/work',
+      'github/user@example.com',
       {
         username: { type: 'text', value: 'user@example.com' },
         password: { type: 'secret', value: 'hunter2' },
@@ -75,31 +75,26 @@ test('1PUX maps login, password, secure note, API, SSH, and tags without unsuppo
       },
     ],
     [
-      'github/work-2',
+      'github',
       {
         password: { type: 'secret', value: 'second' },
         url: { type: 'text', value: 'https://example.com/path?secret=hidden' },
       },
     ],
-    ['memo/work', { $default: { type: 'secret', value: 'private note' } }],
+    ['memo', { $default: { type: 'secret', value: 'private note' } }],
+    ['api', { $default: { type: 'secret', value: 'fake-key' }, 'Webhook Secret': { type: 'secret', value: 'whsec' } }],
     [
-      'api/work',
-      { $default: { type: 'secret', value: 'fake-key' }, 'Webhook Secret': { type: 'secret', value: 'whsec' } },
-    ],
-    [
-      'ssh/work',
+      'ssh',
       { private_key: { type: 'secret', value: 'fake-private' }, public_key: { type: 'text', value: 'fake-public' } },
     ],
   ])
   expect(result.entries[0]?.origin).toBe('https://example.com')
   expect(result.entries[0]?.tags).toEqual(['work', 'agent'])
-  expect(result.warnings).toHaveLength(3)
-  expect(result.warnings.join()).toContain('"github/work"')
-  expect(result.warnings.join()).toContain('"github/work-2"')
+  expect(result.warnings).toHaveLength(2)
   expect(result.warnings.join()).not.toContain('hunter2')
 })
 
-test('1PUX omits missing containers and ignores non-web origins', () => {
+test('1PUX ignores non-web origins', () => {
   const record = { ...item('001'), overview: { title: 'GitHub', url: 'javascript:alert(1)' } }
   const bytes = zipSync({ 'export.data': strToU8(JSON.stringify({ accounts: [{ vaults: [{ items: [record] }] }] })) })
   const result = parse1Password(bytes)
@@ -108,25 +103,11 @@ test('1PUX omits missing containers and ignores non-web origins', () => {
   expect(result.entries[0]?.fields).toEqual({ url: { type: 'text', value: 'javascript:alert(1)' } })
 })
 
-test('1PUX names each account in its entries, so same-named vaults stay apart', () => {
-  const vault = { attrs: { name: 'Private' }, items: [item('001')] }
-  const accounts = [
-    { attrs: { domain: 'https://acme.1password.com/' }, vaults: [vault] },
-    { attrs: { accountName: 'Home' }, vaults: [vault] },
-  ]
-  const result = parse1Password(zipSync({ 'export.data': strToU8(JSON.stringify({ accounts })) }))
-  expect(result.entries.map((entry): string => entry.name)).toEqual(['github/acme-private', 'github/home-private'])
-})
-
 test('1PUX scopes item ids to their vault, so the same id in two vaults stays two items', () => {
-  const vaults = ['v1', 'v2'].map((uuid) => ({
-    attrs: { uuid, name: uuid },
-    items: [{ ...item('001'), uuid: 'item-1' }],
-  }))
+  const vaults = ['v1', 'v2'].map((uuid) => ({ attrs: { uuid }, items: [{ ...item('001'), uuid: 'item-1' }] }))
   const result = parse1Password(zipSync({ 'export.data': strToU8(JSON.stringify({ accounts: [{ vaults }] })) }))
   expect(result.entries.map((entry) => entry.source)).toEqual(['1password:v1/item-1', '1password:v2/item-1'])
 })
-
 test.each([
   new Uint8Array([0, 1, 2]),
   zipSync({ other: strToU8('{}') }),

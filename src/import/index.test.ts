@@ -18,7 +18,7 @@ const cases: readonly {
   {
     source: 'csv',
     text: 'name,url,username,password\nExample,https://example.com,user@example.com,hunter2',
-    name: 'example',
+    name: 'example/user@example.com',
     field: 'password',
   },
   {

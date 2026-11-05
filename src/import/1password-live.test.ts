@@ -69,7 +69,7 @@ test('op import reads every listed item and maps login, note, API, SSH, and tags
   // then
   expect(result.entries.map((entry) => [String(entry.name), entry.fields])).toEqual([
     [
-      'github/example-work',
+      'github/user@example.com',
       {
         username: { type: 'text', value: 'user@example.com' },
         password: { type: 'secret', value: 'hunter2' },
@@ -77,13 +77,10 @@ test('op import reads every listed item and maps login, note, API, SSH, and tags
         url: { type: 'text', value: 'https://example.com/login' },
       },
     ],
-    ['memo/example-work', { $default: { type: 'secret', value: 'private note' } }],
+    ['memo', { $default: { type: 'secret', value: 'private note' } }],
+    ['api', { $default: { type: 'secret', value: 'fake-key' }, 'Webhook Secret': { type: 'secret', value: 'whsec' } }],
     [
-      'api/example-work',
-      { $default: { type: 'secret', value: 'fake-key' }, 'Webhook Secret': { type: 'secret', value: 'whsec' } },
-    ],
-    [
-      'ssh/example-work',
+      'ssh',
       { private_key: { type: 'secret', value: 'fake-openssh' }, public_key: { type: 'text', value: 'fake-public' } },
     ],
   ])
@@ -119,7 +116,6 @@ test('op import with a tag imports whole items for the tag and only the named fi
   const listed = Object.entries(tags).map(([id, itemTags]) => ({ id, vault: { id: 'v1' }, tags: itemTags }))
   const runOp = async (args: readonly string[]) => {
     calls.push(args)
-    if (args[0] === 'whoami') return JSON.stringify({ url: 'https://my.1password.com' })
     const id = args[2] ?? ''
     return JSON.stringify(args[1] === 'list' ? listed : { ...(OP_ITEMS[id] as object), tags: tags[id] })
   }
@@ -128,7 +124,6 @@ test('op import with a tag imports whole items for the tag and only the named fi
   const result = await read1Password({ via: 'op', tags: ['agent'] }, { runOp })
 
   // then
-  expect(calls.filter((args) => args[0] === 'whoami')).toEqual([['whoami', '--format', 'json']])
   expect(calls.filter((args) => args[0] === 'item').map((args) => args.slice(0, 3))).toEqual([
     ['item', 'list', '--format'],
     ['item', 'get', 'login'],
@@ -138,7 +133,7 @@ test('op import with a tag imports whole items for the tag and only the named fi
   expect(calls[0]).toContain('--tags')
   expect(result.entries.map((entry) => [String(entry.name), entry.fields, entry.tags])).toEqual([
     [
-      'github/my-work',
+      'github/user@example.com',
       {
         username: { type: 'text', value: 'user@example.com' },
         password: { type: 'secret', value: 'hunter2' },
@@ -147,7 +142,7 @@ test('op import with a tag imports whole items for the tag and only the named fi
       },
       ['agent'],
     ],
-    ['api/my-work', { 'Webhook Secret': { type: 'secret', value: 'whsec' } }, ['work']],
+    ['api', { 'Webhook Secret': { type: 'secret', value: 'whsec' } }, ['work']],
   ])
   expect(result.warnings).toEqual([
     'API: no single field "Missing" to import',
@@ -187,19 +182,15 @@ test('op import prefers the exact field name and refuses an ambiguous one', asyn
     ],
   }
   const runOp = async (args: readonly string[]) =>
-    JSON.stringify(
-      args[0] === 'whoami'
-        ? { url: 'my.1password.com' }
-        : args[1] === 'list'
-          ? [{ id: 'login', vault: { id: 'v1' }, tags: item.tags }]
-          : item,
-    )
+    JSON.stringify(args[1] === 'list' ? [{ id: 'login', vault: { id: 'v1' }, tags: item.tags }] : item)
 
   // when
   const result = await read1Password({ via: 'op', tags: ['agent'] }, { runOp })
 
   // then
-  expect(result.entries.map((entry) => entry.fields)).toEqual([{ password: { type: 'secret', value: 'hunter2' } }])
+  expect(result.entries.map((entry) => [String(entry.name), entry.fields])).toEqual([
+    ['github/user@example.com', { password: { type: 'secret', value: 'hunter2' } }],
+  ])
   expect(result.warnings).toEqual(['GitHub: no single field "region" to import'])
 })
 
@@ -264,12 +255,8 @@ test('op import reads each account and vault given, and every tag in one listing
     'item list --format json --vault h1 --tags agents,ci --account home',
     'item list --format json --vault h2 --tags agents,ci --account home',
   ])
-  expect(result.entries.map((entry) => String(entry.name))).toEqual([
-    'memo/work-work',
-    'api/home-work',
-    'api/home-work-2',
-  ])
-  expect(result.warnings).toEqual(['name collision: "api/home-work" renamed to "api/home-work-2"'])
+  expect(result.entries.map((entry) => String(entry.name))).toEqual(['memo', 'api', 'api-2'])
+  expect(result.warnings).toEqual(['name collision: "api" renamed to "api-2"'])
 })
 
 test('op import fails when a vault is in none of the accounts, and refuses a comma in a tag', async () => {
@@ -368,7 +355,7 @@ test('sdk import maps desktop-app items and skips unreadable ones', async () => 
   expect(result.entries[0]?.source).toBe('1password:v1/login')
   expect(result.entries.map((entry) => [String(entry.name), entry.fields])).toEqual([
     [
-      'github/example-work',
+      'github/user@example.com',
       {
         username: { type: 'text', value: 'user@example.com' },
         password: { type: 'secret', value: 'hunter2' },
@@ -376,13 +363,10 @@ test('sdk import maps desktop-app items and skips unreadable ones', async () => 
         url: { type: 'text', value: 'https://example.com/login' },
       },
     ],
-    ['memo/example-work', { $default: { type: 'secret', value: 'private note' } }],
+    ['memo', { $default: { type: 'secret', value: 'private note' } }],
+    ['api', { $default: { type: 'secret', value: 'fake-key' }, 'Webhook Secret': { type: 'secret', value: 'whsec' } }],
     [
-      'api/example-work',
-      { $default: { type: 'secret', value: 'fake-key' }, 'Webhook Secret': { type: 'secret', value: 'whsec' } },
-    ],
-    [
-      'ssh/example-work',
+      'ssh',
       { private_key: { type: 'secret', value: 'fake-private' }, public_key: { type: 'text', value: 'fake-public' } },
     ],
   ])
@@ -428,8 +412,37 @@ test('sdk import with a tag fetches items carrying the tag or a <tag>/<field> ta
   // then
   expect(requested).toEqual([['0', '1']])
   expect(result.entries.map((entry) => [String(entry.name), entry.fields, entry.tags])).toEqual([
-    ['github/example-work', {}, ['agent']],
-    ['api/example-work', { 'Webhook Secret': { type: 'secret', value: 'whsec' } }, []],
+    ['github', {}, ['agent']],
+    ['api', { 'Webhook Secret': { type: 'secret', value: 'whsec' } }, []],
+  ])
+})
+
+test('sdk import names a login after its username even when only another field is selected', async () => {
+  // given
+  const client = sdkClient(
+    [
+      {
+        title: 'GitHub',
+        category: 'Login',
+        tags: ['agent/password'],
+        fields: [
+          { id: 'username', title: 'username', fieldType: 'Text', value: 'user@example.com' },
+          { id: 'password', title: 'password', fieldType: 'Concealed', value: 'hunter2' },
+        ],
+      },
+    ],
+    [['agent/password']],
+  )
+
+  // when
+  const result = await read1Password(
+    { via: 'sdk', accounts: ['Example'], tags: ['agent'] },
+    { connectSdk: async () => client },
+  )
+
+  // then
+  expect(result.entries.map((entry) => [String(entry.name), entry.fields])).toEqual([
+    ['github/user@example.com', { password: { type: 'secret', value: 'hunter2' } }],
   ])
 })
 
@@ -483,21 +496,9 @@ test('sdk import reads every account given and finds a vault in any of them', as
   // then
   expect(connected).toEqual(['Work', 'Home'])
   expect(result.entries.map((entry) => [String(entry.name), entry.fields])).toEqual([
-    ['memo/work-work', { $default: { type: 'secret', value: 'work note' } }],
-    ['memo/home-personal', { $default: { type: 'secret', value: 'home note' } }],
+    ['memo', { $default: { type: 'secret', value: 'work note' } }],
+    ['memo-2', { $default: { type: 'secret', value: 'home note' } }],
   ])
-})
-
-test('sdk import keeps items whose account and vault names mix scripts', async () => {
-  // given
-  const client = sdkClient([{ title: 'GitHub', category: 'SecureNote', notes: 'note', fields: [] }])
-
-  // when
-  const result = await read1Password({ via: 'sdk', accounts: ['Работа'] }, { connectSdk: async () => client })
-
-  // then
-  expect(result.entries.map((entry): string => entry.name)).toEqual([expect.stringMatching(/^github\/[0-9a-f]{8}$/)])
-  expect(result.warnings[0]).toContain('"Работа Work"')
 })
 
 test('sdk import needs an account and an existing vault', async () => {
@@ -516,7 +517,6 @@ test('op import fetches up to eight items at once and keeps them in listed order
   const held: (() => void)[] = []
   const runOp = async (args: readonly string[]) => {
     if (args[1] === 'list') return JSON.stringify(ids.map((id) => ({ id, vault: { id: 'v1' } })))
-    if (args[0] === 'whoami') return JSON.stringify({ url: 'https://my.1password.com' })
     inFlight += 1
     maxInFlight = Math.max(maxInFlight, inFlight)
     if (maxInFlight < 8) await new Promise<void>((resolve) => held.push(resolve))
@@ -531,7 +531,7 @@ test('op import fetches up to eight items at once and keeps them in listed order
 
   // then
   expect(maxInFlight).toBe(8)
-  expect(result.entries.map((entry) => String(entry.name))).toEqual(ids.map((_, index) => `note-${index}/my-work`))
+  expect(result.entries.map((entry) => String(entry.name))).toEqual(ids.map((_, index) => `note-${index}`))
 })
 
 test('op import starts no more item fetches once one fails', async () => {

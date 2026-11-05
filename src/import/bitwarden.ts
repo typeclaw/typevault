@@ -9,7 +9,6 @@ const ItemSchema = z.object({
   id: TextSchema,
   type: z.number().int(),
   name: z.string(),
-  folderId: TextSchema,
   notes: TextSchema,
   login: z
     .object({
@@ -21,10 +20,7 @@ const ItemSchema = z.object({
     .nullish(),
   sshKey: z.object({ privateKey: TextSchema, publicKey: TextSchema }).nullish(),
 })
-const ExportSchema = z.object({
-  folders: z.array(z.object({ id: z.string(), name: z.string() })).default([]),
-  items: z.array(ItemSchema),
-})
+const ExportSchema = z.object({ items: z.array(ItemSchema) })
 
 export function parseBitwarden(text: string): ImportResult {
   const raw = parseJson(text, z.object({ encrypted: z.boolean().optional() }).passthrough(), 'Bitwarden')
@@ -32,16 +28,10 @@ export function parseBitwarden(text: string): ImportResult {
     throw new TypeVaultError('invalid', 'encrypted Bitwarden exports are not supported; export unencrypted JSON')
   }
   const data = parseExternal(raw, ExportSchema, 'Bitwarden')
-  const folders = new Map(data.folders.map((folder) => [folder.id, folder.name]))
   const items: ImportItem[] = []
   const warnings: string[] = []
   for (const item of data.items) {
-    const container = item.folderId ? folders.get(item.folderId) : undefined
-    const common = {
-      title: item.name,
-      ...(container === undefined ? {} : { container }),
-      ...(item.id ? { source: `bitwarden:${item.id}` } : {}),
-    }
+    const common = { title: item.name, ...(item.id ? { source: `bitwarden:${item.id}` } : {}) }
     switch (item.type) {
       case 1: {
         const url = item.login?.uris?.find((uri) => uri.uri)?.uri ?? undefined

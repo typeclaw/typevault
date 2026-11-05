@@ -3,7 +3,7 @@ import { z } from 'zod'
 
 import { TypeVaultError } from '../core/errors'
 import { findField, type Field } from '../core/naming'
-import { collectEntries, parseExternal, parseJson, withCustomFields, type ImportItem } from './shared'
+import { collectEntries, loginOf, parseExternal, parseJson, withCustomFields, type ImportItem } from './shared'
 import type { ImportResult } from './types'
 
 export const ONEPASSWORD_VIAS = ['sdk', 'op'] as const
@@ -76,7 +76,6 @@ export async function read1Password(
 type Filters = { readonly vaults: readonly string[]; readonly tags: readonly string[] }
 type Collected = { readonly items: ImportItem[]; readonly warnings: string[]; readonly matchedVaults: Set<string> }
 
-const OpWhoamiSchema = z.object({ url: z.string() })
 const OpVaultListSchema = z.array(z.object({ id: z.string(), name: z.string().default('') }))
 const OpListSchema = z.array(
   z.object({ id: z.string(), vault: z.object({ id: z.string() }), tags: z.array(z.string()).default([]) }),
@@ -108,8 +107,6 @@ async function readOp(
   collected: Collected,
 ): Promise<void> {
   const account = accountName === undefined ? [] : ['--account', accountName]
-  // Vaults of the same name (each account's "Private") only stay apart with the account in the entry name.
-  let label = accountName === undefined ? undefined : accountLabel(accountName)
   const tags = filters.tags.length === 0 ? [] : ['--tags', filters.tags.join(',')]
   let scopes: readonly (readonly string[])[] = [[]]
   if (filters.vaults.length > 0) {
@@ -137,14 +134,8 @@ async function readOp(
     if (mapped === undefined) collected.warnings.push(UNSUPPORTED)
     else {
       const selected = selectFields(mapped, item.title, item.tags, filters.tags, collected.warnings)
-      if (selected === undefined) continue
-      label ??= accountLabel(parseJson(await runOp(['whoami', '--format', 'json']), OpWhoamiSchema, 'op').url)
-      collected.items.push({
-        ...selected,
-        title: item.title,
-        container: `${label} ${item.vault.name}`,
-        source: onePasswordSource(item.vaultId, item.id),
-      })
+      if (selected !== undefined)
+        collected.items.push({ ...selected, title: item.title, source: onePasswordSource(item.vaultId, item.id) })
     }
   }
 }
@@ -231,15 +222,8 @@ function mapOpTemplate(item: z.infer<typeof OpItemSchema>): Omit<ImportItem, 'ti
   }
 }
 
-/** An account as named in entries: a sign-in address's first label (`acme.1password.com` gives `acme`), else as given. */
-export function accountLabel(account: string): string {
-  const host = account.replace(/^https?:\/\//i, '').replace(/\/.*$/, '')
-  return /^[^\s@.]+(?:\.[^\s@.]+)+$/.test(host) ? (host.split('.')[0] ?? host) : account
-}
-
 /** An item's source id. 1Password item ids are unique only within their vault, so the vault id comes with it. */
 export const onePasswordSource = (vaultId: string, itemId: string): string => `1password:${vaultId}/${itemId}`
-
 /** True when a vault is wanted by id or name, recording which requested vaults it answers to. */
 function matchVault(id: string, name: string, wanted: readonly string[], matched: Set<string>): boolean {
   if (wanted.length === 0) return true
@@ -290,7 +274,8 @@ function selectFields(
     warnings.push(`${title}: skipped, none of its tagged fields were found`)
     return undefined
   }
-  return { ...mapped, fields, tags: kept }
+  // The entry keeps its login-based name even when the username field itself isn't selected.
+  return { ...mapped, fields, tags: kept, login: loginOf(mapped.fields) ?? '' }
 }
 
 export const spawnOp: RunOp = async (args, input) => {
@@ -367,7 +352,6 @@ async function readSdk(account: string, filters: Filters, connect: ConnectSdk, c
           items.push({
             ...selected,
             title: item.title,
-            container: `${accountLabel(account)} ${vault.title}`,
             ...(item.id === undefined ? {} : { source: onePasswordSource(vault.id, item.id) }),
           })
       }

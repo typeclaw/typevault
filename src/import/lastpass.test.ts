@@ -3,7 +3,7 @@ import { expect, test } from 'bun:test'
 import { TypeVaultError } from '../core/errors'
 import { parseLastpass } from './lastpass'
 
-test('LastPass maps logins and notes with grouping accounts, CSV escapes, and collision suffixes', () => {
+test('LastPass maps logins and notes with username accounts and CSV escapes', () => {
   const result = parseLastpass(
     'url,username,password,totp,extra,name,grouping,fav\r\n' +
       'https://example.com/a,user@example.com,hunter2,SEED,,GitHub,Work,0\r\n' +
@@ -12,7 +12,7 @@ test('LastPass maps logins and notes with grouping accounts, CSV escapes, and co
   )
   expect(result.entries.map((entry) => [entry.name, entry.fields, entry.origin])).toEqual([
     [
-      'github/work',
+      'github/user@example.com',
       {
         username: { type: 'text', value: 'user@example.com' },
         password: { type: 'secret', value: 'hunter2' },
@@ -21,16 +21,14 @@ test('LastPass maps logins and notes with grouping accounts, CSV escapes, and co
       },
       'https://example.com',
     ],
-    ['github/work-2', { $default: { type: 'secret', value: 'line one\r\nsay "hello"' } }, undefined],
+    ['github', { $default: { type: 'secret', value: 'line one\r\nsay "hello"' } }, undefined],
     [
       'personal',
       { password: { type: 'secret', value: 'other' }, url: { type: 'text', value: 'ftp://example.com' } },
       undefined,
     ],
   ])
-  expect(result.warnings).toHaveLength(1)
-  expect(result.warnings[0]).toContain('"github/work"')
-  expect(result.warnings[0]).toContain('"github/work-2"')
+  expect(result.warnings).toEqual([])
 })
 
 test('LastPass skips structured card records without exposing secret contents', () => {

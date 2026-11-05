@@ -18,11 +18,11 @@ test.each(['a,"unterminated', 'a,b"c', '"a"junk,b'])('CSV rejects invalid quotin
 test('Chrome CSV maps logins and preserves passwords while deriving safe origins', () => {
   const result = parseCsv(
     '\uFEFFNAME,URL,USERNAME,PASSWORD,note\r\nGitHub,https://example.com:8443/path,user@example.com,hunter2,ignored\r\n' +
-      'GitHub,ftp://example.com,user@example.com,second,\r\nGitHub-2,invalid,,,',
+      'GitHub,ftp://example.com,user@example.com,second,\r\nGitHub,invalid,user@example.com-2,,',
   )
   expect(result.entries.map((entry) => [entry.name, entry.fields, entry.origin])).toEqual([
     [
-      'github',
+      'github/user@example.com',
       {
         url: { type: 'text', value: 'https://example.com:8443/path' },
         username: { type: 'text', value: 'user@example.com' },
@@ -31,7 +31,7 @@ test('Chrome CSV maps logins and preserves passwords while deriving safe origins
       'https://example.com:8443',
     ],
     [
-      'github-2',
+      'github/user@example.com-2',
       {
         url: { type: 'text', value: 'ftp://example.com' },
         username: { type: 'text', value: 'user@example.com' },
@@ -39,11 +39,15 @@ test('Chrome CSV maps logins and preserves passwords while deriving safe origins
       },
       undefined,
     ],
-    ['github-2-2', { url: { type: 'text', value: 'invalid' } }, undefined],
+    [
+      'github/user@example.com-2-2',
+      { url: { type: 'text', value: 'invalid' }, username: { type: 'text', value: 'user@example.com-2' } },
+      undefined,
+    ],
   ])
   expect(result.warnings).toHaveLength(2)
-  expect(result.warnings[0]).toContain('"github"')
-  expect(result.warnings[0]).toContain('"github-2"')
+  expect(result.warnings[0]).toContain('"github/user@example.com"')
+  expect(result.warnings[0]).toContain('"github/user@example.com-2"')
 })
 
 test('Safari CSV retains OTPAuth but excludes notes outside password field allowlist', () => {

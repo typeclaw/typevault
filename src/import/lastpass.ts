@@ -20,7 +20,6 @@ export function parseLastpass(text: string): ImportResult {
     return [
       {
         title: row['name'] ?? '',
-        container: row['grouping'] ?? '',
         preset: note ? ('note' as const) : ('password' as const),
         fields: note
           ? { $default: extra }
