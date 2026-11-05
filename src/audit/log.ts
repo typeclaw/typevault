@@ -5,7 +5,9 @@ import { z } from 'zod'
 
 import { sha256Hex } from '../core/crypto'
 import { canonicalJson, type Json, utf8 } from '../core/encoding'
+import { TypeVaultError } from '../core/errors'
 import { assertNoSymlinks, ensureDir } from '../core/fsx'
+import { parseJsonText } from '../core/json-file'
 import type { Layout } from '../core/layout'
 import { withLock } from '../core/lock'
 
@@ -57,7 +59,7 @@ function readLast(layout: Layout): AuditRecord | undefined {
         .split('\n')
         .filter((line) => line !== '')
       const last = lines.at(-1)
-      if (lines.length > 1 && last !== undefined) return RecordSchema.parse(JSON.parse(last))
+      if (lines.length > 1 && last !== undefined) return parseJsonText(layout.auditLog, last, RecordSchema)
     } finally {
       closeSync(fd)
     }
@@ -70,7 +72,7 @@ export function readAudit(layout: Layout): readonly AuditRecord[] {
   return readFileSync(layout.auditLog, 'utf8')
     .split('\n')
     .filter((line) => line !== '')
-    .map((line) => RecordSchema.parse(JSON.parse(line)))
+    .map((line) => parseJsonText(layout.auditLog, line, RecordSchema))
 }
 
 function writeAnchor(layout: Layout, last: AuditRecord): void {
@@ -105,8 +107,17 @@ export type AuditVerdict =
   | { readonly ok: true; readonly records: number }
   | { readonly ok: false; readonly reason: string }
 
-/** Recomputes the chain and checks every anchor against it. */
+/** Recomputes the chain and checks every anchor against it. A log too damaged to read fails the check. */
 export function verifyAudit(layout: Layout): AuditVerdict {
+  try {
+    return verifyChain(layout)
+  } catch (error) {
+    if (error instanceof TypeVaultError && error.code === 'tampered') return { ok: false, reason: error.message }
+    throw error
+  }
+}
+
+function verifyChain(layout: Layout): AuditVerdict {
   const records = readAudit(layout)
   let prev = GENESIS
   const heads = new Map<number, string>()
@@ -124,7 +135,7 @@ export function verifyAudit(layout: Layout): AuditVerdict {
       ? readFileSync(file, 'utf8')
           .split('\n')
           .filter((line) => line !== '')
-          .map((line) => AnchorSchema.parse(JSON.parse(line)))
+          .map((line) => parseJsonText(file, line, AnchorSchema))
       : [],
   )
   const broken = anchors.find((anchor) => heads.get(anchor.seq) !== anchor.hash)

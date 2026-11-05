@@ -1,7 +1,16 @@
 import { afterEach, beforeEach, expect, it } from 'bun:test'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, parse } from 'node:path'
+import { dirname, join, parse } from 'node:path'
 
 import { z } from 'zod'
 
@@ -348,6 +357,34 @@ it(
     // then the error identifies the broken state and where its full log is
     expect(error).toContain(join(runDir('alice'), 'grants.json'))
     expect(error).toContain(join(runDir('alice'), 'daemon.log'))
+  },
+  SCENARIO_MS,
+)
+
+/** Alice's vault, unlocked, holding one entry. */
+async function unlockedVault(): Promise<Actor> {
+  const alice = actor('alice')
+  await ok(alice, withPassword('init', '--name', 'alice'), line('a'))
+  await ok(alice, withPassword('unlock'), line('a'))
+  await ok(alice, ['set', 'typevault://openai', '--preset', 'api_key', '--stdin'], 'sk-test')
+  return alice
+}
+
+it(
+  'audit --verify reports a damaged log as broken',
+  async () => {
+    // given a trail with a line that isn't a record
+    const alice = await unlockedVault()
+    const audit = join(dirname(runDir('alice')), 'audit')
+    const [log] = readdirSync(audit)
+    if (log === undefined) throw new Error('nothing was audited')
+    appendFileSync(join(audit, log), 'garbage\n')
+
+    // when it is verified
+    const verified = await cli(alice, ['audit', '--verify'])
+
+    // then the verdict says so, rather than the command crashing
+    expect({ code: verified.code, broken: verified.stdout.startsWith('BROKEN') }).toEqual({ code: 1, broken: true })
   },
   SCENARIO_MS,
 )
