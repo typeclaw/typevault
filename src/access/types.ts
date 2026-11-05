@@ -19,6 +19,7 @@ export type EntryValue = EntrySummary & {
   readonly fields: Readonly<Record<string, Field>>
   readonly env?: string
   readonly origin?: string
+  readonly source?: string
   /** Written by the owner or by a key that reaches all of the reader's own tiers: its `--env` override counts. */
   readonly trustedWriter?: boolean
 }
@@ -29,6 +30,8 @@ export type SetInput = {
   readonly tier?: string | undefined
   readonly env?: string | undefined
   readonly origin?: string | undefined
+  /** Kept by a blind writer (a sealed grant) that moves an imported entry. */
+  readonly source?: string | undefined
   readonly tags?: readonly string[] | undefined
   readonly ifRev?: number | undefined
 }
@@ -44,6 +47,7 @@ export function entryInputOf(input: SetInput, tier: string) {
     tier,
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.origin === undefined ? {} : { origin: input.origin }),
+    ...(input.source === undefined ? {} : { source: input.source }),
     ...(input.tags === undefined ? {} : { tags: input.tags }),
   }
 }
@@ -78,6 +82,7 @@ export function toValue(tier: string, id: string, rev: number, payload: EntryPay
     fields: payload.fields,
     ...(payload.env === undefined ? {} : { env: payload.env }),
     ...(payload.origin === undefined ? {} : { origin: payload.origin }),
+    ...(payload.source === undefined ? {} : { source: payload.source }),
   }
 }
 

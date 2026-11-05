@@ -37,6 +37,7 @@ export type EntryBase = {
   readonly rev: number
   readonly created: string
   readonly rotated: string
+  readonly source?: string
 }
 
 export type PutOptions = { readonly ifRev?: number; readonly base?: EntryBase }
@@ -218,7 +219,7 @@ export class Vault {
     }
     const now = new Date().toISOString()
     const changed = found === undefined || !sameFields(found.payload.fields, input.fields)
-    const source = input.source ?? found?.payload.source
+    const source = input.source ?? prior?.source
     const payload: EntryPayload = {
       v: 1,
       name: input.name,

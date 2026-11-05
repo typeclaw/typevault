@@ -21,6 +21,7 @@ export const EntryValueSchema = z.object({
   fields: FieldsSchema,
   env: z.string().optional(),
   origin: z.string().optional(),
+  source: z.string().optional(),
   trustedWriter: z.boolean().optional(),
 })
 
@@ -29,11 +30,12 @@ export function toSummaryValue(parsed: z.infer<typeof EntrySummarySchema>): Entr
 }
 
 export function toEntryValue(parsed: z.infer<typeof EntryValueSchema>): EntryValue {
-  const { env, origin, trustedWriter, ...rest } = parsed
+  const { env, origin, source, trustedWriter, ...rest } = parsed
   return {
     ...rest,
     ...(env === undefined ? {} : { env }),
     ...(origin === undefined ? {} : { origin }),
+    ...(source === undefined ? {} : { source }),
     ...(trustedWriter === undefined ? {} : { trustedWriter }),
   }
 }
