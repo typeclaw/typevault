@@ -46,7 +46,7 @@ export const SESSION_CEILING = ':session'
 export const MAX_CHAIN = 8
 
 /**
- * Live grants, persisted (hashed) so a daemon restart doesn't cut sessions off.
+ * Live grants, persisted (hashed). Session grants end with their session; machine grants survive daemon restarts.
  * A token is `tvl1.<id>.<secret>`; only sha256(secret) is stored.
  */
 export class GrantStore {
@@ -66,6 +66,9 @@ export class GrantStore {
 
   issue(request: GrantRequest): { readonly token: string; readonly record: GrantRecord } {
     const parent = request.parent === undefined ? undefined : this.#records.find((r) => r.id === request.parent)
+    if (request.parent !== undefined && !this.isLive(request.parent)) {
+      throw new TypeVaultError('denied', 'parent grant is no longer live')
+    }
     let links = 1
     for (let link = parent; link !== undefined; links++) {
       const parentId = link.parent
