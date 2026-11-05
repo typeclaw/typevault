@@ -14,7 +14,11 @@ export function table(rows: readonly (readonly string[])[]): string {
   )
   return rows
     .map((row) =>
-      row.map((cell, index) => (index === row.length - 1 ? cell : cell.padEnd(widths[index] ?? 0))).join('  '),
+      row
+        .map((cell, index) =>
+          index === row.length - 1 ? cell : cell + ' '.repeat((widths[index] ?? 0) - Bun.stringWidth(cell)),
+        )
+        .join('  '),
     )
     .join('\n')
 }
