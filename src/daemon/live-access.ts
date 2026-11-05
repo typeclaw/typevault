@@ -6,6 +6,9 @@ import type { EntryName } from '../core/naming'
 import { callDaemon } from './client'
 
 const Ok = z.object({ ok: z.literal(true) })
+const Staged = z.object({ upload: z.string() })
+/** Keeps each staged chunk, once base64-encoded, well under the daemon's 1 MiB request limit. */
+const IMPORT_CHUNK_BYTES = 512 * 1024
 
 /** Access through a live grant: every call goes to the daemon, which checks, audits and decrypts. */
 export class LiveAccess implements Access {
@@ -42,6 +45,18 @@ export class LiveAccess implements Access {
 
   async set(input: SetInput): Promise<EntrySummary> {
     return toSummaryValue(await this.call('/v1/set', input, EntrySummarySchema))
+  }
+
+  /** Stages the serialized inputs in chunks, so no entry has to fit in one request, then writes them in one transaction. */
+  async importEntries(inputs: readonly SetInput[], tier: string): Promise<readonly EntrySummary[]> {
+    const serialized = Buffer.from(JSON.stringify(inputs))
+    let upload: string | undefined
+    for (let at = 0; at < serialized.byteLength; at += IMPORT_CHUNK_BYTES) {
+      const chunk = serialized.subarray(at, at + IMPORT_CHUNK_BYTES).toString('base64')
+      upload = (await this.call('/v1/import/stage', { ...(upload === undefined ? {} : { upload }), chunk }, Staged))
+        .upload
+    }
+    return (await this.call('/v1/import', { upload, tier }, z.array(EntrySummarySchema))).map(toSummaryValue)
   }
 
   async remove(name: EntryName, tier?: string): Promise<void> {
