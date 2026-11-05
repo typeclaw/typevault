@@ -39,7 +39,7 @@ jobs:
         run: bun run format:check
 
       - name: Test
-        run: bun test
+        run: bun run test
 
   windows:
     # Native Windows support: the same checks on windows-latest, so a Windows regression (paths, file locks, the
@@ -68,4 +68,4 @@ jobs:
         run: bun run format:check
 
       - name: Test
-        run: bun test --timeout 30000
+        run: bun run test --timeout 30000

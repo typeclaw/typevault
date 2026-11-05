@@ -190,7 +190,7 @@ use grants, `run` and references.
 git clone https://github.com/typeclaw/typevault
 cd typevault
 bun install
-bun test
+bun run test
 ```
 
 Pre-commit checks (all must pass):
