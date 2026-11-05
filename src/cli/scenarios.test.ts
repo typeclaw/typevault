@@ -389,6 +389,29 @@ it(
   SCENARIO_MS,
 )
 
+const badInputs: readonly (readonly [string, readonly string[], Actor, string])[] = [
+  ['a non-numeric --if-rev', ['set', 'typevault://openai', 'note=x', '--if-rev', 'abc'], {}, '--if-rev'],
+  ['a non-numeric prompt port', ['daemon', 'run'], { TYPEVAULT_PROMPT_PORT: 'abc' }, 'TYPEVAULT_PROMPT_PORT'],
+]
+
+for (const [what, args, extra, names] of badInputs) {
+  it(
+    `${what} fails with one line`,
+    async () => {
+      // given an unlocked vault
+      const alice = await unlockedVault()
+
+      // when the command runs with it
+      const error = await fails({ ...alice, ...extra }, args)
+
+      // then the error is a single line naming what was wrong
+      expect(error.split('\n')).toEqual([expect.stringMatching(/^typevault: /), ''])
+      expect(error).toContain(names)
+    },
+    SCENARIO_MS,
+  )
+}
+
 it('stores OAuth JSON from stdin as the preset input field', async () => {
   const machine = actor('machine')
   await ok(machine, ['init', '--machine'])

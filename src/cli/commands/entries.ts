@@ -201,7 +201,10 @@ export const set = defineCommand({
         '--env names the default field, but this entry has several fields and no $default',
       )
     }
-    const ifRev = args['if-rev'] === undefined ? undefined : z.coerce.number().int().parse(args['if-rev'])
+    const ifRev = args['if-rev'] === undefined ? undefined : Number(args['if-rev'])
+    if (ifRev !== undefined && !Number.isInteger(ifRev)) {
+      throw new TypeVaultError('invalid', `--if-rev must be a revision number, not "${args['if-rev']}"`)
+    }
     const tags = csv(args.tag)
     const stored = await access.set({
       name,
