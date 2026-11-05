@@ -59,12 +59,12 @@ beforeAll(async () => {
   fixture = new Uint8Array(await db.save())
 })
 
-test('KeePass maps protected login and note fields, immediate groups, origins, and excludes recycled subtrees', async () => {
+test('KeePass maps protected login and note fields, username accounts, origins, and excludes recycled subtrees', async () => {
   const result = await parseKeepass(fixture, 'test-password')
   expect(result.entries.map((entry) => [entry.name, entry.fields, entry.origin])).toEqual([
     ['memo', { $default: { type: 'secret', value: 'private note' } }, undefined],
     [
-      'github/work-team',
+      'github/user@example.com',
       {
         username: { type: 'text', value: 'user@example.com' },
         password: { type: 'secret', value: 'hunter2' },
@@ -73,14 +73,13 @@ test('KeePass maps protected login and note fields, immediate groups, origins, a
       },
       'https://example.com:8443',
     ],
-    ['github/work-team-2', { password: { type: 'secret', value: 'second' } }, undefined],
-    ['github/work-team-3', { password: { type: 'secret', value: 'third' } }, undefined],
-    ['local/bots', { url: { type: 'text', value: 'ftp://example.com' } }, undefined],
+    ['github', { password: { type: 'secret', value: 'second' } }, undefined],
+    ['github-2', { password: { type: 'secret', value: 'third' } }, undefined],
+    ['local', { url: { type: 'text', value: 'ftp://example.com' } }, undefined],
   ])
   expect(result.entries[1]?.tags).toEqual(['agent'])
-  expect(result.warnings).toHaveLength(3)
-  expect(result.warnings.join()).toContain('"github/work-team"')
-  expect(result.warnings.join()).toContain('"github/work-team-3"')
+  expect(result.warnings).toHaveLength(2)
+  expect(result.warnings.join()).toContain('"github" renamed to "github-2"')
   expect(result.warnings.join()).not.toContain('hunter2')
 })
 
@@ -92,10 +91,10 @@ test('KeePass dispatcher decrypts a file without modifying its bytes', async () 
     const result = await importFrom('keepass', { path, password: 'test-password' })
     expect<readonly string[]>(result.entries.map((entry) => entry.name)).toEqual([
       'memo',
-      'github/work-team',
-      'github/work-team-2',
-      'github/work-team-3',
-      'local/bots',
+      'github/user@example.com',
+      'github',
+      'github-2',
+      'local',
     ])
     expect(new Uint8Array(await readFile(path))).toEqual(fixture)
   } finally {

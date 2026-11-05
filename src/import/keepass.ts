@@ -38,9 +38,8 @@ export async function parseKeepass(bytes: Uint8Array, password?: string): Promis
   }
   const items: ImportItem[] = []
   const warnings: string[] = []
-  const visit = (group: KdbxGroup, root: boolean) => {
+  const visit = (group: KdbxGroup) => {
     if (group.uuid.equals(db.meta.recycleBinUuid)) return
-    const container = root ? undefined : parseExternal(group.name, z.string().optional(), 'KeePass group')
     for (const entry of group.entries) {
       const fields = parseExternal(
         Object.fromEntries(
@@ -62,12 +61,11 @@ export async function parseKeepass(bytes: Uint8Array, password?: string): Promis
           ? { username: fields['UserName'], password: fields['Password'], url, totp: fields['otp'] }
           : { $default: fields['Notes'] },
         tags: parseExternal(entry.tags, z.array(z.string()).readonly(), 'KeePass tags'),
-        ...(container === undefined ? {} : { container }),
         ...(url === undefined ? {} : { url }),
       })
     }
-    for (const child of group.groups) visit(child, false)
+    for (const child of group.groups) visit(child)
   }
-  for (const group of db.groups) visit(group, true)
+  for (const group of db.groups) visit(group)
   return collectEntries(items, warnings)
 }

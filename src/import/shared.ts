@@ -17,7 +17,8 @@ import type { ImportedEntry, ImportResult } from './types'
 
 export type ImportItem = {
   readonly title: string
-  readonly container?: string
+  /** The login on the service, naming the entry's account segment. Read from the `username` field when unset. */
+  readonly login?: string
   readonly preset: Preset
   readonly fields: Readonly<Record<string, string | Field | undefined>>
   readonly url?: string
@@ -29,11 +30,11 @@ export function collectEntries(items: readonly ImportItem[], warnings: readonly 
   const entries: ImportedEntry[] = []
   const messages = [...warnings]
   const used = new Set<string>()
-  const containers = new Map<string, string>()
-  // A folder (or a 1Password account and vault) whose name mixes scripts still keeps its entries apart, under a
-  // stable stand-in, rather than taking down every item in it.
-  const containerSegment = (raw: string): string => {
-    const known = containers.get(raw)
+  const accounts = new Map<string, string>()
+  // A login whose name mixes scripts still keeps its entries apart, under a stable stand-in, rather than taking down
+  // every item signed in with it.
+  const accountSegment = (raw: string): string => {
+    const known = accounts.get(raw)
     if (known !== undefined) return known
     let segment = toSegment(raw)
     if (segment !== '' && entryNameOf(segment) === undefined) {
@@ -41,14 +42,15 @@ export function collectEntries(items: readonly ImportItem[], warnings: readonly 
       messages.push(`"${raw}" makes no usable name segment; its entries use "${standIn}"`)
       segment = standIn
     }
-    containers.set(raw, segment)
+    accounts.set(raw, segment)
     return segment
   }
   for (const item of items) {
     const title = toSegment(item.title)
-    const container = containerSegment(item.container ?? '')
+    // The account segment names the login on the service, never the password manager's vault or folder.
+    const account = accountSegment(item.login ?? loginOf(item.fields) ?? '')
     // Collisions are checked on the canonical name, so two spellings of one name can't land on the same entry.
-    const base = entryNameOf(container === '' ? title : `${title}/${container}`)
+    const base = entryNameOf(account === '' ? title : `${title}/${account}`)
     if (base === undefined) {
       messages.push(`skipped "${item.title}": its title makes no usable entry name`)
       continue
@@ -97,7 +99,12 @@ export function collectEntries(items: readonly ImportItem[], warnings: readonly 
   return { entries, warnings: messages }
 }
 
-/** A title or folder as a name segment: lowercase, with each run of spaces and other punctuation one `-`. */
+export function loginOf(fields: ImportItem['fields']): string | undefined {
+  const username = fields['username']
+  return typeof username === 'string' || username === undefined ? username : fieldStrings(username)[0]
+}
+
+/** A title or login as a name segment: lowercase, with each run of spaces and other punctuation one `-`. */
 const toSegment = (raw: string): string =>
   raw
     .toLowerCase()
