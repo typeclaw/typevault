@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { type PublicKey, type SecretKey, sign, verifySignature } from './crypto'
 import { canonicalJson, type Json, utf8 } from './encoding'
 import { TypeVaultError } from './errors'
-import { atomicWrite } from './fsx'
+import { atomicWrite, ensureDir } from './fsx'
 import { readJsonFile } from './json-file'
 import type { Layout } from './layout'
 import { RevisionMarks } from './revisions'
@@ -114,6 +114,7 @@ function checkTrust(layout: Layout, owner: PublicKey, env: Readonly<Record<strin
     return
   }
   if (!existsSync(layout.trustFile)) {
+    ensureDir(layout.root, 0o700)
     atomicWrite(layout.trustFile, JSON.stringify({ ownerSignPublic: owner.signPublic }), 0o600)
     return
   }
