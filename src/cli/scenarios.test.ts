@@ -554,3 +554,215 @@ it('stores OAuth JSON from stdin as the preset input field', async () => {
     'test-refresh-token\n',
   )
 })
+
+it(
+  'a grant limited with --only reaches only the entries it names',
+  async () => {
+    // given a vault holding a GitHub login and an OpenAI key
+    const alice = await unlockedVault()
+    await ok(alice, ['set', 'typevault://github/bot', '--preset', 'api_key', '--stdin'], 'ghp-test')
+
+    // when an agent holds a grant for typevault://github/* only
+    const token = (
+      await ok(alice, ['grant', '--tier', 'default', '--only', 'typevault://github/*', '--label', 'ci:deploy'])
+    ).stdout.trim()
+    const agent = { ...alice, TYPEVAULT_GRANT: token }
+
+    // then it lists and loads only the GitHub entry
+    expect(JSON.parse((await ok(agent, ['ls', '--json'])).stdout)).toMatchObject([{ name: 'github/bot' }])
+    const check = [
+      'run',
+      '--',
+      process.execPath,
+      '-e',
+      'console.log(JSON.stringify({ github: process.env.GITHUB_BOT === "ghp-test", openai: process.env.OPENAI !== undefined }))',
+    ]
+    expect(JSON.parse((await ok(agent, check)).stdout)).toEqual({ github: true, openai: false })
+    expect(await fails(agent, ['get', 'typevault://openai', '--reveal'])).toContain('no entry named openai')
+  },
+  SCENARIO_MS,
+)
+
+it(
+  'a revoked grant stops reading while the session stays unlocked',
+  async () => {
+    // given an agent reading through a live grant
+    const alice = await unlockedVault()
+    const agent = { ...alice, TYPEVAULT_GRANT: await issueGrant(alice) }
+    await ok(agent, ['ls'])
+
+    // when the owner revokes it by label
+    expect((await ok(alice, ['grant', 'revoke', '--label', 'agent'])).stdout).toBe('revoked 1 grant(s)\n')
+
+    // then the agent is refused, and the owner still reads
+    await fails(agent, ['ls'])
+    expect(JSON.parse((await ok(alice, ['ls', '--json'])).stdout)).toMatchObject([{ name: 'openai' }])
+  },
+  SCENARIO_MS,
+)
+
+it(
+  'a sealed grant in a file reads with the vault locked and no daemon running',
+  async () => {
+    // given a sealed grant written to a file
+    const alice = await unlockedVault()
+    const sealed = (await ok(alice, ['grant', '--tier', 'default', '--sealed', '--label', 'ci:build'])).stdout.trim()
+    expect(sealed.startsWith('tvg1:')).toBe(true)
+    const grantFile = join(base, 'build.grant')
+    writeFileSync(grantFile, sealed, { mode: 0o600 })
+
+    // when the vault is locked, which stops its daemon
+    await ok(alice, ['lock'])
+    await fails(alice, ['daemon', 'stop'])
+
+    // then CI still runs with the secret
+    const ci = { ...alice, TYPEVAULT_GRANT: `@${grantFile}` }
+    const check = ['run', '--', process.execPath, '-e', 'if (process.env.OPENAI === "sk-test") console.log("match")']
+    expect((await ok(ci, check)).stdout).toBe('match\n')
+  },
+  SCENARIO_MS,
+)
+
+it(
+  'run redacts a secret the child prints, on stdout and stderr',
+  async () => {
+    // given an agent holding a grant
+    const alice = await unlockedVault()
+    const agent = { ...alice, TYPEVAULT_GRANT: await issueGrant(alice) }
+
+    // when its command prints the secret on both streams
+    const leaky = await ok(agent, [
+      'run',
+      '--',
+      process.execPath,
+      '-e',
+      'console.log("key=" + process.env.OPENAI); console.error("key=" + process.env.OPENAI)',
+    ])
+
+    // then neither stream carries the value
+    expect({ stdout: leaky.stdout, stderr: leaky.stderr }).toEqual({
+      stdout: 'key=[redacted]\n',
+      stderr: 'key=[redacted]\n',
+    })
+  },
+  SCENARIO_MS,
+)
+
+it(
+  'redact scrubs piped output of the secrets a grant has read',
+  async () => {
+    // given an agent whose grant has read the secret
+    const alice = await unlockedVault()
+    const agent = { ...alice, TYPEVAULT_GRANT: await issueGrant(alice) }
+    await ok(agent, ['run', '--', process.execPath, '-e', ''])
+
+    // when output containing it is piped through redact
+    const redacted = await ok(agent, ['redact'], 'Authorization: Bearer sk-test\n')
+
+    // then the value is replaced
+    expect(redacted.stdout).toBe('Authorization: Bearer [redacted]\n')
+  },
+  SCENARIO_MS,
+)
+
+it(
+  'a renamed entry reads under its new name, and a removed one is gone',
+  async () => {
+    // given an entry
+    const alice = await unlockedVault()
+
+    // when it is renamed
+    await ok(alice, ['mv', 'typevault://openai', 'typevault://openai/prod'])
+
+    // then only the new name reads
+    expect((await ok(alice, ['get', 'typevault://openai/prod', '--reveal'])).stdout).toBe('sk-test\n')
+    await fails(alice, ['get', 'typevault://openai', '--reveal'])
+
+    // and once removed, nothing is left
+    await ok(alice, ['rm', 'typevault://openai/prod'])
+    expect(JSON.parse((await ok(alice, ['ls', '--json'])).stdout)).toEqual([])
+  },
+  SCENARIO_MS,
+)
+
+it(
+  '--if-rev refuses a write based on a revision someone else already replaced',
+  async () => {
+    // given an entry at r1
+    const alice = await unlockedVault()
+
+    // when one writer updates it from r1
+    await ok(alice, ['set', 'typevault://openai', '--field', 'note=first', '--if-rev', '1'])
+
+    // then a second writer still holding r1 is refused, and the first write stands
+    await fails(alice, ['set', 'typevault://openai', '--field', 'note=second', '--if-rev', '1'])
+    expect((await ok(alice, ['get', 'typevault://openai#note'])).stdout).toBe('first\n')
+  },
+  SCENARIO_MS,
+)
+
+it(
+  "a member sees only their tiers, not the owner's other ones",
+  async () => {
+    // given alice's vault with a key in default and one in an ops tier
+    const alice = actor('alice')
+    const bob = actor('bob')
+    await ok(alice, withPassword('init', '--name', 'alice'), line('a'))
+    await ok(alice, withPassword('tier', 'add', 'ops'), line('a'))
+    await ok(alice, withPassword('unlock'), line('a'))
+    await ok(alice, ['set', 'typevault://openai', '--preset', 'api_key', '--tier', 'default', '--stdin'], 'sk-test')
+    await ok(alice, ['set', 'typevault://stripe', '--preset', 'api_key', '--tier', 'ops', '--stdin'], 'sk-ops')
+
+    // when bob joins the default tier only
+    const joined = await ok(bob, withPassword('join', '--name', 'bob'), line('b'))
+    await ok(alice, withPassword('member', 'add', 'bob', publicKeyIn(joined), '--tier', 'default'), line('a'))
+    await ok(bob, withPassword('unlock'), line('b'))
+
+    // then he lists and reads the default entry, and the ops one is out of reach
+    expect(JSON.parse((await ok(bob, ['ls', '--json'])).stdout)).toMatchObject([{ name: 'openai' }])
+    await fails(bob, ['get', 'typevault://stripe', '--reveal'])
+  },
+  SCENARIO_MS,
+)
+
+it(
+  'an imported .env reaches a command under its own variable names',
+  async () => {
+    // given an unlocked vault and a dotenv file (not named .env: Bun would load that into the child itself)
+    const alice = actor('alice')
+    await ok(alice, withPassword('init', '--name', 'alice'), line('a'))
+    await ok(alice, withPassword('unlock'), line('a'))
+    writeFileSync(join(project, 'import.env'), 'STRIPE_KEY=sk-dotenv\n')
+
+    // when it is imported
+    await ok(alice, withPassword('import', 'dotenv', 'import.env', '--tier', 'default'), line('a'))
+
+    // then an agent's command gets the value under the same name
+    const agent = { ...alice, TYPEVAULT_GRANT: await issueGrant(alice) }
+    const check = [
+      'run',
+      '--',
+      process.execPath,
+      '-e',
+      'if (process.env.STRIPE_KEY === "sk-dotenv") console.log("match")',
+    ]
+    expect((await ok(agent, check)).stdout).toBe('match\n')
+  },
+  SCENARIO_MS,
+)
+
+it(
+  'an env var set to a reference picks the name the secret arrives under',
+  async () => {
+    // given an agent holding a grant
+    const alice = await unlockedVault()
+    const agent = { ...alice, TYPEVAULT_GRANT: await issueGrant(alice), API_TOKEN: 'typevault://openai' }
+
+    // when it runs a command with API_TOKEN pointing at the entry
+    const check = ['run', '--', process.execPath, '-e', 'if (process.env.API_TOKEN === "sk-test") console.log("match")']
+
+    // then the command sees the secret under that name
+    expect((await ok(agent, check)).stdout).toBe('match\n')
+  },
+  SCENARIO_MS,
+)
