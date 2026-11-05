@@ -513,9 +513,9 @@ it(
 )
 
 it(
-  'ls still prints its listing through a daemon from before the unreadable count',
+  'refuses a live grant through a daemon from an older release',
   async () => {
-    // given a daemon still running from before an upgrade: it lists, but has no route for the count
+    // given a daemon still running from before an upgrade: it answers pings without a version
     const alice = actor('alice')
     await ok(alice, withPassword('init', '--name', 'alice'), line('a'))
     const older = Bun.serve({
@@ -528,14 +528,15 @@ it(
       },
     })
 
-    // when it is listed
-    const listed = await ok({ ...alice, TYPEVAULT_GRANT: 'tvl1.id.secret' }, ['ls', '--json']).finally(() =>
+    // when a grant without a machine key lists through it
+    const listed = await cli({ ...alice, TYPEVAULT_GRANT: 'tvl1.id.secret' }, ['ls', '--json']).finally(() =>
       older.stop(true),
     )
 
-    // then the listing arrives, and stderr says what restarting would add
-    expect(JSON.parse(listed.stdout)).toEqual([])
-    expect(listed.stderr).toContain('restart it')
+    // then nothing is read through it, and stderr says how to replace it
+    expect({ code: listed.code, stdout: listed.stdout }).toEqual({ code: 1, stdout: '' })
+    expect(listed.stderr).toContain('daemon is from an older release')
+    expect(listed.stderr).toContain('typevault daemon stop')
   },
   SCENARIO_MS,
 )

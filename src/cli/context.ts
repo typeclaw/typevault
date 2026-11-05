@@ -187,6 +187,8 @@ async function sessionAccess(env: Env): Promise<LiveAccess> {
     if (identity.kind !== 'human' || !canAsk) throw new TypeVaultError('locked', LOCKED_MESSAGE)
     await unlockSession(env, passwords(), DEFAULT_SESSION_MS)
   }
+  // A session daemon from another release fails here instead of misreading this CLI's requests.
+  await ensureDaemon(layout, env)
   return new LiveAccess(layout.agentSocket, readFileSync(layout.sessionFile, 'utf8').trim())
 }
 

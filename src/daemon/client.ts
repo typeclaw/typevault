@@ -75,6 +75,17 @@ export async function servingPid(socket: string): Promise<number | undefined> {
   }
 }
 
+/** The version the daemon answering on `socket` reports: undefined when none answers, null when it is too old to say. */
+export async function servingVersion(socket: string): Promise<string | null | undefined> {
+  const Ping = z.object({ ok: z.literal(true), version: z.string().optional() })
+  try {
+    return (await callDaemon(socket, '/v1/ping', {}, Ping, { timeoutMs: 1_000 })).version ?? null
+  } catch (error) {
+    if (error instanceof TypeVaultError || (error instanceof Error && error.name === 'TimeoutError')) return undefined
+    throw error
+  }
+}
+
 export async function isDaemonAlive(socket: string): Promise<boolean> {
   try {
     await callDaemon(socket, '/v1/ping', {}, z.object({ ok: z.literal(true) }), { timeoutMs: 1_000 })
