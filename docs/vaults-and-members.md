@@ -86,6 +86,34 @@ unlock`; in a terminal, the command asks for the password and unlocks on the spo
 stdin with `--vault-password-stdin`, one per line. Removing an owner member isn't supported yet: every entry is also
 sealed to the owner key, which can't be rotated yet.
 
+## Working with a teammate
+
+Agents read through grants and sessions, but the steps that need a password or a decision stay with people. When a
+teammate joins a project vault, each of you does this by hand:
+
+1. **Teammate, in their clone:** run `typevault join`. The first time on a device it asks for a new password and prints
+   a Secret Key: save both (a password manager, or on paper). Commit and push the `members/<name>.key` it wrote, then
+   send an owner the `typevault member add ...` line it printed. That line holds only a public key, so any chat will do.
+2. **Owner:** pull, run that line with the tiers the teammate should reach (`--tier default`, or `--owner` for a
+   co-owner), type your password, then commit and push `.typevault/`.
+3. **Teammate:** pull and run `typevault unlock`. From then on their own agents read through their own session.
+
+After that, day to day:
+
+- **Each of you unlocks on your own machine.** Never share a password, Secret Key or grant; a teammate who needs more
+  gets more tiers from an owner instead.
+- **Commit `.typevault/` like code.** A secret one of you sets reaches the other on their next pull. A non-owner reads
+  and writes the tiers they were added to and every tier those include; an owner reaches every tier.
+- **When an agent says the vault is locked,** run `typevault unlock` yourself. When it sends a `typevault request`
+  link, open it, check the match code against the chat, and enter the value.
+- **After a pull with git conflicts in `.typevault/entries/`,** an owner runs `typevault doctor --fix`: it keeps the
+  newer validly signed side of each entry and removes same-tier duplicates. Other problems it only reports. A conflict
+  in a signed manifest (`members.json`, `tiers.json`, `owner.json`, ...), such as two owners adding members at once,
+  keeps the vault from opening, so doctor can't run: restore one side's consistent `.typevault/` from git first, then
+  redo the other change.
+- **When a teammate leaves,** an owner runs `typevault member rm <name>`, commits, then rotates each listed secret at
+  its source and re-sets it.
+
 ## Git history
 
 Old ciphertext stays in history forever. If a key leaks, rotate the key **and** every secret it could reach.
