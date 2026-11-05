@@ -6,7 +6,7 @@ Rotation, signers, audit, identity backup, and importing existing secrets.
 
 ```sh
 typevault identity export --to 1password --vault Backup   # your Secret Key (or a machine's key)
-typevault key rotate member                      # new generation; lists every secret to rotate at its source
+typevault key rotate member                      # rotates every reachable tier; lists secrets to rotate at source
 typevault tier exclude trusted member           # drop an include (rotates member)
 typevault signer add ci-bot <ed25519-public-key> --tiers member
 typevault import 1password export.1pux --tier member
@@ -20,6 +20,11 @@ typevault daemon status                          # also: daemon start | stop | r
 ```
 
 `tier`, `ceiling` and `signer` each also have `ls` and `rm`.
+
+`key rotate <tier>` gives that tier and every tier it includes, transitively, a new key generation in one transaction.
+It lists every secret those keys could reach and flags each for rotation. Rotate each listed secret at its source,
+then re-set it in TypeVault to clear the flag. Old keys can still decrypt historical ciphertext and previously exposed
+values; changing tier keys cannot revoke those values at their source.
 
 The owner key is never stored in the clear: it exists only wrapped to owner members, so an owner's password and
 Secret Key are the recovery path. Owner key rotation is not supported yet.

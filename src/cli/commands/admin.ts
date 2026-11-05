@@ -114,7 +114,10 @@ export const key = defineCommand({
   meta: { name: 'key', description: 'Rotate tier keys (owner)' },
   subCommands: {
     rotate: defineCommand({
-      meta: { name: 'rotate', description: 'New key generation; flags every secret the old key reached' },
+      meta: {
+        name: 'rotate',
+        description: 'Rotate every reachable tier key; flag their secrets for rotation at source',
+      },
       args: named,
       async run({ args }) {
         printRotation(args.name, await (await openAdmin(process.env)).rotate(args.name))
