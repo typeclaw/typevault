@@ -153,7 +153,43 @@ export const scrub = defineCommand({
   },
 })
 
-const RequestResponse = z.object({ id: z.string(), url: z.string(), code: z.string() })
+const RequestResponse = z.object({ id: z.string(), url: z.string(), code: z.string(), expiresAt: z.number() })
+const RequestDone = z.object({ stored: z.string() })
+const REQUEST_POLL_MS = 30_000
+
+type RequestWaitAccess = {
+  call<T>(path: string, body: unknown, schema: z.ZodType<T>, timeoutMs?: number): Promise<T>
+}
+
+type RequestWait = {
+  readonly id: string
+  readonly expiresAt: number
+}
+
+type RequestWaitOptions = {
+  readonly pollMs?: number
+  readonly now?: () => number
+}
+
+export async function waitForRequest(
+  access: RequestWaitAccess,
+  request: RequestWait,
+  options: RequestWaitOptions = {},
+): Promise<z.infer<typeof RequestDone>> {
+  const now = options.now ?? Date.now
+  const pollMs = options.pollMs ?? REQUEST_POLL_MS
+  while (true) {
+    const remaining = request.expiresAt - now()
+    if (remaining <= 0) throw new TypeVaultError('expired', 'the request expired')
+    try {
+      return await access.call('/v1/request/wait', { id: request.id }, RequestDone, Math.min(pollMs, remaining))
+    } catch (error) {
+      if (error instanceof TypeVaultError && error.cause instanceof Error && error.cause.name === 'TimeoutError')
+        continue
+      throw error
+    }
+  }
+}
 
 export const request = defineCommand({
   meta: { name: 'request', description: 'Ask a human for a secret through a one-time web page (live grants)' },
@@ -175,12 +211,7 @@ export const request = defineCommand({
     }
     const opened = await resolved.access.call('/v1/request', body, RequestResponse)
     print(`Send this link to the human: ${opened.url}\nMatch code: ${opened.code} (post it in the chat too)`)
-    const done = await resolved.access.call(
-      '/v1/request/wait',
-      { id: opened.id },
-      z.object({ stored: z.string() }),
-      11 * 60_000,
-    )
+    const done = await waitForRequest(resolved.access, opened)
     print(`stored as ${done.stored}`)
   },
 })

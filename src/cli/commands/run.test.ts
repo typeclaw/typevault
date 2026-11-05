@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { EventEmitter, once } from 'node:events'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { join, parse } from 'node:path'
+
+import { TypeVaultError } from '../../core/errors'
+import { waitForRequest } from './run'
+
+const SHORT_TMP = process.platform === 'win32' ? join(parse(tmpdir()).root, 'tmp') : '/tmp'
+mkdirSync(SHORT_TMP, { recursive: true })
 
 const CLI = join(import.meta.dir, '..', 'index.ts')
 const SECRET = 'dummy-value-0001'
@@ -28,7 +35,7 @@ async function cli(args: readonly string[], stdin = '') {
 }
 
 beforeEach(async () => {
-  base = realpathSync(mkdtempSync('/tmp/tv-run-'))
+  base = realpathSync(mkdtempSync(join(SHORT_TMP, 'tv-run-')))
   project = join(base, 'project')
   mkdirSync(project)
   env = { PATH: process.env['PATH'] ?? '', HOME: base, XDG_CONFIG_HOME: join(base, 'config') }
@@ -165,4 +172,40 @@ describe.skipIf(process.platform === 'win32')('POSIX run shutdown', () => {
     async () => signalRun('SIGINT', true),
     20_000,
   )
+})
+
+const timeout = (): TypeVaultError =>
+  new TypeVaultError('unavailable', 'the typevault daemon request timed out', {
+    cause: new DOMException('The operation timed out.', 'TimeoutError'),
+  })
+
+it('keeps polling after transport timeouts until the request settles', async () => {
+  let calls = 0
+  let now = 0
+  const access = {
+    async call<T>(_path: string, _body: unknown, schema: { parse(value: unknown): T }): Promise<T> {
+      calls += 1
+      now += 30
+      if (calls < 3) throw timeout()
+      return schema.parse({ stored: 'resend' })
+    },
+  }
+
+  await expect(
+    waitForRequest(access, { id: 'request-id', expiresAt: 100 }, { pollMs: 30, now: () => now }),
+  ).resolves.toEqual({ stored: 'resend' })
+})
+
+it('stops polling with an expired error at the request deadline', async () => {
+  let now = 0
+  const access = {
+    async call<T>(): Promise<T> {
+      now += 30
+      throw timeout()
+    },
+  }
+
+  await expect(
+    waitForRequest(access, { id: 'request-id', expiresAt: 50 }, { pollMs: 30, now: () => now }),
+  ).rejects.toMatchObject({ code: 'expired' })
 })
