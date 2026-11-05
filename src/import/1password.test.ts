@@ -100,11 +100,12 @@ test('1PUX maps login, password, secure note, API, SSH, and tags without unsuppo
 })
 
 test('1PUX omits missing containers and ignores non-web origins', () => {
-  const record = { ...item('001'), overview: { title: 'GitHub', url: 'javascript:alert(1)' } }
+  const record = { ...item('001'), uuid: 'item-1', overview: { title: 'GitHub', url: 'javascript:alert(1)' } }
   const bytes = zipSync({ 'export.data': strToU8(JSON.stringify({ accounts: [{ vaults: [{ items: [record] }] }] })) })
   const result = parse1Password(bytes)
   expect<string | undefined>(result.entries[0]?.name).toBe('github')
   expect(result.entries[0]?.origin).toBeUndefined()
+  expect(result.entries[0]?.source).toBe('1password:item-1')
   expect(result.entries[0]?.fields).toEqual({ url: { type: 'text', value: 'javascript:alert(1)' } })
 })
 

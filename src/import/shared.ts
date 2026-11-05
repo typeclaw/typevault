@@ -23,6 +23,8 @@ export type ImportItem = {
   readonly url?: string
   readonly tags?: readonly string[]
   readonly env?: string
+  /** The item's id in its password manager (`bitwarden:<id>`), when the source has stable ids. */
+  readonly source?: string
 }
 
 export function collectEntries(items: readonly ImportItem[], warnings: readonly string[] = []): ImportResult {
@@ -91,6 +93,7 @@ export function collectEntries(items: readonly ImportItem[], warnings: readonly 
       fields,
       tags: item.tags ?? [],
       ...(origin === undefined ? {} : { origin }),
+      ...(item.source === undefined ? {} : { source: item.source }),
       ...(item.env === undefined ? {} : { env: item.env }),
     })
   }

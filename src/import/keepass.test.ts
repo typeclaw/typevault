@@ -78,6 +78,9 @@ test('KeePass maps protected login and note fields, immediate groups, origins, a
     ['local/bots', { url: { type: 'text', value: 'ftp://example.com' } }, undefined],
   ])
   expect(result.entries[1]?.tags).toEqual(['agent'])
+  const sources = result.entries.map((entry) => entry.source ?? '')
+  expect(sources.every((source) => /^keepass:.+/.test(source))).toBe(true)
+  expect(new Set(sources).size).toBe(sources.length)
   expect(result.warnings).toHaveLength(3)
   expect(result.warnings.join()).toContain('"github/work-team"')
   expect(result.warnings.join()).toContain('"github/work-team-3"')

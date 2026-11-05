@@ -89,6 +89,7 @@ test('op import reads every listed item and maps login, note, API, SSH, and tags
   ])
   expect(result.entries[0]?.tags).toEqual(['agent'])
   expect(result.entries[0]?.origin).toBe('https://example.com')
+  expect(result.entries[0]?.source).toBe('1password:login')
   expect(result.warnings).toEqual(['skipped unsupported 1Password item category'])
   expect(calls[0]).toEqual(['vault', 'list', '--format', 'json', '--account', 'example'])
   expect(calls[1]).toEqual(['item', 'list', '--format', 'json', '--vault', 'v1', '--account', 'example'])

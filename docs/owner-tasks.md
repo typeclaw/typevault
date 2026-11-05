@@ -75,6 +75,11 @@ typevault import keepass vault.kdbx --password-stdin --tier member < kdbx-passwo
 typevault import csv secrets.csv --tier member
 ```
 
+Re-running an import updates what it imported before. 1Password, Bitwarden and KeePass items are recognized by
+their id, so an item renamed there renames its entry rather than adding a second one; the other formats match by
+name. An import never overwrites an entry another item was imported as: it stops with a conflict, and nothing is
+written, until you rename or remove that entry.
+
 ---
 
 Back to the [README](../README.md).

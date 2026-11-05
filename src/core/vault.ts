@@ -47,6 +47,7 @@ export type EntryInput = {
   readonly tier: string
   readonly env?: string
   readonly origin?: string
+  readonly source?: string
   readonly tags?: readonly string[]
 }
 
@@ -217,6 +218,7 @@ export class Vault {
     }
     const now = new Date().toISOString()
     const changed = found === undefined || !sameFields(found.payload.fields, input.fields)
+    const source = input.source ?? found?.payload.source
     const payload: EntryPayload = {
       v: 1,
       name: input.name,
@@ -226,9 +228,12 @@ export class Vault {
       rotated: changed ? now : (prior?.rotated ?? now),
       ...(input.env === undefined ? {} : { env: input.env }),
       ...(input.origin === undefined ? {} : { origin: input.origin }),
+      ...(source === undefined ? {} : { source }),
       ...(changed || found?.payload.needsRotation !== true ? {} : { needsRotation: true }),
     }
-    const id = entryIdIn(signer.ref, input.tier, input.name, prior?.id)
+    // A renamed entry gets a fresh id, as in `move`: a grant issued for the old name must not follow it.
+    const renamed = found !== undefined && found.payload.name !== input.name
+    const id = entryIdIn(signer.ref, input.tier, input.name, renamed ? undefined : prior?.id)
     const draft = { id, tier: input.tier, rev: currentRev + 1, at: now, payload }
     return { envelope: await sealEntry(draft, this.#state, signer), payload }
   }
@@ -253,7 +258,11 @@ export class Vault {
     })
   }
 
-  /** Writes many entries as one transaction (an import): all of them land, or none do. */
+  /**
+   * Writes many entries as one transaction (an import): all of them land, or none do. An input with a `source` takes
+   * over the entry imported from that item, renaming it when the item was renamed; a name held by another item's
+   * entry is a conflict, never overwritten.
+   */
   putMany(
     inputs: readonly EntryInput[],
     signerFor: (tier: string) => Promise<SignerContext>,
@@ -263,11 +272,36 @@ export class Vault {
       const txn = new Txn()
       const stored: StoredEntry[] = []
       const retiered: string[] = []
-      for (const input of inputs) {
-        const found = resolveName(
+      const byName = (name: EntryName) =>
+        resolveName(
           this.#state.tiers,
-          entries.filter((entry) => entry.payload.name === input.name),
+          entries.filter((entry) => entry.payload.name === name),
         )
+      const bySource = (source: string | undefined) =>
+        source === undefined
+          ? undefined
+          : resolveName(
+              this.#state.tiers,
+              entries.filter((entry) => entry.payload.source === source),
+            )
+      const matches = inputs.map((input) => ({ input, held: byName(input.name), own: bySource(input.source) }))
+      // An entry this import renames frees its old name, so two items may trade names in one import.
+      const claimed = new Set(matches.flatMap(({ own }) => (own === undefined ? [] : [own.envelope.id])))
+      const targets = matches.map(({ input, held, own }) => {
+        const other =
+          held !== undefined && held.envelope.id !== own?.envelope.id && !claimed.has(held.envelope.id)
+            ? held
+            : undefined
+        // An entry with no source (written by hand, or by an older import) is taken over only by a new item.
+        if (other !== undefined && (own !== undefined || other.payload.source !== undefined)) {
+          throw new TypeVaultError(
+            'conflict',
+            `${input.name} already holds another entry; rename or remove it, then import again`,
+          )
+        }
+        return { input, found: own ?? other }
+      })
+      for (const { input, found } of targets) {
         const signer = await signerFor(input.tier)
         const entry = await this.#draft(input, found, {}, signer)
         txn.put(`entries/${entry.envelope.id}.json`, `${JSON.stringify(entry.envelope, null, 2)}\n`)

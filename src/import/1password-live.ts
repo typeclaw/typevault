@@ -130,7 +130,7 @@ async function readOp(
   }
   const fetched = await mapLimit(listed, CONCURRENCY, async (entry) => {
     const args = ['item', 'get', entry.id, '--vault', entry.vault.id, '--reveal', '--format', 'json', ...account]
-    return parseJson(await runOp(args), OpItemSchema, 'op')
+    return { ...parseJson(await runOp(args), OpItemSchema, 'op'), id: entry.id }
   })
   for (const item of fetched) {
     const mapped = mapOpItem(item)
@@ -139,7 +139,12 @@ async function readOp(
       const selected = selectFields(mapped, item.title, item.tags, filters.tags, collected.warnings)
       if (selected === undefined) continue
       label ??= accountLabel(parseJson(await runOp(['whoami', '--format', 'json']), OpWhoamiSchema, 'op').url)
-      collected.items.push({ ...selected, title: item.title, container: `${label} ${item.vault.name}` })
+      collected.items.push({
+        ...selected,
+        title: item.title,
+        container: `${label} ${item.vault.name}`,
+        source: onePasswordSource(item.id),
+      })
     }
   }
 }
@@ -232,6 +237,9 @@ export function accountLabel(account: string): string {
   return /^[^\s@.]+(?:\.[^\s@.]+)+$/.test(host) ? (host.split('.')[0] ?? host) : account
 }
 
+/** An item's source id; 1Password item ids are the same through `op`, the SDK and 1PUX exports. */
+export const onePasswordSource = (itemId: string): string => `1password:${itemId}`
+
 /** True when a vault is wanted by id or name, recording which requested vaults it answers to. */
 function matchVault(id: string, name: string, wanted: readonly string[], matched: Set<string>): boolean {
   if (wanted.length === 0) return true
@@ -306,6 +314,7 @@ export const spawnOp: RunOp = async (args, input) => {
 }
 
 const SdkItemSchema = z.object({
+  id: z.string().optional(),
   title: z.string(),
   category: z.string(),
   notes: z.string().default(''),
@@ -355,7 +364,12 @@ async function readSdk(account: string, filters: Filters, connect: ConnectSdk, c
       else {
         const selected = selectFields(mapped, item.title, item.tags, filters.tags, warnings)
         if (selected !== undefined)
-          items.push({ ...selected, title: item.title, container: `${accountLabel(account)} ${vault.title}` })
+          items.push({
+            ...selected,
+            title: item.title,
+            container: `${accountLabel(account)} ${vault.title}`,
+            ...(item.id === undefined ? {} : { source: onePasswordSource(item.id) }),
+          })
       }
     }
   }

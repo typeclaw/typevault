@@ -9,6 +9,7 @@ test('Bitwarden maps login, note, and SSH records with folder accounts and colli
       folders: [{ id: 'folder-1', name: 'Work / Team' }],
       items: [
         {
+          id: 'item-1',
           type: 1,
           name: 'GitHub',
           folderId: 'folder-1',
@@ -47,6 +48,7 @@ test('Bitwarden maps login, note, and SSH records with folder accounts and colli
     ],
     ['local', { url: { type: 'text', value: 'ftp://example.com' } }, undefined],
   ])
+  expect(result.entries.map((entry) => entry.source)).toEqual(['bitwarden:item-1', undefined, undefined, undefined])
   expect(result.warnings).toHaveLength(3)
   expect(result.warnings.join()).toContain('"github/work-team"')
   expect(result.warnings.join()).toContain('"github/work-team-2"')
