@@ -57,6 +57,7 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
       return json({ ...record, ownTiers: await access.ownTiers() })
     },
     '/v1/list': async (request) => json(await session(context, request).access.list()),
+    '/v1/unreadable': async (request) => json({ count: await session(context, request).access.unreadableEntries() }),
     '/v1/get': async (request) => {
       const { name, reason } = await parseBody(request, NameBody)
       return json(await session(context, request).access.get(name, reason))

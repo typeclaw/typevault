@@ -28,6 +28,10 @@ export class LiveAccess implements Access {
     return (await this.call('/v1/list', {}, z.array(EntrySummarySchema))).map(toSummaryValue)
   }
 
+  async unreadableEntries(): Promise<number> {
+    return (await this.call('/v1/unreadable', {}, z.object({ count: z.number().int() }))).count
+  }
+
   async get(name: EntryName, reason?: string): Promise<EntryValue> {
     return toEntryValue(await this.call('/v1/get', { name, reason }, EntryValueSchema))
   }

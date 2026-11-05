@@ -73,6 +73,10 @@ export class ScopedVault implements Access {
     return [...byName.values()].flatMap((copies) => resolveName(this.#vault.state.tiers, copies) ?? [])
   }
 
+  async unreadableEntries(): Promise<number> {
+    return (await this.#vault.scan()).problems.length
+  }
+
   async #find(name: EntryName): Promise<StoredEntry> {
     const entry = await this.#vault.find(name)
     if (entry === undefined || !this.#allows(entry)) throw new TypeVaultError('not_found', `no entry named ${name}`)
