@@ -17,6 +17,8 @@ import type { ImportedEntry, ImportResult } from './types'
 
 export type ImportItem = {
   readonly title: string
+  /** The login on the service, naming the entry's account segment. Read from the `username` field when unset. */
+  readonly login?: string
   readonly preset: Preset
   readonly fields: Readonly<Record<string, string | Field | undefined>>
   readonly url?: string
@@ -46,7 +48,7 @@ export function collectEntries(items: readonly ImportItem[], warnings: readonly 
   for (const item of items) {
     const title = toSegment(item.title)
     // The account segment names the login on the service, never the password manager's vault or folder.
-    const account = accountSegment(loginOf(item.fields) ?? '')
+    const account = accountSegment(item.login ?? loginOf(item.fields) ?? '')
     // Collisions are checked on the canonical name, so two spellings of one name can't land on the same entry.
     const base = entryNameOf(account === '' ? title : `${title}/${account}`)
     if (base === undefined) {
@@ -97,7 +99,7 @@ export function collectEntries(items: readonly ImportItem[], warnings: readonly 
   return { entries, warnings: messages }
 }
 
-function loginOf(fields: ImportItem['fields']): string | undefined {
+export function loginOf(fields: ImportItem['fields']): string | undefined {
   const username = fields['username']
   return typeof username === 'string' || username === undefined ? username : fieldStrings(username)[0]
 }

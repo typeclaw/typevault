@@ -187,7 +187,9 @@ test('op import prefers the exact field name and refuses an ambiguous one', asyn
   const result = await read1Password({ via: 'op', tags: ['agent'] }, { runOp })
 
   // then
-  expect(result.entries.map((entry) => entry.fields)).toEqual([{ password: { type: 'secret', value: 'hunter2' } }])
+  expect(result.entries.map((entry) => [String(entry.name), entry.fields])).toEqual([
+    ['github/user@example.com', { password: { type: 'secret', value: 'hunter2' } }],
+  ])
   expect(result.warnings).toEqual(['GitHub: no single field "region" to import'])
 })
 
@@ -409,6 +411,35 @@ test('sdk import with a tag fetches items carrying the tag or a <tag>/<field> ta
   expect(result.entries.map((entry) => [String(entry.name), entry.fields, entry.tags])).toEqual([
     ['github', {}, ['agent']],
     ['api', { 'Webhook Secret': { type: 'secret', value: 'whsec' } }, []],
+  ])
+})
+
+test('sdk import names a login after its username even when only another field is selected', async () => {
+  // given
+  const client = sdkClient(
+    [
+      {
+        title: 'GitHub',
+        category: 'Login',
+        tags: ['agent/password'],
+        fields: [
+          { id: 'username', title: 'username', fieldType: 'Text', value: 'user@example.com' },
+          { id: 'password', title: 'password', fieldType: 'Concealed', value: 'hunter2' },
+        ],
+      },
+    ],
+    [['agent/password']],
+  )
+
+  // when
+  const result = await read1Password(
+    { via: 'sdk', accounts: ['Example'], tags: ['agent'] },
+    { connectSdk: async () => client },
+  )
+
+  // then
+  expect(result.entries.map((entry) => [String(entry.name), entry.fields])).toEqual([
+    ['github/user@example.com', { password: { type: 'secret', value: 'hunter2' } }],
   ])
 })
 

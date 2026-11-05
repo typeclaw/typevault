@@ -3,7 +3,7 @@ import { z } from 'zod'
 
 import { TypeVaultError } from '../core/errors'
 import { findField, type Field } from '../core/naming'
-import { collectEntries, parseExternal, parseJson, withCustomFields, type ImportItem } from './shared'
+import { collectEntries, loginOf, parseExternal, parseJson, withCustomFields, type ImportItem } from './shared'
 import type { ImportResult } from './types'
 
 export const ONEPASSWORD_VIAS = ['sdk', 'op'] as const
@@ -271,7 +271,8 @@ function selectFields(
     warnings.push(`${title}: skipped, none of its tagged fields were found`)
     return undefined
   }
-  return { ...mapped, fields, tags: kept }
+  // The entry keeps its login-based name even when the username field itself isn't selected.
+  return { ...mapped, fields, tags: kept, login: loginOf(mapped.fields) ?? '' }
 }
 
 export const spawnOp: RunOp = async (args, input) => {

@@ -74,12 +74,14 @@ test('entry collection names the account after the login, never a vault, and suf
   const result = collectEntries([
     { title: 'GitHub', preset: 'password', fields: { username: 'Dev@Example.com', password: 'a' } },
     { title: 'GitHub', preset: 'password', fields: { username: { type: 'text', value: 'dev@example.com' } } },
+    { title: 'GitHub', preset: 'password', login: 'bot', fields: { password: 'only the password was selected' } },
     { title: 'GitHub', preset: 'password', fields: { username: '—', password: 'b' } },
     { title: 'GitHub', preset: 'api_key', fields: { $default: 'c' } },
   ])
   expect(result.entries.map((entry) => String(entry.name))).toEqual([
     'github/dev@example.com',
     'github/dev@example.com-2',
+    'github/bot',
     'github',
     'github-2',
   ])
