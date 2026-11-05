@@ -1,6 +1,6 @@
 {
   "name": "typevault",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "CLI-first secrets vault for agents",
   "homepage": "https://github.com/typeclaw/typevault#readme",
   "bugs": {
