@@ -49,12 +49,36 @@ export const run = defineCommand({
     ])
     const child = Bun.spawn(command, {
       env: { ...inherited, ...env, ...refs.env },
+      // Own the group so descendants receive forwarded signals, and terminal Ctrl-C reaches them only once.
+      detached: process.platform !== 'win32',
       stdin: 'inherit',
       stdout: 'pipe',
       stderr: 'pipe',
     })
-    await Promise.all([pump(child.stdout, redactor, process.stdout), pump(child.stderr, redactor, process.stderr)])
-    process.exitCode = await child.exited
+    const signals = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const
+    const forward = (signal: NodeJS.Signals): void => {
+      if (process.platform === 'win32') {
+        child.kill(signal)
+        return
+      }
+      try {
+        process.kill(-child.pid, signal)
+      } catch (error) {
+        // The group may have exited before its exit notification was handled.
+        if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error
+      }
+    }
+    for (const signal of signals) process.on(signal, forward)
+    try {
+      const [code] = await Promise.all([
+        child.exited,
+        pump(child.stdout, redactor, process.stdout),
+        pump(child.stderr, redactor, process.stderr),
+      ])
+      process.exitCode = code
+    } finally {
+      for (const signal of signals) process.off(signal, forward)
+    }
   },
 })
 
