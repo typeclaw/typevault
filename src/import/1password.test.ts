@@ -100,12 +100,11 @@ test('1PUX maps login, password, secure note, API, SSH, and tags without unsuppo
 })
 
 test('1PUX omits missing containers and ignores non-web origins', () => {
-  const record = { ...item('001'), uuid: 'item-1', overview: { title: 'GitHub', url: 'javascript:alert(1)' } }
+  const record = { ...item('001'), overview: { title: 'GitHub', url: 'javascript:alert(1)' } }
   const bytes = zipSync({ 'export.data': strToU8(JSON.stringify({ accounts: [{ vaults: [{ items: [record] }] }] })) })
   const result = parse1Password(bytes)
   expect<string | undefined>(result.entries[0]?.name).toBe('github')
   expect(result.entries[0]?.origin).toBeUndefined()
-  expect(result.entries[0]?.source).toBe('1password:item-1')
   expect(result.entries[0]?.fields).toEqual({ url: { type: 'text', value: 'javascript:alert(1)' } })
 })
 
@@ -117,6 +116,15 @@ test('1PUX names each account in its entries, so same-named vaults stay apart', 
   ]
   const result = parse1Password(zipSync({ 'export.data': strToU8(JSON.stringify({ accounts })) }))
   expect(result.entries.map((entry): string => entry.name)).toEqual(['github/acme-private', 'github/home-private'])
+})
+
+test('1PUX scopes item ids to their vault, so the same id in two vaults stays two items', () => {
+  const vaults = ['v1', 'v2'].map((uuid) => ({
+    attrs: { uuid, name: uuid },
+    items: [{ ...item('001'), uuid: 'item-1' }],
+  }))
+  const result = parse1Password(zipSync({ 'export.data': strToU8(JSON.stringify({ accounts: [{ vaults }] })) }))
+  expect(result.entries.map((entry) => entry.source)).toEqual(['1password:v1/item-1', '1password:v2/item-1'])
 })
 
 test.each([

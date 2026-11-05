@@ -130,7 +130,7 @@ async function readOp(
   }
   const fetched = await mapLimit(listed, CONCURRENCY, async (entry) => {
     const args = ['item', 'get', entry.id, '--vault', entry.vault.id, '--reveal', '--format', 'json', ...account]
-    return { ...parseJson(await runOp(args), OpItemSchema, 'op'), id: entry.id }
+    return { ...parseJson(await runOp(args), OpItemSchema, 'op'), id: entry.id, vaultId: entry.vault.id }
   })
   for (const item of fetched) {
     const mapped = mapOpItem(item)
@@ -143,7 +143,7 @@ async function readOp(
         ...selected,
         title: item.title,
         container: `${label} ${item.vault.name}`,
-        source: onePasswordSource(item.id),
+        source: onePasswordSource(item.vaultId, item.id),
       })
     }
   }
@@ -237,8 +237,8 @@ export function accountLabel(account: string): string {
   return /^[^\s@.]+(?:\.[^\s@.]+)+$/.test(host) ? (host.split('.')[0] ?? host) : account
 }
 
-/** An item's source id; 1Password item ids are the same through `op`, the SDK and 1PUX exports. */
-export const onePasswordSource = (itemId: string): string => `1password:${itemId}`
+/** An item's source id. 1Password item ids are unique only within their vault, so the vault id comes with it. */
+export const onePasswordSource = (vaultId: string, itemId: string): string => `1password:${vaultId}/${itemId}`
 
 /** True when a vault is wanted by id or name, recording which requested vaults it answers to. */
 function matchVault(id: string, name: string, wanted: readonly string[], matched: Set<string>): boolean {
@@ -368,7 +368,7 @@ async function readSdk(account: string, filters: Filters, connect: ConnectSdk, c
             ...selected,
             title: item.title,
             container: `${accountLabel(account)} ${vault.title}`,
-            ...(item.id === undefined ? {} : { source: onePasswordSource(item.id) }),
+            ...(item.id === undefined ? {} : { source: onePasswordSource(vault.id, item.id) }),
           })
       }
     }

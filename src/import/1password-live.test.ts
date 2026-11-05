@@ -89,7 +89,7 @@ test('op import reads every listed item and maps login, note, API, SSH, and tags
   ])
   expect(result.entries[0]?.tags).toEqual(['agent'])
   expect(result.entries[0]?.origin).toBe('https://example.com')
-  expect(result.entries[0]?.source).toBe('1password:login')
+  expect(result.entries[0]?.source).toBe('1password:v1/login')
   expect(result.warnings).toEqual(['skipped unsupported 1Password item category'])
   expect(calls[0]).toEqual(['vault', 'list', '--format', 'json', '--account', 'example'])
   expect(calls[1]).toEqual(['item', 'list', '--format', 'json', '--vault', 'v1', '--account', 'example'])
@@ -313,6 +313,7 @@ test('sdk import maps desktop-app items and skips unreadable ones', async () => 
   const accounts: string[] = []
   const client = sdkClient([
     {
+      id: 'login',
       title: 'GitHub',
       category: 'Login',
       tags: ['agent'],
@@ -364,6 +365,7 @@ test('sdk import maps desktop-app items and skips unreadable ones', async () => 
 
   // then
   expect(accounts).toEqual(['Example'])
+  expect(result.entries[0]?.source).toBe('1password:v1/login')
   expect(result.entries.map((entry) => [String(entry.name), entry.fields])).toEqual([
     [
       'github/example-work',

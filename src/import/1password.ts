@@ -38,7 +38,7 @@ const ExportSchema = z.object({
       attrs: z.object({ domain: z.string().optional(), accountName: z.string().optional() }).optional(),
       vaults: z.array(
         z.object({
-          attrs: z.object({ name: z.string().optional() }).optional(),
+          attrs: z.object({ uuid: z.string().optional(), name: z.string().optional() }).optional(),
           name: z.string().optional(),
           items: z.array(ItemSchema),
         }),
@@ -80,7 +80,9 @@ export function parse1Password(bytes: Uint8Array): ImportResult {
           tags: item.overview.tags,
           ...(container === undefined ? {} : { container }),
           ...(item.overview.url === undefined ? {} : { url: item.overview.url }),
-          ...(item.uuid === undefined ? {} : { source: onePasswordSource(item.uuid) }),
+          ...(item.uuid === undefined || vault.attrs?.uuid === undefined
+            ? {}
+            : { source: onePasswordSource(vault.attrs.uuid, item.uuid) }),
         })
       }
     }
