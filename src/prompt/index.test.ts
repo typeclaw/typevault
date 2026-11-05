@@ -33,6 +33,29 @@ async function fixture() {
   return { server, handle, outcome }
 }
 
+test('bind failures identify the address, system code and port setting (#53)', async () => {
+  const other = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('other') })
+  try {
+    const port = other.port
+    if (port === undefined) throw new Error('Expected a TCP listener')
+    const error = await startPromptServer({ port }).then(
+      (started) => {
+        server = started
+        return undefined
+      },
+      (error: unknown) => error,
+    )
+    expect(error).toBeInstanceOf(TypeVaultError)
+    expect(error).toMatchObject({ code: 'unavailable' })
+    if (!(error instanceof TypeVaultError)) throw error
+    for (const detail of [`127.0.0.1:${port}`, 'EADDRINUSE', 'TYPEVAULT_PROMPT_PORT']) {
+      expect(error.message).toContain(detail)
+    }
+  } finally {
+    await other.stop(true)
+  }
+})
+
 function securityHeaders(response: Response): void {
   expect(response.headers.get('referrer-policy')).toBe('no-referrer')
   expect(response.headers.get('x-frame-options')).toBe('DENY')

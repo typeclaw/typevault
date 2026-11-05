@@ -58,69 +58,78 @@ export async function startPromptServer(
     entry.timer = setTimeout(() => schedule(token, entry), Math.min(remaining, 2_147_483_647))
   }
 
-  const server = Bun.serve({
-    hostname: '127.0.0.1',
-    port: options.port ?? 0,
-    // Enforce the limit while streaming so Bun's automatic 413 cannot omit security headers.
-    maxRequestBodySize: Number.MAX_SAFE_INTEGER,
-    async fetch(request) {
-      const path = new URL(request.url).pathname
-      const match = /^\/r\/([A-Za-z0-9_-]{22})$/.exec(path)
-      const token = match?.[1]
-      if (token === undefined || (request.method !== 'GET' && request.method !== 'POST')) return response(404)
-      const entry = pending.get(token)
-      if (entry === undefined) return gone.has(token) ? response(410, expiredPage()) : response(404)
-      if (entry.view.expiresAt.getTime() <= Date.now()) {
-        expire(token, entry)
-        return response(410, expiredPage())
-      }
-      if (request.method === 'GET') return response(200, promptPage(entry.view, assets.script))
-      if (Number(request.headers.get('content-length')) > MAX_BODY) return response(413)
-      if (request.headers.get('content-type')?.split(';')[0]?.trim() !== 'application/octet-stream') {
-        return response(415)
-      }
-      const reader = request.body?.getReader()
-      const chunks: Uint8Array[] = []
-      let size = 0
-      try {
-        if (reader !== undefined) {
-          while (true) {
-            const chunk = await reader.read()
-            if (chunk.done) break
-            size += chunk.value.byteLength
-            if (size > MAX_BODY) {
-              await reader.cancel()
-              return response(413)
-            }
-            chunks.push(chunk.value)
-          }
+  let server: Bun.Server<undefined>
+  try {
+    server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: options.port ?? 0,
+      // Enforce the limit while streaming so Bun's automatic 413 cannot omit security headers.
+      maxRequestBodySize: Number.MAX_SAFE_INTEGER,
+      async fetch(request) {
+        const path = new URL(request.url).pathname
+        const match = /^\/r\/([A-Za-z0-9_-]{22})$/.exec(path)
+        const token = match?.[1]
+        if (token === undefined || (request.method !== 'GET' && request.method !== 'POST')) return response(404)
+        const entry = pending.get(token)
+        if (entry === undefined) return gone.has(token) ? response(410, expiredPage()) : response(404)
+        if (entry.view.expiresAt.getTime() <= Date.now()) {
+          expire(token, entry)
+          return response(410, expiredPage())
         }
-      } catch (error) {
-        if (error instanceof Error) return response(400)
-        throw error
-      } finally {
-        reader?.releaseLock()
-      }
-      // Another upload, cancellation or expiry may win while the body is being read.
-      if (pending.get(token) !== entry) return response(410, expiredPage())
-      if (entry.view.expiresAt.getTime() <= Date.now()) {
-        expire(token, entry)
-        return response(410, expiredPage())
-      }
-      const bytes = new Uint8Array(size)
-      let offset = 0
-      for (const chunk of chunks) {
-        bytes.set(chunk, offset)
-        offset += chunk.byteLength
-      }
-      retire(token, entry)
-      entry.resolve(bytes)
-      return response(204)
-    },
-    error() {
-      return response(500)
-    },
-  })
+        if (request.method === 'GET') return response(200, promptPage(entry.view, assets.script))
+        if (Number(request.headers.get('content-length')) > MAX_BODY) return response(413)
+        if (request.headers.get('content-type')?.split(';')[0]?.trim() !== 'application/octet-stream') {
+          return response(415)
+        }
+        const reader = request.body?.getReader()
+        const chunks: Uint8Array[] = []
+        let size = 0
+        try {
+          if (reader !== undefined) {
+            while (true) {
+              const chunk = await reader.read()
+              if (chunk.done) break
+              size += chunk.value.byteLength
+              if (size > MAX_BODY) {
+                await reader.cancel()
+                return response(413)
+              }
+              chunks.push(chunk.value)
+            }
+          }
+        } catch (error) {
+          if (error instanceof Error) return response(400)
+          throw error
+        } finally {
+          reader?.releaseLock()
+        }
+        // Another upload, cancellation or expiry may win while the body is being read.
+        if (pending.get(token) !== entry) return response(410, expiredPage())
+        if (entry.view.expiresAt.getTime() <= Date.now()) {
+          expire(token, entry)
+          return response(410, expiredPage())
+        }
+        const bytes = new Uint8Array(size)
+        let offset = 0
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset)
+          offset += chunk.byteLength
+        }
+        retire(token, entry)
+        entry.resolve(bytes)
+        return response(204)
+      },
+      error() {
+        return response(500)
+      },
+    })
+  } catch (error) {
+    if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'string') throw error
+    throw new TypeVaultError(
+      'unavailable',
+      `The secret page could not listen on 127.0.0.1:${options.port ?? 0} (${error.code}); set TYPEVAULT_PROMPT_PORT to use another port`,
+    )
+  }
 
   const port = server.port
   if (port === undefined) {
