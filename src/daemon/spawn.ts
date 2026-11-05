@@ -10,7 +10,7 @@ import { appendAudit } from '../audit/log'
 import { encodeSecretKey, type SecretKey } from '../core/crypto'
 import { TypeVaultError } from '../core/errors'
 import { ensureDir } from '../core/fsx'
-import { refuseForeignDaemon } from '../core/holder'
+import { claimDaemon, type DaemonClaim, refuseForeignDaemon } from '../core/holder'
 import { configDir, type Layout } from '../core/layout'
 import { holdLock, isLockHeld } from '../core/lock'
 import { callDaemon, isDaemonAlive, servingPid } from './client'
@@ -107,16 +107,18 @@ export async function stopDaemon(layout: Layout): Promise<void> {
  */
 export async function endLiveGrants(layout: Layout, env: Env): Promise<void> {
   if (!existsSync(layout.grantsFile) && !existsSync(layout.sessionFile)) return
-  refuseForeignDaemon(layout, env)
   const release = holdLock(layout.daemonLock)
   if (release === undefined) {
     throw new TypeVaultError('conflict', 'a typevault daemon started here while locking; run `typevault lock` again')
   }
+  let claim: DaemonClaim | undefined
   try {
+    claim = claimDaemon(layout, env)
     rmSync(layout.grantsFile, { force: true })
     rmSync(layout.sessionFile, { force: true })
     await appendAudit(layout, { action: 'grant.revoke', mode: 'live', reason: 'typevault lock' })
   } finally {
+    claim?.release()
     release()
   }
 }
