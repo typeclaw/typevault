@@ -1,10 +1,12 @@
 import { z } from 'zod'
 
+import { sha256Hex } from '../core/crypto'
+import { utf8 } from '../core/encoding'
 import { TypeVaultError } from '../core/errors'
 import {
   isFieldName,
+  type EntryName,
   parseEntryName,
-  slugifySegment,
   PRESETS,
   type Preset,
   type Field,
@@ -27,11 +29,31 @@ export function collectEntries(items: readonly ImportItem[], warnings: readonly 
   const entries: ImportedEntry[] = []
   const messages = [...warnings]
   const used = new Set<string>()
+  const containers = new Map<string, string>()
+  // A folder (or a 1Password account and vault) whose name mixes scripts still keeps its entries apart, under a
+  // stable stand-in, rather than taking down every item in it.
+  const containerSegment = (raw: string): string => {
+    const known = containers.get(raw)
+    if (known !== undefined) return known
+    let segment = toSegment(raw)
+    if (segment !== '' && entryNameOf(segment) === undefined) {
+      const standIn = sha256Hex(utf8(segment)).slice(0, 8)
+      messages.push(`"${raw}" makes no usable name segment; its entries use "${standIn}"`)
+      segment = standIn
+    }
+    containers.set(raw, segment)
+    return segment
+  }
   for (const item of items) {
-    // A title with no Latin letters or digits ("코레일+") slugs to nothing, so its URL names the entry instead.
-    const service = slugifySegment(item.title, siteName(item.url))
-    const base = item.container ? `${service}/${slugifySegment(item.container)}` : service
-    let name = base
+    const title = toSegment(item.title)
+    const container = containerSegment(item.container ?? '')
+    // Collisions are checked on the canonical name, so two spellings of one name can't land on the same entry.
+    const base = entryNameOf(container === '' ? title : `${title}/${container}`)
+    if (base === undefined) {
+      messages.push(`skipped "${item.title}": its title makes no usable entry name`)
+      continue
+    }
+    let name: string = base
     let suffix = 2
     while (used.has(name)) name = `${base}-${suffix++}`
     used.add(name)
@@ -75,32 +97,23 @@ export function collectEntries(items: readonly ImportItem[], warnings: readonly 
   return { entries, warnings: messages }
 }
 
-const GENERIC_SECOND_LEVEL: ReadonlySet<string> = new Set([
-  'ac',
-  'co',
-  'com',
-  'edu',
-  'go',
-  'gov',
-  'ne',
-  'net',
-  'or',
-  'org',
-])
+/** A title or folder as a name segment: lowercase, with each run of spaces and other punctuation one `-`. */
+const toSegment = (raw: string): string =>
+  raw
+    .toLowerCase()
+    .normalize('NFC')
+    .replace(/[^\p{L}\p{M}\p{N}.@+]+/gu, '-')
+    .replace(/[.-]*-[.-]*/g, '-')
+    .replace(/\.{2,}/g, '.')
+    .replace(/^[.-]+|[.-]+$/g, '')
 
-/**
- * The site a web URL points at (`www.korail.com` gives `korail`) or the app an app URL opens, the last part of its
- * bundle ID (`app://TEAMID.com.korail.KorailTalk` gives `korailtalk`).
- */
-function siteName(raw: string | undefined): string | undefined {
-  const url = raw === undefined ? null : URL.parse(raw)
-  if (url === null) return undefined
-  const labels = url.hostname.split('.').filter((label) => label !== '')
-  const web = url.protocol === 'http:' || url.protocol === 'https:'
-  // `www.korail.co.kr` names `korail`, not `co`.
-  const site = labels.length > 2 && GENERIC_SECOND_LEVEL.has(labels.at(-2) ?? '') ? -3 : -2
-  const label = web ? (labels.at(site) ?? labels[0]) : labels.at(-1)
-  return label === undefined ? undefined : slugifySegment(label)
+function entryNameOf(name: string): EntryName | undefined {
+  try {
+    return parseEntryName(name)
+  } catch (error) {
+    if (error instanceof TypeVaultError) return undefined
+    throw error
+  }
 }
 
 /**

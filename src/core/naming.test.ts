@@ -11,7 +11,6 @@ import {
   matchesOnly,
   parseEntryName,
   parseEntryRef,
-  slugifySegment,
 } from './naming'
 
 describe('parseEntryName', () => {
@@ -170,16 +169,6 @@ describe('compound fields', () => {
     ['plain.part', undefined],
   ])('resolves %p', (wanted, expected) => {
     expect(resolveField(fields, wanted)).toEqual(expected)
-  })
-})
-
-describe('slugifySegment', () => {
-  it.each([
-    ['GitHub (Work)', 'github-work'],
-    ['  ', 'item'],
-    ['Crème Brûlée', 'creme-brulee'],
-  ])('slugifies %p as %p', (input, expected) => {
-    expect(slugifySegment(input)).toBe(expected)
   })
 })
 

@@ -185,17 +185,6 @@ export function deriveEnvName(name: EntryName, field: string): string | undefine
 
 const foldUpper = (text: string): string => text.normalize('NFKD').replace(/\p{M}/gu, '').toUpperCase()
 
-/** Turns arbitrary text (an import title, a vault name) into a valid name segment. */
-export function slugifySegment(raw: string, fallback = 'item'): string {
-  const slug = raw
-    .normalize('NFKD')
-    .replace(/\p{M}/gu, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-  return slug === '' ? fallback : slug
-}
-
 /** True when `name` matches any `--only` pattern (exact names or globs such as `github/*`). */
 export function matchesOnly(name: EntryName, patterns: readonly string[]): boolean {
   return patterns.some((pattern) => new Bun.Glob(entryPattern(pattern)).match(name))
