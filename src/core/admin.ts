@@ -128,11 +128,14 @@ export class Admin {
     return affected
   }
 
-  /** New key generation for `name`. Returns the names of every entry it could reach, now flagged for rotation. */
+  /** Rotates every tier `name` reaches. Returns their entry names, now flagged for rotation at the source. */
   async rotate(name: string): Promise<readonly string[]> {
     let affected: readonly string[] = []
     await this.#mutate(async (state, txn) => {
-      affected = await rotateTiers({ vault: this.#vault, owner: this.#owner, state, txn, exposed: true }, [name])
+      affected = await rotateTiers(
+        { vault: this.#vault, owner: this.#owner, state, txn, exposed: true },
+        reachOf(state, [name]),
+      )
     })
     return affected
   }

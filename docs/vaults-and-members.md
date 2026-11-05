@@ -88,6 +88,8 @@ sealed to the owner key, which can't be rotated yet.
 ## Git history
 
 Old ciphertext stays in history forever. If a key leaks, rotate the key **and** every secret it could reach.
+`typevault key rotate <tier>` rotates that tier and every tier it reaches, including transitively included tiers.
+Rotate the listed secrets at their source, then re-set them; old ciphertext and previously exposed values remain compromised.
 Removing an entry does not remove it from history. Adding a member rotates every tier they reach first, so their key
 opens none of the ciphertext from before they joined; removing one rotates again and lists what they could read.
 

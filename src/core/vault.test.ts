@@ -4,12 +4,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { Admin } from './admin'
-import { seal, type SecretKey } from './crypto'
-import { utf8 } from './encoding'
+import { decodeSecretKey, seal, type SecretKey, unseal } from './crypto'
+import { fromBase64, fromUtf8, utf8 } from './encoding'
 import { signerOf } from './entries'
 import { TypeVaultError } from './errors'
 import { createIdentity } from './identity'
 import { type Founder, founderOf, initGlobalVault } from './init'
+import { wrapPath } from './keyring'
 import { globalLayout } from './layout'
 import { parseEntryName } from './naming'
 import { Vault } from './vault'
@@ -252,12 +253,47 @@ describe('integrity', () => {
 
 describe('rotation', () => {
   it('locks out the old key, keeps includers working and flags reachable entries', async () => {
-    await (await open([owner])).put(stripe, signerOf(owner))
+    const vault = await open([owner])
+    await vault.put(stripe, signerOf(owner))
+    const guest = { ...stripe, name: parseEntryName('guest-secret'), tier: 'guest' }
+    const unrelated = { ...stripe, name: parseEntryName('unrelated'), tier: 'trusted' }
+    await vault.put(guest, signerOf(owner))
+    await vault.put(unrelated, signerOf(owner))
+    const trustedGen = vault.state.tiers['trusted']?.gen
     const oldMember = await keyOf('member')
-    expect(await admin.rotate('member')).toEqual(['stripe'])
+    expect(await admin.rotate('member')).toEqual(['guest-secret', 'stripe'])
     expect(await (await open([oldMember])).find(stripe.name)).toBeUndefined()
-    const viaTrusted = await (await open([await keyOf('trusted')])).find(stripe.name)
-    expect(viaTrusted?.payload.needsRotation).toBe(true)
+    const viaTrusted = await open([await keyOf('trusted')])
+    expect((await viaTrusted.find(stripe.name))?.payload.needsRotation).toBe(true)
+    expect((await viaTrusted.find(guest.name))?.payload.needsRotation).toBe(true)
+    expect((await viaTrusted.find(unrelated.name))?.payload.needsRotation).toBeUndefined()
+    expect(viaTrusted.state.tiers['trusted']?.gen).toBe(trustedGen)
+  })
+
+  it.each(['member', 'guest'])('keeps historical trusted wraps from opening re-set %s entries', async (tier) => {
+    const vault = await open([owner])
+    const oldTrusted = await keyOf('trusted')
+    let historicalKey = oldTrusted
+    for (const included of tier === 'member' ? ['member'] : ['member', 'guest']) {
+      const wrap = wrapPath(included, vault.state.tiers[included]?.gen ?? 0, historicalKey.role)
+      historicalKey = decodeSecretKey(
+        fromUtf8(await unseal([historicalKey.identity], readFileSync(join(vault.layout.vault, wrap)))),
+      )
+    }
+    const entry = { ...stripe, tier }
+    const before = await vault.put(entry, signerOf(owner))
+    await expect(unseal([historicalKey.identity], fromBase64(before.envelope.payload))).resolves.toBeDefined()
+
+    await admin.rotate('trusted')
+    const fields = { key: { type: 'secret' as const, value: 'dummy-rotated-value' } }
+    const current = await vault.put({ ...entry, fields }, signerOf(owner))
+
+    await expect(unseal([historicalKey.identity], fromBase64(current.envelope.payload))).rejects.toMatchObject({
+      code: 'denied',
+    })
+    const viaTrusted = await open([await keyOf('trusted')])
+    expect((await viaTrusted.find(entry.name))?.payload.fields).toEqual(fields)
+    expect(current.payload.needsRotation).toBeUndefined()
   })
 
   it('clears the rotation flag when the value is re-set', async () => {
