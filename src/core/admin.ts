@@ -1,5 +1,5 @@
 import { encodeSecretKey, generateSecretKey, type PublicKey, publicKeyOf, seal, type SecretKey } from './crypto'
-import { utf8 } from './encoding'
+import { fromBase64, utf8 } from './encoding'
 import { signerOf } from './entries'
 import { TypeVaultError } from './errors'
 import { ownerWrapPath, wrapPath } from './keyring'
@@ -181,17 +181,30 @@ export class Admin {
     return affected
   }
 
-  setSigner(id: string, signPublic: string, tiers: readonly string[]): Promise<void> {
-    return this.#mutate(async (state, txn) => {
+  async setSigner(id: string, signPublic: string, tiers: readonly string[]): Promise<void> {
+    const name = parseTierName(id)
+    let key: Uint8Array
+    try {
+      key = fromBase64(signPublic)
+    } catch (error) {
+      if (error instanceof Error) throw new TypeVaultError('invalid', 'signer public key is not valid base64')
+      throw error
+    }
+    if (key.length !== 32) throw new TypeVaultError('invalid', 'signer public key must be 32 bytes')
+    if (tiers.length === 0) throw new TypeVaultError('invalid', 'signer needs at least one tier')
+    await this.#mutate(async (state, txn) => {
+      const unknown = tiers.find((tier) => tier !== '*' && state.tiers[tier] === undefined)
+      if (unknown !== undefined) throw new TypeVaultError('not_found', `no tier "${unknown}"`)
       txn.put(
         'signers.json',
-        signersDoc({ ...state.signers, [id]: { signPublic, tiers } }, this.#owner, state.seqs.signers + 1),
+        signersDoc({ ...state.signers, [name]: { signPublic, tiers } }, this.#owner, state.seqs.signers + 1),
       )
     })
   }
 
   removeSigner(id: string): Promise<void> {
     return this.#mutate(async (state, txn) => {
+      if (state.signers[id] === undefined) throw new TypeVaultError('not_found', `no signer "${id}"`)
       const { [id]: _removed, ...rest } = state.signers
       txn.put('signers.json', signersDoc(rest, this.#owner, state.seqs.signers + 1))
     })
@@ -209,6 +222,7 @@ export class Admin {
 
   removeCeiling(name: string): Promise<void> {
     return this.#mutate(async (state, txn) => {
+      if (state.ceilings[name] === undefined) throw new TypeVaultError('not_found', `no ceiling "${name}"`)
       const { [name]: _removed, ...rest } = state.ceilings
       txn.put('ceilings.json', ceilingsDoc(rest, this.#owner, state.seqs.ceilings + 1))
     })
