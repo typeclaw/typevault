@@ -183,11 +183,16 @@ it('prompts with --web without a terminal', async () => {
 })
 
 it.each([
-  ['--no-web', ['typevault://web', '--preset', 'api_key', '--no-web'], undefined],
   ['an existing entry', ['typevault://svc', '--field', 'username=bob'], undefined],
   ['--stdin', ['typevault://web', '--preset', 'api_key', '--stdin'], WEB_KEY],
 ])('does not prompt from a terminal with %s', async (_, args, typed) => {
   expect(await setViaPage(args, { tty: true, typed })).toMatchObject({ code: 0, prompted: false })
+})
+it('refuses a new entry with --no-web and no fields without prompting', async () => {
+  expect(await setViaPage(['typevault://web', '--preset', 'api_key', '--no-web'], { tty: true })).toMatchObject({
+    code: 1,
+    prompted: false,
+  })
 })
 
 it('stores a value without a preset and resolves its bare reference', async () => {
@@ -195,6 +200,14 @@ it('stores a value without a preset and resolves its bare reference', async () =
   const result = await cli(['get', 'typevault://simple', '--json', '--reveal'])
   expect(JSON.parse(result.stdout)).toEqual({ $default: { type: 'secret', value: 'private-value' } })
   expect(await cli(['get', 'typevault://simple', '--reveal'])).toMatchObject({ code: 0, stdout: 'private-value\n' })
+})
+it.each([
+  ['empty --stdin', ['typevault://empty', '--stdin'], ''],
+  ['no fields', ['typevault://empty', '--no-web'], undefined],
+])('refuses %s', async (_, args, stdin) => {
+  const result = await cli(['set', ...args], stdin)
+  expect(result.code).toBe(1)
+  expect(await cli(['get', 'typevault://empty', '--json', '--reveal'])).toMatchObject({ code: 1 })
 })
 it('lists fields when a bare login reference is ambiguous', async () => {
   const result = await cli(['get', 'typevault://svc', '--reveal'])
