@@ -1,4 +1,5 @@
 import { existsSync, rmSync, writeFileSync } from 'node:fs'
+import { hostname } from 'node:os'
 
 import { z } from 'zod'
 
@@ -11,7 +12,13 @@ type Env = Readonly<Record<string, string | undefined>>
 
 const CLAIM_ATTEMPTS = 3
 
-const HolderSchema = z.object({ host: z.string(), pid: z.number().int(), token: z.string(), at: z.string() })
+const HolderSchema = z.object({
+  host: z.string(),
+  name: z.string(),
+  pid: z.number().int(),
+  token: z.string(),
+  at: z.string(),
+})
 type Holder = z.infer<typeof HolderSchema>
 
 export type DaemonClaim = {
@@ -37,7 +44,13 @@ export function refuseForeignDaemon(layout: Layout, env: Env): void {
  */
 export function claimDaemon(layout: Layout, env: Env): DaemonClaim {
   const token = randomHex(8)
-  const record = JSON.stringify({ host: hostId(env), pid: process.pid, token, at: new Date().toISOString() })
+  const record = JSON.stringify({
+    host: hostId(env),
+    name: hostname(),
+    pid: process.pid,
+    token,
+    at: new Date().toISOString(),
+  })
   for (let attempt = 0; ; attempt++) {
     try {
       writeFileSync(layout.daemonHolder, record, { flag: 'wx', mode: 0o600 })
@@ -80,7 +93,7 @@ function readHolder(layout: Layout): Holder | undefined {
 const inUse = (layout: Layout, holder: Holder): TypeVaultError =>
   new TypeVaultError(
     'in_use',
-    `a typevault daemon on another machine (${holder.host}, pid ${holder.pid}, since ${holder.at}) is using ${layout.root}; one machine at a time may use a state directory (if that daemon is gone for good, delete ${layout.daemonHolder})`,
+    `a typevault daemon on another machine (${holder.name}, pid ${holder.pid}, since ${holder.at}) is using ${layout.root}; one machine at a time may use a state directory (if that daemon is gone for good, delete ${layout.daemonHolder})`,
   )
 
 const isCode = (error: unknown, code: string): boolean =>

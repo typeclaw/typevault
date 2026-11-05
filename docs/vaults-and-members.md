@@ -42,8 +42,9 @@ mount between macOS and a Linux VM), so a daemon also claims the directory in `r
 start time) for as long as it runs. A direct open or a daemon on another machine fails with `in_use` while that claim
 is there, however old: a crashed daemon can't be told from a paused one, so its claim is never taken over from another
 machine. If that machine's daemon is gone for good, delete the file; the same machine replaces its own leftover claim
-on its next start. The host is the hostname, or `TYPEVAULT_HOST_ID` where the hostname changes on every start (a
-container).
+on its next start. The host is a hash of the machine ID (`IOPlatformUUID` on macOS, `/etc/machine-id` on Linux), or the
+hostname where there is none. Set `TYPEVAULT_HOST_ID` where neither identifies the machine: a container whose hostname
+changes on every start, or clones of one image sharing a machine ID.
 
 ## Members and unlocking
 

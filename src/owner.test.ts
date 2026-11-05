@@ -320,12 +320,18 @@ describe('claims on a state directory', () => {
   it("refuse another machine's claim however old, until it is cleared", async () => {
     // given a claim another machine left a day ago (crashed, or only paused: nothing here can tell)
     const layout = layoutOn('host-a')
-    const old = { host: 'host-b', pid: 1, token: 'old', at: new Date(Date.now() - 86_400_000).toISOString() }
+    const old = {
+      host: 'host-b',
+      name: 'old-laptop',
+      pid: 1,
+      token: 'old',
+      at: new Date(Date.now() - 86_400_000).toISOString(),
+    }
     writeFileSync(layout.daemonHolder, JSON.stringify(old))
 
     // then neither a daemon nor a direct open on this machine goes ahead, and the claim stays
     expect(() => claimDaemon(layout, { TYPEVAULT_HOST_ID: 'host-a' })).toThrow(
-      expect.objectContaining({ code: 'in_use' }),
+      expect.objectContaining({ code: 'in_use', message: expect.stringContaining('old-laptop') }),
     )
     const env = { TYPEVAULT_STATE_DIR: stateDir, TYPEVAULT_HOST_ID: 'host-a' }
     await expect(Vault.open(layout, [], env)).rejects.toMatchObject({ code: 'in_use' })
@@ -341,7 +347,7 @@ describe('claims on a state directory', () => {
     const layout = layoutOn('host-a')
     writeFileSync(
       layout.daemonHolder,
-      JSON.stringify({ host: 'host-a', pid: 1, token: 'old', at: new Date().toISOString() }),
+      JSON.stringify({ host: 'host-a', name: 'renamed', pid: 1, token: 'old', at: new Date().toISOString() }),
     )
 
     // when this machine claims the state, then releases it
@@ -380,7 +386,13 @@ describe('claims on a state directory', () => {
     // given a claim that was cleared and replaced by another machine's
     const layout = layoutOn('host-a')
     const claim = claimDaemon(layout, { TYPEVAULT_HOST_ID: 'host-a' })
-    const theirs = JSON.stringify({ host: 'host-b', pid: 1, token: 'theirs', at: new Date().toISOString() })
+    const theirs = JSON.stringify({
+      host: 'host-b',
+      name: 'their-laptop',
+      pid: 1,
+      token: 'theirs',
+      at: new Date().toISOString(),
+    })
     writeFileSync(layout.daemonHolder, theirs)
 
     // when the first one releases
