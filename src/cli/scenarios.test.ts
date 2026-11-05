@@ -492,6 +492,54 @@ for (const [what, args, extra, names] of badInputs) {
   )
 }
 
+it(
+  'ls says when an entry file is left out, without touching its JSON',
+  async () => {
+    // given an unlocked vault whose only entry file is damaged
+    const alice = await unlockedVault()
+    const entries = join(project, '.typevault', 'entries')
+    const [file] = readdirSync(entries)
+    if (file === undefined) throw new Error('the entry was not stored')
+    writeFileSync(join(entries, file), '{not json')
+
+    // when it is listed
+    const listed = await ok(alice, ['ls', '--json'])
+
+    // then stdout is still the (empty) list, and stderr counts what is missing from it
+    expect(JSON.parse(listed.stdout)).toEqual([])
+    expect(listed.stderr).toContain('1 entry file(s)')
+  },
+  SCENARIO_MS,
+)
+
+it(
+  'ls still prints its listing through a daemon from before the unreadable count',
+  async () => {
+    // given a daemon still running from before an upgrade: it lists, but has no route for the count
+    const alice = actor('alice')
+    await ok(alice, withPassword('init', '--name', 'alice'), line('a'))
+    const older = Bun.serve({
+      unix: join(runDir('alice'), 'agent.sock'),
+      fetch: (request) => {
+        const path = new URL(request.url).pathname
+        if (path === '/v1/ping') return Response.json({ ok: true, pid: process.pid })
+        if (path === '/v1/list') return Response.json([])
+        return Response.json({ error: { code: 'not_found', message: 'no such route' } }, { status: 404 })
+      },
+    })
+
+    // when it is listed
+    const listed = await ok({ ...alice, TYPEVAULT_GRANT: 'tvl1.id.secret' }, ['ls', '--json']).finally(() =>
+      older.stop(true),
+    )
+
+    // then the listing arrives, and stderr says what restarting would add
+    expect(JSON.parse(listed.stdout)).toEqual([])
+    expect(listed.stderr).toContain('restart it')
+  },
+  SCENARIO_MS,
+)
+
 it('stores OAuth JSON from stdin as the preset input field', async () => {
   const machine = actor('machine')
   await ok(machine, ['init', '--machine'])
