@@ -15,7 +15,7 @@ export type DoctorReport = {
   readonly needsRotation: readonly string[]
 }
 
-const CONFLICT = /^<<<<<<< [^\n]*\n([\s\S]*?)^=======\n([\s\S]*?)^>>>>>>> [^\n]*\n?/m
+const CONFLICT = /^<<<<<<< [^\n]*\n([\s\S]*?)^=======\n([\s\S]*?)^>>>>>>> [^\n]*\n?/gm
 
 function parseSide(text: string): Envelope | undefined {
   try {
@@ -31,12 +31,11 @@ function parseSide(text: string): Envelope | undefined {
 function resolveMerge(vault: Vault, file: string): boolean {
   const path = join(vault.layout.entries, file)
   const text = readFileSync(path, 'utf8')
-  const match = CONFLICT.exec(text)
-  if (match === null) return false
-  const before = text.slice(0, match.index)
-  const after = text.slice(match.index + match[0].length)
-  const sides = [match[1] ?? '', match[2] ?? '']
-    .map((side) => parseSide(before + side + after))
+  const ours = text.replace(CONFLICT, '$1')
+  if (ours === text) return false
+  const theirs = text.replace(CONFLICT, '$2')
+  const sides = [ours, theirs]
+    .map(parseSide)
     .filter((side): side is Envelope => side !== undefined && verifyEnvelope(side, vault.state) === undefined)
   const winner = sides.reduce<Envelope | undefined>(
     (best, side) =>
