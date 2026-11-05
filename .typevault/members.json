@@ -5,12 +5,12 @@
     "members": {
       "neo": {
         "kind": "human",
-        "recipient": "age1rwrvnmpfl2qspjkcf7qmfturrh50dgcn6a85p4a3ghz77nr2ld5q7ymp3k",
-        "signPublic": "c4NGgHK0V3p0QXVKHFvwHRDBtit7J6Lki8AJUeWvwQM=",
+        "recipient": "age17rhea5cgnwg008ew8hdj7dlplsswn69g7zrl34dw80096y8clu3q2aq0w4",
+        "signPublic": "a00SWR5kyF1jUVjYrKoq+pClF3+FvwStDOotLViD7e8=",
         "owner": true,
         "tiers": []
       }
     }
   },
-  "sig": "7QAX3puNWJalq1H07pFwVxkAcm3j4DPBLSrIS9gl2doqTX4kkxJFiGvX2Bz33FU+Q4y0hhRH8us6cmEKYfxbCw=="
+  "sig": "4+BCMNN3VOWWQGFN0+CpgWLNMaetxw1a3vlSnKIV1/2UovFTErcg2mG5J8dwESAkTixrBZnineEGlsDGaPIXDQ=="
 }
