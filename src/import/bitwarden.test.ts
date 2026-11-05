@@ -3,15 +3,13 @@ import { expect, test } from 'bun:test'
 import { TypeVaultError } from '../core/errors'
 import { parseBitwarden } from './bitwarden'
 
-test('Bitwarden maps login, note, and SSH records with folder accounts and collision warnings', () => {
+test('Bitwarden maps login, note, and SSH records, naming logins after their username', () => {
   const result = parseBitwarden(
     JSON.stringify({
-      folders: [{ id: 'folder-1', name: 'Work / Team' }],
       items: [
         {
           type: 1,
           name: 'GitHub',
-          folderId: 'folder-1',
           login: {
             username: 'user@example.com',
             password: 'hunter2',
@@ -20,7 +18,7 @@ test('Bitwarden maps login, note, and SSH records with folder accounts and colli
           },
           notes: 'not a password field',
         },
-        { type: 2, name: 'GitHub', folderId: 'folder-1', notes: 'private note' },
+        { type: 2, name: 'GitHub', notes: 'private note' },
         { type: 5, name: 'Build Key', sshKey: { privateKey: 'fake-private', publicKey: 'fake-public' } },
         { type: 1, name: 'Local', login: { username: '', password: '', uris: [{ uri: 'ftp://example.com' }] } },
         { type: 3, name: 'Card', notes: 'hunter2' },
@@ -30,7 +28,7 @@ test('Bitwarden maps login, note, and SSH records with folder accounts and colli
   )
   expect(result.entries.map((entry) => [entry.name, entry.fields, entry.origin])).toEqual([
     [
-      'github/work-team',
+      'github/user@example.com',
       {
         username: { type: 'text', value: 'user@example.com' },
         password: { type: 'secret', value: 'hunter2' },
@@ -39,7 +37,7 @@ test('Bitwarden maps login, note, and SSH records with folder accounts and colli
       },
       'https://example.com:8443',
     ],
-    ['github/work-team-2', { $default: { type: 'secret', value: 'private note' } }, undefined],
+    ['github', { $default: { type: 'secret', value: 'private note' } }, undefined],
     [
       'build-key',
       { private_key: { type: 'secret', value: 'fake-private' }, public_key: { type: 'text', value: 'fake-public' } },
@@ -47,9 +45,7 @@ test('Bitwarden maps login, note, and SSH records with folder accounts and colli
     ],
     ['local', { url: { type: 'text', value: 'ftp://example.com' } }, undefined],
   ])
-  expect(result.warnings).toHaveLength(3)
-  expect(result.warnings.join()).toContain('"github/work-team"')
-  expect(result.warnings.join()).toContain('"github/work-team-2"')
+  expect(result.warnings).toHaveLength(2)
   expect(result.warnings.join()).not.toContain('hunter2')
 })
 
