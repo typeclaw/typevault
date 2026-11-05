@@ -71,35 +71,58 @@ export class PromptRequests {
     }
     const code = matchCode()
     const expiresAt = Date.now() + TTL_MS
-    const handle = (await this.#prompt()).open({
-      name: input.name,
-      ...(input.preset === undefined ? {} : { preset: input.preset }),
-      tier,
-      reason: input.reason,
-      requester: grant.label,
-      code,
-      recipients: [meta.recipient, state.owner.recipient],
-      expiresAt: new Date(expiresAt),
-    })
+    const handle = (await this.#prompt()).open(
+      {
+        name: input.name,
+        ...(input.preset === undefined ? {} : { preset: input.preset }),
+        tier,
+        reason: input.reason,
+        requester: grant.label,
+        code,
+        recipients: [meta.recipient, state.owner.recipient],
+        expiresAt: new Date(expiresAt),
+      },
+      { validate: true },
+    )
     // Whoever holds the URL can submit, the requesting agent included, so the daemon checks what it got instead
     // of signing it blind: it must be exactly the requested entry, and the grant must still be live.
     const stored = handle.done.then(async (ciphertext) => {
-      const key = (await this.#vault.keyring.unlock(tier)) ?? this.#vault.keyring.owner
-      if (key === undefined) throw new TypeVaultError('denied', `no key here can read tier "${tier}"`)
-      const payload = decodePayload(await unseal([key.identity], ciphertext))
-      if (payload.name !== input.name || payload.env !== undefined || payload.needsRotation !== undefined) {
-        throw new TypeVaultError('tampered', 'the submitted secret does not match the request')
+      try {
+        const key = (await this.#vault.keyring.unlock(tier)) ?? this.#vault.keyring.owner
+        if (key === undefined) throw new TypeVaultError('denied', `no key here can read tier "${tier}"`)
+        const payload = decodePayload(await unseal([key.identity], ciphertext))
+        if (payload.name !== input.name || payload.env !== undefined || payload.needsRotation !== undefined) {
+          throw new TypeVaultError('tampered', 'the submitted secret does not match the request')
+        }
+        if (!session.isLive()) throw new TypeVaultError('denied', 'the requesting grant is no longer live')
+        await session.access.set({ name: input.name, fields: payload.fields, tier })
+        await appendAudit(this.#vault.layout, {
+          action: 'request.stored',
+          mode: 'live',
+          grant: grant.id,
+          label: grant.label,
+          entries: [input.name],
+        })
+        await handle.accept()
+        return input.name
+      } catch (error) {
+        const rejected =
+          error instanceof TypeVaultError
+            ? error
+            : new TypeVaultError('unavailable', 'the submitted secret could not be stored')
+        try {
+          await appendAudit(this.#vault.layout, {
+            action: 'request.rejected',
+            mode: 'live',
+            grant: grant.id,
+            label: grant.label,
+            entries: [input.name],
+          })
+        } finally {
+          await handle.reject(rejected)
+        }
+        throw error
       }
-      if (!session.isLive()) throw new TypeVaultError('denied', 'the requesting grant is no longer live')
-      await session.access.set({ name: input.name, fields: payload.fields, tier })
-      await appendAudit(this.#vault.layout, {
-        action: 'request.stored',
-        mode: 'live',
-        grant: grant.id,
-        label: grant.label,
-        entries: [input.name],
-      })
-      return input.name
     })
     // Forget the request a while after it settles, whether or not anyone waits for it.
     const forget = (): void => {

@@ -326,13 +326,14 @@ describe('secret prompt', () => {
       rotated: now,
     }
     const body = await seal(recipients, utf8(JSON.stringify(payload)))
-    const posted = await fetch(opened.url, {
+    const posting = fetch(opened.url, {
       method: 'POST',
       body: new Uint8Array(body),
       headers: { 'content-type': 'application/octet-stream' },
     })
-    expect(posted.status).toBe(204)
     const done = await access.call('/v1/request/wait', { id: opened.id }, z.object({ stored: z.string() }))
+    const posted = await posting
+    expect(posted.status).toBe(204)
     expect(done.stored).toBe('resend')
     expect((await access.get(n('resend'))).fields).toEqual({ key: { type: 'secret' as const, value: 're_test_1' } })
   })
@@ -426,11 +427,19 @@ it('refuses a prompt submission for a different entry than the one requested', a
     rotated: now,
   }
   const body = new Uint8Array(await seal(recipients, utf8(JSON.stringify(forged))))
-  await fetch(opened.url, { method: 'POST', body, headers: { 'content-type': 'application/octet-stream' } })
+  const posted = fetch(opened.url, { method: 'POST', body, headers: { 'content-type': 'application/octet-stream' } })
   await expect(
     access.call('/v1/request/wait', { id: opened.id }, z.object({ stored: z.string() })),
   ).rejects.toMatchObject({
     code: 'tampered',
+  })
+  const rejected = await posted
+  expect(rejected.status).toBe(422)
+  expect(rejected.headers.get('content-type')).toContain('text/html')
+  expect(readAudit(layout).at(-1)).toMatchObject({
+    action: 'request.rejected',
+    grant: expect.any(String),
+    entries: ['resend'],
   })
   expect((await vault.find(n('openai')))?.payload.fields).toEqual({
     key: { type: 'secret' as const, value: 'sk-test-openai' },
