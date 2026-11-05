@@ -76,6 +76,7 @@ export async function read1Password(
 type Filters = { readonly vaults: readonly string[]; readonly tags: readonly string[] }
 type Collected = { readonly items: ImportItem[]; readonly warnings: string[]; readonly matchedVaults: Set<string> }
 
+const OpWhoamiSchema = z.object({ url: z.string() })
 const OpVaultListSchema = z.array(z.object({ id: z.string(), name: z.string().default('') }))
 const OpListSchema = z.array(
   z.object({ id: z.string(), vault: z.object({ id: z.string() }), tags: z.array(z.string()).default([]) }),
@@ -107,6 +108,8 @@ async function readOp(
   collected: Collected,
 ): Promise<void> {
   const account = accountName === undefined ? [] : ['--account', accountName]
+  // Vaults of the same name (each account's "Private") only stay apart with the account in the entry name.
+  let label = accountName === undefined ? undefined : accountLabel(accountName)
   const tags = filters.tags.length === 0 ? [] : ['--tags', filters.tags.join(',')]
   let scopes: readonly (readonly string[])[] = [[]]
   if (filters.vaults.length > 0) {
@@ -134,7 +137,9 @@ async function readOp(
     if (mapped === undefined) collected.warnings.push(UNSUPPORTED)
     else {
       const selected = selectFields(mapped, item.title, item.tags, filters.tags, collected.warnings)
-      if (selected !== undefined) collected.items.push({ ...selected, title: item.title, container: item.vault.name })
+      if (selected === undefined) continue
+      label ??= accountLabel(parseJson(await runOp(['whoami', '--format', 'json']), OpWhoamiSchema, 'op').url)
+      collected.items.push({ ...selected, title: item.title, container: `${label} ${item.vault.name}` })
     }
   }
 }
@@ -219,6 +224,12 @@ function mapOpTemplate(item: z.infer<typeof OpItemSchema>): Omit<ImportItem, 'ti
     default:
       return undefined
   }
+}
+
+/** An account as named in entries: a sign-in address's first label (`acme.1password.com` gives `acme`), else as given. */
+export function accountLabel(account: string): string {
+  const host = account.replace(/^https?:\/\//i, '').replace(/\/.*$/, '')
+  return /^[^\s@.]+(?:\.[^\s@.]+)+$/.test(host) ? (host.split('.')[0] ?? host) : account
 }
 
 /** True when a vault is wanted by id or name, recording which requested vaults it answers to. */
@@ -343,7 +354,8 @@ async function readSdk(account: string, filters: Filters, connect: ConnectSdk, c
       if (mapped === undefined) warnings.push(UNSUPPORTED)
       else {
         const selected = selectFields(mapped, item.title, item.tags, filters.tags, warnings)
-        if (selected !== undefined) items.push({ ...selected, title: item.title, container: vault.title })
+        if (selected !== undefined)
+          items.push({ ...selected, title: item.title, container: `${accountLabel(account)} ${vault.title}` })
       }
     }
   }

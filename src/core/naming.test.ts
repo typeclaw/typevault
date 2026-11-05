@@ -11,7 +11,6 @@ import {
   matchesOnly,
   parseEntryName,
   parseEntryRef,
-  slugifySegment,
 } from './naming'
 
 describe('parseEntryName', () => {
@@ -21,11 +20,36 @@ describe('parseEntryName', () => {
     ['google-workspace/team-1', 'google-workspace/team-1'],
     ['typevault://github/bot', 'github/bot'],
     ['typevault://GitHub/Bot', 'github/bot'],
+    ['국민은행/법인', '국민은행/법인'],
+    ['Cafe\u0301', 'café'],
+    ['각', '각'],
+    ['github-한국', 'github-한국'],
+    ['AWSユーザー', 'awsユーザー'],
+    ['сбербанк', 'сбербанк'],
+    ['GitHub/Dev@Example.com', 'github/dev@example.com'],
+    ['코레일+', '코레일+'],
+    ['c++/@handle', 'c++/@handle'],
   ])('accepts %p as %p', (input, expected) => {
     expect<string>(parseEntryName(input)).toBe(expected)
   })
 
-  it.each(['', 'a/b/c', 'github/', '-github', 'git_hub', 'git hub', 'github//bot', 'café'])('rejects %p', (input) => {
+  it.each([
+    '',
+    'a/b/c',
+    'github/',
+    '-github',
+    'git_hub',
+    'git hub',
+    'github//bot',
+    'githuь',
+    'payρal',
+    '€',
+    '.github',
+    'git..hub',
+    'github.',
+    'git.-hub',
+    '+@',
+  ])('rejects %p', (input) => {
     expect(() => parseEntryName(input)).toThrow(TypeVaultError)
   })
 })
@@ -75,12 +99,19 @@ describe('deriveEnvName', () => {
     ['aws/prod', 'Secret Access Key', 'AWS_PROD_SECRET_ACCESS_KEY'],
     ['stripe', 'api-key (live)', 'STRIPE_API_KEY_LIVE'],
     ['wifi', 'Clé', 'WIFI_CLE'],
+    ['café', '$default', 'CAFE'],
+    ['github/dev@example.com', '$default', 'GITHUB_DEV_EXAMPLE_COM'],
+    ['c++', 'key', 'C_KEY'],
   ])('derives %p#%p as %p', (name, field, expected) => {
     expect(deriveEnvName(parseEntryName(name), field)).toBe(expected)
   })
 
   it('derives nothing when no letter or digit survives', () => {
     expect(deriveEnvName(parseEntryName('wifi'), '비밀번호')).toBeUndefined()
+  })
+
+  it.each(['$default', 'password'])('derives nothing for %p of a name with a non-Latin letter', (field) => {
+    expect(deriveEnvName(parseEntryName('github-한국'), field)).toBeUndefined()
   })
 })
 
@@ -138,16 +169,6 @@ describe('compound fields', () => {
     ['plain.part', undefined],
   ])('resolves %p', (wanted, expected) => {
     expect(resolveField(fields, wanted)).toEqual(expected)
-  })
-})
-
-describe('slugifySegment', () => {
-  it.each([
-    ['GitHub (Work)', 'github-work'],
-    ['  ', 'item'],
-    ['Crème Brûlée', 'creme-brulee'],
-  ])('slugifies %p as %p', (input, expected) => {
-    expect(slugifySegment(input)).toBe(expected)
   })
 })
 

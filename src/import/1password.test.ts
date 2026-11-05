@@ -108,6 +108,16 @@ test('1PUX omits missing containers and ignores non-web origins', () => {
   expect(result.entries[0]?.fields).toEqual({ url: { type: 'text', value: 'javascript:alert(1)' } })
 })
 
+test('1PUX names each account in its entries, so same-named vaults stay apart', () => {
+  const vault = { attrs: { name: 'Private' }, items: [item('001')] }
+  const accounts = [
+    { attrs: { domain: 'https://acme.1password.com/' }, vaults: [vault] },
+    { attrs: { accountName: 'Home' }, vaults: [vault] },
+  ]
+  const result = parse1Password(zipSync({ 'export.data': strToU8(JSON.stringify({ accounts })) }))
+  expect(result.entries.map((entry): string => entry.name)).toEqual(['github/acme-private', 'github/home-private'])
+})
+
 test.each([
   new Uint8Array([0, 1, 2]),
   zipSync({ other: strToU8('{}') }),
