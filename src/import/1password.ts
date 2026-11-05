@@ -2,6 +2,7 @@ import { strFromU8, unzipSync } from 'fflate'
 import { z } from 'zod'
 
 import { TypeVaultError } from '../core/errors'
+import { accountLabel } from './1password-live'
 import { collectEntries, parseExternal, parseJson, withCustomFields, type ImportItem } from './shared'
 import type { ImportResult } from './types'
 
@@ -33,6 +34,7 @@ const ItemSchema = z.object({
 const ExportSchema = z.object({
   accounts: z.array(
     z.object({
+      attrs: z.object({ domain: z.string().optional(), accountName: z.string().optional() }).optional(),
       vaults: z.array(
         z.object({
           attrs: z.object({ name: z.string().optional() }).optional(),
@@ -59,6 +61,8 @@ export function parse1Password(bytes: Uint8Array): ImportResult {
   const items: ImportItem[] = []
   const warnings: string[] = []
   for (const account of exported.accounts) {
+    const raw = account.attrs?.domain ?? account.attrs?.accountName
+    const label = raw === undefined ? undefined : accountLabel(raw)
     for (const vault of account.vaults) {
       for (const item of vault.items) {
         if (item.state === 'archived') continue
@@ -67,7 +71,8 @@ export function parse1Password(bytes: Uint8Array): ImportResult {
           warnings.push('skipped unsupported 1Password item category')
           continue
         }
-        const container = vault.attrs?.name ?? vault.name
+        const vaultName = vault.attrs?.name ?? vault.name
+        const container = label === undefined || vaultName === undefined ? vaultName : `${label} ${vaultName}`
         items.push({
           ...mapped,
           title: item.overview.title,
