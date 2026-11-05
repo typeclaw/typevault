@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { z } from 'zod'
@@ -14,6 +14,7 @@ import {
 import { fromBase64Url, fromUtf8, toBase64Url, utf8 } from './encoding'
 import { TypeVaultError } from './errors'
 import { assertNoSymlinks, atomicWrite } from './fsx'
+import { readJsonFile } from './json-file'
 import { configDir, type Layout } from './layout'
 import { generateSecretKeyCode, openWithPassword, sealWithPassword } from './password'
 import { type MemberKind, parseMemberName } from './state'
@@ -61,7 +62,7 @@ export const identityPath = (env: Env): string => join(configDir(env), 'identity
 
 export function readIdentity(env: Env): Identity | undefined {
   const path = identityPath(env)
-  return existsSync(path) ? IdentitySchema.parse(JSON.parse(readFileSync(path, 'utf8'))) : undefined
+  return existsSync(path) ? readJsonFile(path, IdentitySchema) : undefined
 }
 
 export function writeIdentity(env: Env, identity: Identity): void {

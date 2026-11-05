@@ -1,10 +1,12 @@
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
+import { z } from 'zod'
+
 import { sha256Hex } from './crypto'
 import { utf8 } from './encoding'
-import { TypeVaultError } from './errors'
+import { readJsonFile } from './json-file'
 
 export type Layout = {
   /** `global`: one vault per user, `~/.typevault/`. `local`: a `.typevault/` committed in a project. */
@@ -111,11 +113,7 @@ function vaultLayout(scope: Layout['scope'], dir: string, env: Env): Layout {
 }
 
 function ownerSignPublic(vault: string): string {
-  const owner: unknown = JSON.parse(readFileSync(join(vault, 'owner.json'), 'utf8'))
-  if (typeof owner !== 'object' || owner === null || !('signPublic' in owner) || typeof owner.signPublic !== 'string') {
-    throw new TypeVaultError('tampered', `${join(vault, 'owner.json')} is malformed`)
-  }
-  return owner.signPublic
+  return readJsonFile(join(vault, 'owner.json'), z.object({ signPublic: z.string() })).signPublic
 }
 
 // A home directory reached through a symlink (macOS's /tmp, say) is still the same directory.
