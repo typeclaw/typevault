@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, expect, it, setSystemTime } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, parse } from 'node:path'
 
@@ -80,6 +90,20 @@ it('keeps a human-owned vault locked until its owner unlocks it, and locks it ag
   expect((await cli(['ls'], owner)).stderr).toContain('the vault is locked')
 })
 
+it('keeps identity and checkout state directories private', () => {
+  if (process.platform === 'win32') return
+  const config = join(base, 'alice', 'typevault')
+  const checkout = join(config, 'checkouts', readdirSync(join(config, 'checkouts'))[0] ?? '')
+  expect(statSync(config).mode & 0o777).toBe(0o700)
+  expect(statSync(checkout).mode & 0o777).toBe(0o700)
+})
+
+it('rejects a zero unlock duration before starting a daemon', async () => {
+  const result = await cli(['unlock', '--for', '0s', '--vault-password-stdin'], owner, `${PASSWORD}\n`)
+  expect(result).toMatchObject({ code: 1 })
+  expect(result.stderr).not.toContain('daemon did not start')
+})
+
 it.each(['github/late', 'TYPEVAULT://GitHub/Late', 'typevault://github/late'])(
   'keeps an expired sealed write only when doctor --adopt-expired pins it (as %p)',
   async (named) => {
@@ -155,6 +179,78 @@ it('bulk-loads nothing for an owner session, and what --only names', async () =>
   expect(succeeds(await cli(['run', '--', ...length], owner)).stdout).toBe('0\n')
   expect(succeeds(await cli(['run', '--only', 'typevault://openai', '--', ...length], owner)).stdout).toBe('9\n')
 })
+
+it('accumulates repeated --only flags and warns for unmatched patterns', async () => {
+  succeeds(await cli(['unlock', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
+  succeeds(await cli(['set', 'typevault://openai', '--preset', 'api_key', '--stdin'], owner, 'sk-test-1'))
+  succeeds(await cli(['set', 'typevault://stripe', '--preset', 'api_key', '--stdin'], owner, 'sk-test-2'))
+  const command = [
+    process.execPath,
+    '-e',
+    'console.log([process.env.OPENAI, process.env.STRIPE].filter(Boolean).length)',
+  ]
+
+  const result = succeeds(
+    await cli(
+      [
+        'run',
+        '--only',
+        'typevault://openai',
+        '--only',
+        'typevault://stripe',
+        '--only',
+        'typevault://missing',
+        '--',
+        ...command,
+      ],
+      owner,
+    ),
+  )
+  expect(result.stdout).toBe('2\n')
+  expect(result.stderr).toContain('typevault://missing')
+})
+
+it.each([
+  [
+    'does not narrow from separate child arguments',
+    ['--only', 'typevault://stripe'],
+    ['run', '--only', 'typevault://openai'],
+    '1,0',
+  ],
+  ['does not widen from an equals child argument', ['--only=typevault://stripe'], ['run'], '0,0'],
+])('%s', async (_, childArgs, runArgs, expected) => {
+  succeeds(await cli(['unlock', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
+  succeeds(await cli(['set', 'typevault://openai', '--preset', 'api_key', '--stdin'], owner, 'sk-test-1'))
+  succeeds(await cli(['set', 'typevault://stripe', '--preset', 'api_key', '--stdin'], owner, 'sk-test-2'))
+  const child = join(base, 'only-child.ts')
+  writeFileSync(
+    child,
+    "console.log([process.env.OPENAI === undefined ? 0 : 1, process.env.STRIPE === undefined ? 0 : 1].join(','))",
+  )
+
+  const result = succeeds(await cli([...runArgs, '--', process.execPath, child, ...childArgs], owner))
+
+  expect(result.stdout).toBe(`${expected}\n`)
+})
+
+it('returns the shell status for a missing command without a stack', async () => {
+  succeeds(await cli(['unlock', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
+  const result = await cli(['run', '--', 'definitely-not-a-command'], owner)
+  expect(result.code).toBe(127)
+  expect(result.stderr.trim().split('\n')).toHaveLength(1)
+})
+
+it.skipIf(process.platform === 'win32')(
+  'returns the shell status for a not executable command without a stack',
+  async () => {
+    succeeds(await cli(['unlock', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
+    const executable = join(base, 'not-executable')
+    writeFileSync(executable, '#!/bin/sh\nexit 0\n', { mode: 0o600 })
+    const result = await cli(['run', '--', executable], owner)
+    expect(result.code).toBe(126)
+    expect(result.stderr.trim().split('\n')).toHaveLength(1)
+  },
+)
 
 it.each([
   [
