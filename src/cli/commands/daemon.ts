@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { machineKeys } from '../../access/keys'
 import { parseTtl } from '../../access/scope'
 import { decodeSecretKey } from '../../core/crypto'
+import { TypeVaultError } from '../../core/errors'
 import { localLayout } from '../../core/layout'
 import { isDaemonAlive } from '../../daemon/client'
 import { startDaemon } from '../../daemon/daemon'
@@ -11,8 +12,14 @@ import { ensureDaemon, stopDaemon } from '../../daemon/spawn'
 import { adminCall, DEFAULT_SESSION_MS, layoutFrom } from '../context'
 import { note, print, readStdin } from '../output'
 
-const port = (value: string | undefined): number | undefined =>
-  value === undefined || value === '' ? undefined : z.coerce.number().int().parse(value)
+function promptPortOf(value: string | undefined): number | undefined {
+  if (value === undefined || value === '') return undefined
+  const port = Number(value)
+  if (!Number.isInteger(port) || port < 0 || port > 65_535) {
+    throw new TypeVaultError('invalid', `TYPEVAULT_PROMPT_PORT must be a port number, not "${value}"`)
+  }
+  return port
+}
 
 export const daemon = defineCommand({
   meta: { name: 'daemon', description: 'The background issuer (usually started automatically)' },
@@ -33,7 +40,7 @@ export const daemon = defineCommand({
       },
       async run({ args }) {
         const env = process.env
-        const promptPort = port(env['TYPEVAULT_PROMPT_PORT'])
+        const promptPort = promptPortOf(env['TYPEVAULT_PROMPT_PORT'])
         const publicUrl = env['TYPEVAULT_PUBLIC_URL']
         const fromStdin = args['key-stdin'] === true
         const ttlMs = args.ttl === undefined ? undefined : parseTtl(args.ttl)

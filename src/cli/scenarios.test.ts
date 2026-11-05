@@ -1,10 +1,20 @@
 import { afterEach, beforeEach, expect, it } from 'bun:test'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, parse } from 'node:path'
+import { dirname, join, parse } from 'node:path'
 
 import { z } from 'zod'
 
+import { isLockHeld } from '../core/lock'
 import { LiveAccess } from '../daemon/live-access'
 
 // Unix socket paths are limited to ~104 bytes (108 on Windows), too short under the default temp dir on macOS and
@@ -348,6 +358,184 @@ it(
     // then the error identifies the broken state and where its full log is
     expect(error).toContain(join(runDir('alice'), 'grants.json'))
     expect(error).toContain(join(runDir('alice'), 'daemon.log'))
+  },
+  SCENARIO_MS,
+)
+
+/** Alice's vault, unlocked, holding one entry. */
+async function unlockedVault(): Promise<Actor> {
+  const alice = actor('alice')
+  await ok(alice, withPassword('init', '--name', 'alice'), line('a'))
+  await ok(alice, withPassword('unlock'), line('a'))
+  await ok(alice, ['set', 'typevault://openai', '--preset', 'api_key', '--stdin'], 'sk-test')
+  return alice
+}
+
+const issueGrant = async (alice: Actor): Promise<string> =>
+  (await ok(alice, ['grant', '--tier', 'default', '--ttl', '1h', '--label', 'agent'])).stdout.trim()
+
+it(
+  "a daemon killed before its cleanup doesn't bring its session token back with the next unlock",
+  async () => {
+    // given an unlocked session whose daemon is killed, which leaves the grant live and the token on disk
+    const alice = await unlockedVault()
+    const run = runDir('alice')
+    const token = readFileSync(join(run, 'session.token'), 'utf8').trim()
+    process.kill(Number(readFileSync(join(run, 'daemon.pid'), 'utf8')), 'SIGKILL')
+    while (isLockHeld(join(run, 'daemon.lock'))) await Bun.sleep(10)
+
+    // when the vault is unlocked again
+    await ok(alice, withPassword('unlock'), line('a'))
+
+    // then the old token is refused
+    expect(await fails({ ...alice, TYPEVAULT_GRANT: token }, ['ls'])).toContain('this grant was revoked')
+  },
+  SCENARIO_MS,
+)
+
+it(
+  'an issued grant survives a daemon restart',
+  async () => {
+    // given a grant issued by a running session
+    const alice = await unlockedVault()
+    const token = await issueGrant(alice)
+
+    // when the daemon stops and the vault is unlocked again
+    await ok(alice, ['daemon', 'stop'])
+    await ok(alice, withPassword('unlock'), line('a'))
+
+    // then the grant still reads
+    await ok({ ...alice, TYPEVAULT_GRANT: token }, ['ls'])
+  },
+  SCENARIO_MS,
+)
+
+it(
+  'lock clears a grants file the daemon cannot read',
+  async () => {
+    // given runtime state this release can't read, which keeps the daemon from starting
+    const alice = actor('alice')
+    await ok(alice, withPassword('init', '--name', 'alice'), line('a'))
+    writeFileSync(join(runDir('alice'), 'grants.json'), OLD_FORMAT_GRANTS)
+    await fails(alice, withPassword('unlock'), line('a'))
+
+    // when the owner locks
+    await ok(alice, ['lock'])
+
+    // then the next unlock starts
+    await ok(alice, withPassword('unlock'), line('a'))
+  },
+  SCENARIO_MS,
+)
+
+it(
+  "an issued grant doesn't come back after lock",
+  async () => {
+    // given a grant issued by a running session
+    const alice = await unlockedVault()
+    const token = await issueGrant(alice)
+
+    // when the vault is locked and unlocked again
+    await ok(alice, ['lock'])
+    await ok(alice, withPassword('unlock'), line('a'))
+
+    // then the grant is refused, and the lock is on the trail
+    expect(await fails({ ...alice, TYPEVAULT_GRANT: token }, ['ls'])).toContain('unknown grant')
+    const trail = (await ok(alice, ['audit'])).stdout
+      .trim()
+      .split('\n')
+      .map((record): unknown => JSON.parse(record))
+    expect(trail).toContainEqual(expect.objectContaining({ action: 'grant.revoke', reason: 'typevault lock' }))
+  },
+  SCENARIO_MS,
+)
+
+it(
+  'audit --verify reports a damaged log as broken',
+  async () => {
+    // given a trail with a line that isn't a record
+    const alice = await unlockedVault()
+    const audit = join(dirname(runDir('alice')), 'audit')
+    const [log] = readdirSync(audit)
+    if (log === undefined) throw new Error('nothing was audited')
+    appendFileSync(join(audit, log), 'garbage\n')
+
+    // when it is verified
+    const verified = await cli(alice, ['audit', '--verify'])
+
+    // then the verdict says so, rather than the command crashing
+    expect({ code: verified.code, broken: verified.stdout.startsWith('BROKEN') }).toEqual({ code: 1, broken: true })
+  },
+  SCENARIO_MS,
+)
+
+const badInputs: readonly (readonly [string, readonly string[], Actor, string])[] = [
+  ['a non-numeric --if-rev', ['set', 'typevault://openai', 'note=x', '--if-rev', 'abc'], {}, '--if-rev'],
+  ['a non-numeric prompt port', ['daemon', 'run'], { TYPEVAULT_PROMPT_PORT: 'abc' }, 'TYPEVAULT_PROMPT_PORT'],
+]
+
+for (const [what, args, extra, names] of badInputs) {
+  it(
+    `${what} fails with one line`,
+    async () => {
+      // given an unlocked vault
+      const alice = await unlockedVault()
+
+      // when the command runs with it
+      const error = await fails({ ...alice, ...extra }, args)
+
+      // then the error is a single line naming what was wrong
+      expect(error.split('\n')).toEqual([expect.stringMatching(/^typevault: /), ''])
+      expect(error).toContain(names)
+    },
+    SCENARIO_MS,
+  )
+}
+
+it(
+  'ls says when an entry file is left out, without touching its JSON',
+  async () => {
+    // given an unlocked vault whose only entry file is damaged
+    const alice = await unlockedVault()
+    const entries = join(project, '.typevault', 'entries')
+    const [file] = readdirSync(entries)
+    if (file === undefined) throw new Error('the entry was not stored')
+    writeFileSync(join(entries, file), '{not json')
+
+    // when it is listed
+    const listed = await ok(alice, ['ls', '--json'])
+
+    // then stdout is still the (empty) list, and stderr counts what is missing from it
+    expect(JSON.parse(listed.stdout)).toEqual([])
+    expect(listed.stderr).toContain('1 entry file(s)')
+  },
+  SCENARIO_MS,
+)
+
+it(
+  'ls still prints its listing through a daemon from before the unreadable count',
+  async () => {
+    // given a daemon still running from before an upgrade: it lists, but has no route for the count
+    const alice = actor('alice')
+    await ok(alice, withPassword('init', '--name', 'alice'), line('a'))
+    const older = Bun.serve({
+      unix: join(runDir('alice'), 'agent.sock'),
+      fetch: (request) => {
+        const path = new URL(request.url).pathname
+        if (path === '/v1/ping') return Response.json({ ok: true, pid: process.pid })
+        if (path === '/v1/list') return Response.json([])
+        return Response.json({ error: { code: 'not_found', message: 'no such route' } }, { status: 404 })
+      },
+    })
+
+    // when it is listed
+    const listed = await ok({ ...alice, TYPEVAULT_GRANT: 'tvl1.id.secret' }, ['ls', '--json']).finally(() =>
+      older.stop(true),
+    )
+
+    // then the listing arrives, and stderr says what restarting would add
+    expect(JSON.parse(listed.stdout)).toEqual([])
+    expect(listed.stderr).toContain('restart it')
   },
   SCENARIO_MS,
 )

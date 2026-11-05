@@ -129,9 +129,13 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
             attaching.delete(started)
           }
         }
+  const grants = new GrantStore(layout.grantsFile)
+  // A session ends with its daemon, however that daemon ended: one killed before its cleanup left both of these.
+  grants.revoke((record) => record.ceiling === SESSION_CEILING)
+  rmSync(layout.sessionFile, { force: true })
   const context: DaemonContext = {
     vault,
-    grants: new GrantStore(layout.grantsFile),
+    grants,
     sessions: new Map(),
     requests: new PromptRequests(vault, options.prompt ?? {}),
     ...(options.session === undefined

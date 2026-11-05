@@ -4,9 +4,10 @@ import { dirname, isAbsolute, join, normalize, sep } from 'node:path'
 import { z } from 'zod'
 
 import { randomHex } from './crypto'
-import { fromUtf8, utf8 } from './encoding'
+import { utf8 } from './encoding'
 import { TypeVaultError } from './errors'
 import { assertNoSymlinks, atomicWrite, fsyncDir } from './fsx'
+import { readJsonFile } from './json-file'
 import type { Layout } from './layout'
 
 const COMMITTED = 'COMMITTED'
@@ -63,7 +64,7 @@ export function commitTxn(layout: Layout, txn: Txn): void {
 
 /** Idempotent: a crash halfway through is finished by running it again. */
 function applyTxn(layout: Layout, dir: string): void {
-  const manifest = ManifestSchema.parse(JSON.parse(fromUtf8(readFileSync(join(dir, 'manifest.json')))))
+  const manifest = readJsonFile(join(dir, 'manifest.json'), ManifestSchema)
   const touched = new Set<string>()
   manifest.puts.forEach((rel, index) => {
     const staged = join(dir, 'files', String(index))

@@ -58,6 +58,11 @@ export class SealedAccess implements Access {
     return this.#live().entries.map(toSummary)
   }
 
+  /** Its entries travel inside the sealed bundle, so there are no files here to fail. */
+  async unreadableEntries(): Promise<number> {
+    return 0
+  }
+
   async get(name: EntryName, reason?: string): Promise<EntryValue> {
     const entry = this.#entry(name)
     await this.#audit({ action: 'read', entries: [name], ...(reason === undefined ? {} : { reason }) })

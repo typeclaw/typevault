@@ -6,12 +6,13 @@ import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 
 import { machineKeys } from '../access/keys'
+import { appendAudit } from '../audit/log'
 import { encodeSecretKey, type SecretKey } from '../core/crypto'
 import { TypeVaultError } from '../core/errors'
 import { ensureDir } from '../core/fsx'
-import { refuseForeignDaemon } from '../core/holder'
+import { claimDaemon, type DaemonClaim, refuseForeignDaemon } from '../core/holder'
 import { configDir, type Layout } from '../core/layout'
-import { isLockHeld } from '../core/lock'
+import { holdLock, isLockHeld } from '../core/lock'
 import { callDaemon, isDaemonAlive, servingPid } from './client'
 
 type Env = Readonly<Record<string, string | undefined>>
@@ -95,6 +96,30 @@ export async function stopDaemon(layout: Layout): Promise<void> {
       throw new TypeVaultError('unavailable', `the typevault daemon did not stop (${layout.daemonLock} is still held)`)
     }
     await Bun.sleep(POLL_MS)
+  }
+}
+
+/**
+ * What `typevault lock` does once the daemon is gone: no live grant comes back with the next unlock. Under the daemon
+ * lock and a claim on the state directory, so no daemon, on this machine or one sharing the directory, can start in
+ * between and write back the grants it just loaded. The file is deleted rather than parsed, which is also how a damaged
+ * one is cleared.
+ */
+export async function endLiveGrants(layout: Layout, env: Env): Promise<void> {
+  if (!existsSync(layout.grantsFile) && !existsSync(layout.sessionFile)) return
+  const release = holdLock(layout.daemonLock)
+  if (release === undefined) {
+    throw new TypeVaultError('conflict', 'a typevault daemon started here while locking; run `typevault lock` again')
+  }
+  let claim: DaemonClaim | undefined
+  try {
+    claim = claimDaemon(layout, env)
+    rmSync(layout.grantsFile, { force: true })
+    rmSync(layout.sessionFile, { force: true })
+    await appendAudit(layout, { action: 'grant.revoke', mode: 'live', reason: 'typevault lock' })
+  } finally {
+    claim?.release()
+    release()
   }
 }
 

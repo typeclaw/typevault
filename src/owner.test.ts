@@ -24,12 +24,12 @@ import { Admin } from './core/admin'
 import { decodeSecretKey } from './core/crypto'
 import { claimDaemon } from './core/holder'
 import { localLayout } from './core/layout'
-import { isLockHeld } from './core/lock'
+import { holdLock, isLockHeld } from './core/lock'
 import { Vault } from './core/vault'
 import { callDaemon } from './daemon/client'
 import { startDaemon } from './daemon/daemon'
 import { LiveAccess } from './daemon/live-access'
-import { stopDaemon } from './daemon/spawn'
+import { endLiveGrants, stopDaemon } from './daemon/spawn'
 
 // Unix socket paths are limited to ~104 bytes (108 on Windows), too short under the default temp dir on macOS and
 // Windows CI runners.
@@ -293,6 +293,28 @@ describe('claims on a state directory', () => {
     expect(refused).toMatchObject({ code: 'in_use' })
     first.release()
     claimDaemon(layoutOn('host-b'), { TYPEVAULT_HOST_ID: 'host-b' }).release()
+  })
+
+  it('keep another machine from starting while lock deletes the grants', async () => {
+    // given grants on disk, and an audit log busy enough to hold `lock` partway through
+    const layout = layoutOn('host-a')
+    mkdirSync(layout.run, { recursive: true })
+    writeFileSync(layout.grantsFile, '[]')
+    const releaseAudit = holdLock(layout.auditLock)
+
+    // when lock is deleting them on one machine, and another machine claims the state
+    const ending = endLiveGrants(layout, { TYPEVAULT_HOST_ID: 'host-a' })
+    const claiming = () => claimDaemon(layoutOn('host-b'), { TYPEVAULT_HOST_ID: 'host-b' })
+
+    // then that machine is refused until lock is done
+    try {
+      expect(claiming).toThrow(expect.objectContaining({ code: 'in_use' }))
+    } finally {
+      releaseAudit?.()
+      await ending
+    }
+    expect(existsSync(layout.grantsFile)).toBe(false)
+    claiming().release()
   })
 
   it("refuse another machine's claim however old, until it is cleared", async () => {

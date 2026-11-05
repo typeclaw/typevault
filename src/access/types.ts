@@ -51,6 +51,8 @@ export function entryInputOf(input: SetInput, tier: string) {
 /** What a CLI command can do with secrets, whether the values come from a daemon, a sealed grant or a local key. */
 export interface Access {
   list(): Promise<readonly EntrySummary[]>
+  /** How many entry files `list` left out because they don't verify or can't be read. */
+  unreadableEntries(): Promise<number>
   get(name: EntryName, reason?: string): Promise<EntryValue>
   values(only: readonly string[], reason?: string): Promise<readonly EntryValue[]>
   set(input: SetInput): Promise<EntrySummary>

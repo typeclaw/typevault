@@ -26,6 +26,10 @@ typevault grant revoke --label ci:deploy         # also revokes grants derived f
 TYPEVAULT_GRANT=@/run/agent/grant typevault run -- ./deploy.sh
 ```
 
+Live grants survive a daemon restart, including `daemon stop` and a crash, but not `typevault lock`: it ends every live
+grant, and each has to be issued again after the next unlock. A sealed grant can't be revoked, so it runs until it expires.
+An unlocked session's own token never outlives its daemon.
+
 `TYPEVAULT_GRANT` takes a live grant (`tvl1.…`), a sealed one (`tvg1:…`) or `@path` to a file holding a sealed one.
 Without it, a person's CLI reads through their unlocked session, and a machine member reads with its own key (direct
 mode).

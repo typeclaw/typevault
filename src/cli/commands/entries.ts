@@ -1,6 +1,7 @@
 import { defineCommand } from 'citty'
 import { z } from 'zod'
 
+import type { Access } from '../../access/types'
 import { TypeVaultError } from '../../core/errors'
 import {
   ENTRY_NAME_SYNTAX,
@@ -23,11 +24,30 @@ import { accessOf, resolveAccess } from '../context'
 import { csv, note, print, readStdin, repeated, table } from '../output'
 import { openBrowser, promptFields } from '../web-prompt'
 
+/** Runs after the listing it annotates. A daemon from before an upgrade lacks the route, and its listing is still good. */
+async function noteUnreadableEntries(access: Access): Promise<void> {
+  let unreadable: number
+  try {
+    unreadable = await access.unreadableEntries()
+  } catch (error) {
+    if (error instanceof TypeVaultError && error.code === 'not_found') {
+      return note(
+        'this daemon is too old to report entry files it skips: restart it (typevault daemon stop) to see them',
+      )
+    }
+    throw error
+  }
+  if (unreadable > 0)
+    note(`${unreadable} entry file(s) could not be trusted or read and are not listed: run typevault doctor`)
+}
+
 export const ls = defineCommand({
   meta: { name: 'ls', description: 'List the entries your grant reaches' },
   args: { json: { type: 'boolean', description: 'Print JSON' } },
   async run({ args }) {
-    const entries = await (await accessOf(process.env)).list()
+    const access = await accessOf(process.env)
+    const entries = await access.list()
+    await noteUnreadableEntries(access)
     if (args.json) return print(JSON.stringify(entries, null, 2))
     const rows = entries.map((e) => [
       e.name,
@@ -201,7 +221,10 @@ export const set = defineCommand({
         '--env names the default field, but this entry has several fields and no $default',
       )
     }
-    const ifRev = args['if-rev'] === undefined ? undefined : z.coerce.number().int().parse(args['if-rev'])
+    const ifRev = args['if-rev'] === undefined ? undefined : Number(args['if-rev'])
+    if (ifRev !== undefined && !Number.isInteger(ifRev)) {
+      throw new TypeVaultError('invalid', `--if-rev must be a revision number, not "${args['if-rev']}"`)
+    }
     const tags = csv(args.tag)
     const stored = await access.set({
       name,

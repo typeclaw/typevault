@@ -50,7 +50,7 @@ container).
 ```sh
 typevault init                                   # the first time: choose a password, save the printed Secret Key
 typevault unlock --for 8h                        # your key goes to the daemon until then
-typevault lock                                   # ends the session now
+typevault lock                                   # ends the session and every live grant now
 typevault passwd                                 # new password; your key and every vault stay the same
 
 # Someone joins (in their clone), then an owner adds them with the line it printed
