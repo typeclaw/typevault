@@ -6,6 +6,7 @@ import type { ImportResult } from './types'
 
 const TextSchema = z.string().nullish()
 const ItemSchema = z.object({
+  id: TextSchema,
   type: z.number().int(),
   name: z.string(),
   notes: TextSchema,
@@ -30,7 +31,7 @@ export function parseBitwarden(text: string): ImportResult {
   const items: ImportItem[] = []
   const warnings: string[] = []
   for (const item of data.items) {
-    const common = { title: item.name }
+    const common = { title: item.name, ...(item.id ? { source: `bitwarden:${item.id}` } : {}) }
     switch (item.type) {
       case 1: {
         const url = item.login?.uris?.find((uri) => uri.uri)?.uri ?? undefined

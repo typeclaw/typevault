@@ -11,6 +11,8 @@ export type EntryPayload = {
   readonly fields: Readonly<Record<string, Field>>
   readonly env?: string
   readonly origin?: string
+  /** The password-manager item an import took this entry from, so a later import finds it after a rename. */
+  readonly source?: string
   readonly tags: readonly string[]
   readonly created: string
   readonly rotated: string
@@ -42,6 +44,7 @@ const PayloadSchema = z
       .regex(/^[A-Z_][A-Z0-9_]*$/)
       .optional(),
     origin: z.string().optional(),
+    source: z.string().optional(),
     tags: z.array(z.string()),
     created: z.iso.datetime(),
     rotated: z.iso.datetime(),
@@ -72,12 +75,13 @@ export function decodePayload(bytes: Uint8Array): EntryPayload {
       throw new TypeVaultError('tampered', 'entry payload is not JSON')
     throw error
   }
-  const { name, env, origin, needsRotation, ...rest } = parsePayload(value, 'tampered')
+  const { name, env, origin, source, needsRotation, ...rest } = parsePayload(value, 'tampered')
   return {
     ...rest,
     name: parseEntryName(name),
     ...(env === undefined ? {} : { env }),
     ...(origin === undefined ? {} : { origin }),
+    ...(source === undefined ? {} : { source }),
     ...(needsRotation === undefined ? {} : { needsRotation }),
   }
 }

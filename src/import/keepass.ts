@@ -61,6 +61,7 @@ export async function parseKeepass(bytes: Uint8Array, password?: string): Promis
           ? { username: fields['UserName'], password: fields['Password'], url, totp: fields['otp'] }
           : { $default: fields['Notes'] },
         tags: parseExternal(entry.tags, z.array(z.string()).readonly(), 'KeePass tags'),
+        source: `keepass:${entry.uuid.id}`,
         ...(url === undefined ? {} : { url }),
       })
     }

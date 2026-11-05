@@ -133,7 +133,13 @@ export class SealedAccess implements Access {
 
   async move(from: EntryName, to: EntryName): Promise<void> {
     const entry = this.#entry(from)
-    await this.set({ name: to, fields: entry.fields, tier: entry.tier, tags: entry.tags })
+    await this.set({
+      name: to,
+      fields: entry.fields,
+      tier: entry.tier,
+      tags: entry.tags,
+      ...(entry.source === undefined ? {} : { source: entry.source }),
+    })
     await this.remove(from)
   }
 

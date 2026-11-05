@@ -127,14 +127,15 @@ async function readOp(
   }
   const fetched = await mapLimit(listed, CONCURRENCY, async (entry) => {
     const args = ['item', 'get', entry.id, '--vault', entry.vault.id, '--reveal', '--format', 'json', ...account]
-    return parseJson(await runOp(args), OpItemSchema, 'op')
+    return { ...parseJson(await runOp(args), OpItemSchema, 'op'), id: entry.id, vaultId: entry.vault.id }
   })
   for (const item of fetched) {
     const mapped = mapOpItem(item)
     if (mapped === undefined) collected.warnings.push(UNSUPPORTED)
     else {
       const selected = selectFields(mapped, item.title, item.tags, filters.tags, collected.warnings)
-      if (selected !== undefined) collected.items.push({ ...selected, title: item.title })
+      if (selected !== undefined)
+        collected.items.push({ ...selected, title: item.title, source: onePasswordSource(item.vaultId, item.id) })
     }
   }
 }
@@ -221,6 +222,8 @@ function mapOpTemplate(item: z.infer<typeof OpItemSchema>): Omit<ImportItem, 'ti
   }
 }
 
+/** An item's source id. 1Password item ids are unique only within their vault, so the vault id comes with it. */
+export const onePasswordSource = (vaultId: string, itemId: string): string => `1password:${vaultId}/${itemId}`
 /** True when a vault is wanted by id or name, recording which requested vaults it answers to. */
 function matchVault(id: string, name: string, wanted: readonly string[], matched: Set<string>): boolean {
   if (wanted.length === 0) return true
@@ -296,6 +299,7 @@ export const spawnOp: RunOp = async (args, input) => {
 }
 
 const SdkItemSchema = z.object({
+  id: z.string().optional(),
   title: z.string(),
   category: z.string(),
   notes: z.string().default(''),
@@ -333,8 +337,8 @@ async function readSdk(account: string, filters: Filters, connect: ConnectSdk, c
     )
     return read.individualResponses
   })
-  for (const responses of fetched) {
-    for (const response of responses) {
+  for (const [index, vault] of vaults.entries()) {
+    for (const response of fetched[index] ?? []) {
       if (response.content === undefined) {
         warnings.push('skipped a 1Password item that could not be read')
         continue
@@ -344,7 +348,12 @@ async function readSdk(account: string, filters: Filters, connect: ConnectSdk, c
       if (mapped === undefined) warnings.push(UNSUPPORTED)
       else {
         const selected = selectFields(mapped, item.title, item.tags, filters.tags, warnings)
-        if (selected !== undefined) items.push({ ...selected, title: item.title })
+        if (selected !== undefined)
+          items.push({
+            ...selected,
+            title: item.title,
+            ...(item.id === undefined ? {} : { source: onePasswordSource(vault.id, item.id) }),
+          })
       }
     }
   }

@@ -103,6 +103,11 @@ test('1PUX ignores non-web origins', () => {
   expect(result.entries[0]?.fields).toEqual({ url: { type: 'text', value: 'javascript:alert(1)' } })
 })
 
+test('1PUX scopes item ids to their vault, so the same id in two vaults stays two items', () => {
+  const vaults = ['v1', 'v2'].map((uuid) => ({ attrs: { uuid }, items: [{ ...item('001'), uuid: 'item-1' }] }))
+  const result = parse1Password(zipSync({ 'export.data': strToU8(JSON.stringify({ accounts: [{ vaults }] })) }))
+  expect(result.entries.map((entry) => entry.source)).toEqual(['1password:v1/item-1', '1password:v2/item-1'])
+})
 test.each([
   new Uint8Array([0, 1, 2]),
   zipSync({ other: strToU8('{}') }),

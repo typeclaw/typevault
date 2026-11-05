@@ -78,6 +78,9 @@ test('KeePass maps protected login and note fields, username accounts, origins, 
     ['local', { url: { type: 'text', value: 'ftp://example.com' } }, undefined],
   ])
   expect(result.entries[1]?.tags).toEqual(['agent'])
+  const sources = result.entries.map((entry) => entry.source ?? '')
+  expect(sources.every((source) => /^keepass:.+/.test(source))).toBe(true)
+  expect(new Set(sources).size).toBe(sources.length)
   expect(result.warnings).toHaveLength(2)
   expect(result.warnings.join()).toContain('"github" renamed to "github-2"')
   expect(result.warnings.join()).not.toContain('hunter2')

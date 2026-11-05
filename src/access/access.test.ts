@@ -526,6 +526,36 @@ describe('sealed grants', () => {
     expect(stored?.envelope.signer.kind).toBe('cert')
   })
 
+  describe('on an imported entry', () => {
+    const imported = (name: string) => ({
+      name: n(name),
+      fields: { password: { type: 'secret' as const, value: 'v1' } },
+      tier: 'member',
+      source: 'bitwarden:a',
+    })
+    const reimport = async (name: string) => {
+      const owned = await Vault.open(globalLayout(envIn(root)), [owner], {})
+      await owned.putMany([imported(name)], async () => signerOf(owner))
+      return (await owned.scan()).entries
+        .map((entry): string => entry.payload.name)
+        .filter((name) => name.startsWith('github/ci'))
+    }
+
+    it('keeps its source through a write, so a renamed item still finds it', async () => {
+      await vault.putMany([imported('github/ci')], async () => signerOf(owner))
+      const access = new SealedAccess(await readSealedGrant(await issue()), globalLayout(envIn(root)), {})
+      await access.set({ name: n('github/ci'), fields: { password: { type: 'secret' as const, value: 'rotated' } } })
+      expect(await reimport('github/ci-prod')).toEqual(['github/ci-prod'])
+    })
+
+    it('keeps its source through a move', async () => {
+      await vault.putMany([imported('github/ci')], async () => signerOf(owner))
+      const access = new SealedAccess(await readSealedGrant(await issue()), globalLayout(envIn(root)), {})
+      await access.move(n('github/ci'), n('github/ci-moved'))
+      expect(await reimport('github/ci-prod')).toEqual(['github/ci-prod'])
+    })
+  })
+
   it('cannot write outside its tiers', async () => {
     const access = new SealedAccess(await readSealedGrant(await issue()), globalLayout(envIn(root)), {})
     await expect(

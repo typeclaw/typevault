@@ -8,6 +8,7 @@ test('Bitwarden maps login, note, and SSH records, naming logins after their use
     JSON.stringify({
       items: [
         {
+          id: 'item-1',
           type: 1,
           name: 'GitHub',
           login: {
@@ -45,6 +46,7 @@ test('Bitwarden maps login, note, and SSH records, naming logins after their use
     ],
     ['local', { url: { type: 'text', value: 'ftp://example.com' } }, undefined],
   ])
+  expect(result.entries.map((entry) => entry.source)).toEqual(['bitwarden:item-1', undefined, undefined, undefined])
   expect(result.warnings).toHaveLength(2)
   expect(result.warnings.join()).not.toContain('hunter2')
 })

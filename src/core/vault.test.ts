@@ -353,3 +353,53 @@ describe('rotation', () => {
     expect(readdirSync(globalLayout(envIn(root)).txnDir)).toEqual([])
   })
 })
+
+describe('import', () => {
+  const item = (name: string, value: string, source?: string) => ({
+    name: parseEntryName(name),
+    fields: { key: { type: 'secret' as const, value } },
+    tier: 'member',
+    ...(source === undefined ? {} : { source }),
+  })
+  const importAll = async (inputs: readonly ReturnType<typeof item>[]) =>
+    (await open([owner])).putMany(inputs, async () => signerOf(owner))
+  const names = async () =>
+    (await (await open([owner])).scan()).entries.map((entry): string => entry.payload.name).sort()
+
+  it('renames the entry an item was imported as when the item is renamed, under a fresh id', async () => {
+    const [first] = await importAll([item('stripe', 'sk_1', 'bitwarden:a')])
+    const [second] = await importAll([item('stripe-prod', 'sk_1', 'bitwarden:a')])
+    expect(await names()).toEqual(['stripe-prod'])
+    expect(second?.envelope.id).not.toBe(first?.envelope.id)
+    expect(second?.payload.created).toBe(first?.payload.created ?? '')
+    expect(second?.envelope.rev).toBe(2)
+  })
+
+  it('refuses to rename an item onto a name another entry holds, writing nothing', async () => {
+    await importAll([item('stripe', 'sk_1', 'bitwarden:a')])
+    await (await open([owner])).put(item('github', 'by-hand'), signerOf(owner))
+    await expect(importAll([item('github', 'sk_1', 'bitwarden:a')])).rejects.toMatchObject({ code: 'conflict' })
+    expect(await names()).toEqual(['github', 'stripe'])
+  })
+
+  it("refuses to overwrite another item's entry with a new item", async () => {
+    await importAll([item('stripe', 'sk_1', 'bitwarden:a')])
+    await expect(importAll([item('stripe', 'sk_2', 'bitwarden:b')])).rejects.toMatchObject({ code: 'conflict' })
+    expect((await (await open([owner])).find(parseEntryName('stripe')))?.payload.fields['key']?.value).toBe('sk_1')
+  })
+
+  it('lets two items trade names in one import', async () => {
+    await importAll([item('github', 'one', 'bitwarden:a'), item('github-2', 'two', 'bitwarden:b')])
+    await importAll([item('github', 'two', 'bitwarden:b'), item('github-2', 'one', 'bitwarden:a')])
+    const vault = await open([owner])
+    expect(await names()).toEqual(['github', 'github-2'])
+    expect((await vault.find(parseEntryName('github')))?.payload.source).toBe('bitwarden:b')
+  })
+
+  it('takes over an entry with no source by name, keeping the source on later writes', async () => {
+    await (await open([owner])).put(item('stripe', 'by-hand'), signerOf(owner))
+    await importAll([item('stripe', 'sk_1', 'bitwarden:a')])
+    await (await open([owner])).put(item('stripe', 'sk_2'), signerOf(owner))
+    expect((await (await open([owner])).find(parseEntryName('stripe')))?.payload.source).toBe('bitwarden:a')
+  })
+})

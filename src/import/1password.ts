@@ -2,6 +2,7 @@ import { strFromU8, unzipSync } from 'fflate'
 import { z } from 'zod'
 
 import { TypeVaultError } from '../core/errors'
+import { onePasswordSource } from './1password-live'
 import { collectEntries, parseExternal, parseJson, withCustomFields, type ImportItem } from './shared'
 import type { ImportResult } from './types'
 
@@ -21,6 +22,7 @@ const FieldSchema = z.object({
   }),
 })
 const ItemSchema = z.object({
+  uuid: z.string().optional(),
   categoryUuid: z.string(),
   state: z.string().optional(),
   overview: z.object({ title: z.string(), url: z.string().optional(), tags: z.array(z.string()).default([]) }),
@@ -35,6 +37,7 @@ const ExportSchema = z.object({
     z.object({
       vaults: z.array(
         z.object({
+          attrs: z.object({ uuid: z.string().optional() }).optional(),
           items: z.array(ItemSchema),
         }),
       ),
@@ -70,6 +73,9 @@ export function parse1Password(bytes: Uint8Array): ImportResult {
           title: item.overview.title,
           tags: item.overview.tags,
           ...(item.overview.url === undefined ? {} : { url: item.overview.url }),
+          ...(item.uuid === undefined || vault.attrs?.uuid === undefined
+            ? {}
+            : { source: onePasswordSource(vault.attrs.uuid, item.uuid) }),
         })
       }
     }
