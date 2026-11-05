@@ -16,6 +16,9 @@ printf '%s' "$STRIPE_KEY" | typevault set typevault://stripe --preset api_key --
 
 `typevault://<service>[/<account>][#<field>]`: `typevault://openai`, `typevault://github/bot#password`, `typevault://github/personal#totp`.
 That is the canonical form. For convenience, the bare `github/bot` works everywhere too.
+Each segment is letters and digits of any script with `@`, `+`, and `-` or `.` between them
+(`typevault://국민은행/법인`, `typevault://github/dev@example.com`), stored lowercase and NFC.
+Latin mixes only with Chinese, Japanese or Korean in one segment, so a lookalike such as a Cyrillic `а` in `github` is refused.
 No environments, no domains, no tier in the name.
 
 Each field stores its own type: `secret` (sensitive string), `text` (public string), `totp` (seed or otpauth URI), or `oauth` (an object with `access_token` and optional `refresh_token`, `expires_at`, `token_url`, `client_id`, `client_secret`). OAuth reads yield the access token and refresh expired credentials when possible.
@@ -42,7 +45,8 @@ typevault get 'typevault://stripe#Webhook Secret' --reveal   # an exact match, e
 
 Env names are derived: `typevault://github/bot#password` becomes `GITHUB_BOT_PASSWORD` and `typevault://stripe#Webhook Secret`
 becomes `STRIPE_WEBHOOK_SECRET`. A field with no Latin letter or digit gets no variable; reach it with a reference.
-The `$default` field uses the entry name alone: `typevault://openai` becomes `OPENAI`. Override the default field's variable with `--env`.
+The `$default` field uses the entry name alone: `typevault://openai` becomes `OPENAI`. An entry whose name has a letter
+outside Latin gets no variables at all; reach its fields with references. Override the default field's variable with `--env`.
 In `run`, TOTP fields carry the current code; `otp [ref]` prints a selected TOTP field, the default when typed TOTP, or the only TOTP field. `get` keeps the raw stored seed.
 `--field k=v` always writes a `text` field. Pass secrets through stdin or the browser. `--stdin-json` accepts strings or full `{"type":"secret","value":"…"}` objects. Updates merge existing fields and preserve their types; `--replace` replaces all fields.
 

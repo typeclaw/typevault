@@ -21,8 +21,17 @@ export function parsePreset(value: string): Preset {
 
 export type EntryName = string & { readonly __brand: 'EntryName' }
 
-const SEGMENT = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+// `-` and `.` only join two other characters, so a segment never starts, ends or doubles them.
+const SEGMENT = /^[\p{L}\p{N}@+](?:[\p{L}\p{M}\p{N}@+]|[.-](?=[\p{L}\p{N}@+]))*$/u
+const LETTER_OR_DIGIT = /[\p{L}\p{N}]/u
 const MAX_SEGMENTS = 2
+const LATIN = /\p{Script=Latin}/u
+// Letters of a script other than Latin and the CJK ones written beside it. Mixed into Latin, they make lookalikes
+// such as a Cyrillic "а" in "github". Script_Extensions keeps shared CJK letters such as the long-vowel mark "ー".
+const NOT_WITH_LATIN =
+  /[^\P{L}\p{Script=Latin}\p{scx=Han}\p{scx=Hangul}\p{scx=Hiragana}\p{scx=Katakana}\p{scx=Bopomofo}]/u
+const isSegment = (segment: string): boolean =>
+  SEGMENT.test(segment) && LETTER_OR_DIGIT.test(segment) && !(LATIN.test(segment) && NOT_WITH_LATIN.test(segment))
 
 /**
  * The one way to point at an entry: `typevault://<service>[/<account>][#<field>]`. The scheme may be left out
@@ -37,17 +46,22 @@ const REF_SCHEME = /^typevault:\/\//i
 /** True when `input` carries the `typevault://` scheme, as an env value `run` resolves. */
 export const hasRefScheme = (input: string): boolean => REF_SCHEME.test(input.trim())
 
-/** An `--only` pattern (a name or a glob) in the form names are stored in: no scheme, lowercase. */
-export const entryPattern = (input: string): string => input.trim().replace(REF_SCHEME, '').toLowerCase()
+/** An `--only` pattern (a name or a glob) in the form names are stored in: no scheme, lowercase, NFC. */
+export const entryPattern = (input: string): string =>
+  input.trim().replace(REF_SCHEME, '').toLowerCase().normalize('NFC')
 
-/** Parses `[typevault://]<service>[/<account>]`. Names are case-insensitive, stored lowercase and without the scheme. */
+/**
+ * Parses `[typevault://]<service>[/<account>]`. Names are case-insensitive, stored lowercase, NFC and without the
+ * scheme. A segment is letters and digits of any script with `@`, `+`, and `-` or `.` between them, but never Latin
+ * mixed with a script other than Chinese, Japanese or Korean.
+ */
 export function parseEntryName(input: string): EntryName {
   const name = entryPattern(input)
   const segments = name.split('/')
-  if (segments.length > MAX_SEGMENTS || !segments.every((segment) => SEGMENT.test(segment))) {
+  if (segments.length > MAX_SEGMENTS || !segments.every(isSegment)) {
     throw new TypeVaultError(
       'invalid',
-      `invalid entry name "${input}" (expected ${ENTRY_NAME_SYNTAX}, segments [a-z0-9-])`,
+      `invalid entry name "${input}" (expected ${ENTRY_NAME_SYNTAX}, segments of letters, digits, @ + - ., Latin mixed only with CJK)`,
     )
   }
   return name as EntryName
@@ -155,19 +169,21 @@ function assertNever(value: never): never {
 
 /**
  * `github/bot` + `password` becomes `GITHUB_BOT_PASSWORD`, and `Secret Access Key` becomes `..._SECRET_ACCESS_KEY`.
- * Undefined when no letter or digit of the field survives (a non-Latin name): such a field is reachable only
- * through a `typevault://` ref.
+ * Undefined when the name has a letter outside Latin, or no letter or digit of the field survives (a non-Latin
+ * field): such an entry or field is reachable only through a `typevault://` ref.
  */
 export function deriveEnvName(name: EntryName, field: string): string | undefined {
-  if (field === '$default') return name.toUpperCase().replace(/[/-]/g, '_')
-  const suffix = field
-    .normalize('NFKD')
-    .replace(/\p{M}/gu, '')
-    .toUpperCase()
+  const prefix = foldUpper(name)
+  if (!/^[A-Z0-9/.@+-]+$/.test(prefix)) return undefined
+  const base = prefix.replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+  if (field === '$default') return base
+  const suffix = foldUpper(field)
     .replace(/[^A-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')
-  return suffix === '' ? undefined : `${name.toUpperCase().replace(/[/-]/g, '_')}_${suffix}`
+  return suffix === '' ? undefined : `${base}_${suffix}`
 }
+
+const foldUpper = (text: string): string => text.normalize('NFKD').replace(/\p{M}/gu, '').toUpperCase()
 
 /** Turns arbitrary text (an import title, a vault name) into a valid name segment. */
 export function slugifySegment(raw: string, fallback = 'item'): string {
