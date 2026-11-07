@@ -6,13 +6,14 @@ import { machineKeys } from '../access/keys'
 import { ScopedVault } from '../access/scoped'
 import { readSealedGrant } from '../access/sealed'
 import { SealedAccess } from '../access/sealed-access'
-import type { Access } from '../access/types'
+import type { Access, EntryValue } from '../access/types'
 import { Admin } from '../core/admin'
 import type { SecretKey } from '../core/crypto'
 import { TypeVaultError } from '../core/errors'
 import { atomicWrite } from '../core/fsx'
 import { type Identity, readIdentity, sealedCopyPath, unlockIdentity } from '../core/identity'
 import { findLocalVault, globalLayout, type Layout, localLayout } from '../core/layout'
+import type { EntryName } from '../core/naming'
 import { loadState } from '../core/state'
 import { Vault } from '../core/vault'
 import { worktreeVaults } from '../core/worktrees'
@@ -198,6 +199,48 @@ async function sessionAccess(env: Env): Promise<LiveAccess> {
  */
 function checkOwnerPin(layout: Layout, env: Env): void {
   if (isSet(env['TYPEVAULT_OWNER'])) loadState(layout, env)
+}
+
+/**
+ * Which of `names` the global vault holds, when the project vault was asked. It asks only an already unlocked global
+ * session: never a password, a daemon start or a trust pin, and listing is not audited. Anything else answers none,
+ * so a miss points at `-g` only when the global vault really has the name.
+ */
+export async function inGlobalVault(env: Env, names: readonly string[]): Promise<readonly string[]> {
+  if (names.length === 0 || wantsGlobal(env) || isSet(env['TYPEVAULT_GRANT'])) return []
+  const layout = globalLayout(env)
+  if (!(await hasSession(layout))) return []
+  try {
+    const access = new LiveAccess(layout.agentSocket, readFileSync(layout.sessionFile, 'utf8').trim())
+    const held = new Set<string>((await access.list()).map((entry) => entry.name))
+    return names.filter((name) => held.has(name))
+  } catch (error) {
+    // Only a hint: a session that ends meanwhile, or a daemon from another release, gives none.
+    if (error instanceof TypeVaultError || (error instanceof Error && 'code' in error && error.code === 'ENOENT')) {
+      return []
+    }
+    throw error
+  }
+}
+
+/** `access.get`, whose miss says so when the global vault has the name. */
+export async function getEntry(access: Access, name: EntryName, reason?: string): Promise<EntryValue> {
+  try {
+    return await access.get(name, reason)
+  } catch (error) {
+    if (
+      error instanceof TypeVaultError &&
+      error.code === 'not_found' &&
+      (await inGlobalVault(process.env, [name])).length > 0
+    ) {
+      throw new TypeVaultError(
+        'not_found',
+        `${error.message} in the project vault; the global vault has it: rerun with -g`,
+        { cause: error },
+      )
+    }
+    throw error
+  }
 }
 
 /** How long an unlocked session lasts unless `unlock --for` says otherwise. */
