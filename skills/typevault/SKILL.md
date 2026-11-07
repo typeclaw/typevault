@@ -152,6 +152,9 @@ they lock it; a machine member's daemon starts on its own.
   it.
 - **Same variable set by two entries**: narrow with `--only`.
 - **Name held by unrelated tiers**: the owner settles it with `typevault rm <name> --tier <g>`.
+- **New lines in `.typevault/audit-anchors/`**: expected; they anchor the audit log. Commit them with the rest of
+  `.typevault/`, and gitignore them (plus `git rm -r --cached .typevault/audit-anchors`) only if the user asks:
+  ignored anchors can't catch a rewritten audit log.
 - **Signature or merge problems after a git pull**: `typevault doctor --fix` (owner).
 - **Daemon trouble with a live grant**: check `typevault daemon status`, then ask the owner. Don't stop the daemon
   yourself: restarting it needs keys a grant doesn't carry.

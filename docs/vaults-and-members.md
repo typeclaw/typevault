@@ -21,6 +21,12 @@ keeps its own trust pin, audit log and daemon under `~/.config/typevault/checkou
 path, unless you choose the directory (below). A collaborator gets access by joining as a member, or with a grant, as with the global vault. The global vault is laid
 out the same way, so `~/.typevault` can be a git repository of its own, synced between your devices.
 
+`audit-anchors/` changes as the audit log grows: every so often TypeVault appends the log's latest hash there. Those
+committed hashes are what catch a local audit log rewritten after the fact. If the churn isn't worth that to you, add
+`.typevault/audit-anchors/` to `.gitignore`, untrack the anchors already committed with
+`git rm -r --cached .typevault/audit-anchors` (your local copies stay), and commit both changes together. Everything
+else keeps working, but the audit log is no longer tamper-evident.
+
 To start over, delete `.typevault/` and run `typevault init` again. `init` stops this checkout's daemon and clears its
 runtime state (grants, session, revision marks), which belonged to the old vault, and pins the new owner key. The pin
 stays keyed by path, so a vault whose `owner.json` is swapped through git is still refused: only `init` re-pins.
