@@ -8,7 +8,7 @@ import { TypeVaultError } from '../../core/errors'
 import { ENTRY_NAME_SYNTAX, matchesOnly } from '../../core/naming'
 import { importFrom, ONEPASSWORD_VIAS, type ImportSource, type OnePasswordVia, read1Password } from '../../import'
 import { createRedactor, type Redactor, scrubFile } from '../../redact'
-import { resolveAccess } from '../context'
+import { getEntry, inGlobalVault, resolveAccess } from '../context'
 import { csv, note, print, readStdin, repeated } from '../output'
 
 async function pump(
@@ -48,11 +48,13 @@ export const run = defineCommand({
     const values = await access.values(only, args.reason)
     const unmatched = only.filter((pattern) => !values.some((value) => matchesOnly(value.name, [pattern])))
     if (unmatched.length > 0) note(`warning: --only matched no entries: ${unmatched.join(', ')}`)
+    const inGlobal = await inGlobalVault(process.env, explicitNames(unmatched))
+    if (inGlobal.length > 0) note(`the global vault has ${inGlobal.join(', ')}: rerun with -g`)
     const policy = { ownTiers: await access.ownTiers(), explicit: explicitNames(only) }
     const env = envFor(values, new Date(), policy)
     // The child gets its secrets, never the key or grant that opens the vault.
     const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('TYPEVAULT_')))
-    const refs = await resolveEnvRefs(inherited, (name) => access.get(name, args.reason), new Date())
+    const refs = await resolveEnvRefs(inherited, (name) => getEntry(access, name, args.reason), new Date())
     const referenced = new Set(refs.values.map((value) => value.name))
     const skipped = values
       .filter((value) => !envEligible(value, policy) && !referenced.has(value.name))

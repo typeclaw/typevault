@@ -20,7 +20,7 @@ import {
 } from '../../core/naming'
 import { FieldSchema } from '../../core/payload'
 import { parseTotpSeed, totpCode, totpRemainingSeconds } from '../../otp/totp'
-import { accessOf, resolveAccess } from '../context'
+import { accessOf, getEntry, resolveAccess } from '../context'
 import { csv, note, print, readStdin, repeated, table } from '../output'
 import { openBrowser, promptFields } from '../web-prompt'
 
@@ -65,7 +65,7 @@ export const get = defineCommand({
   },
   async run({ args }) {
     const ref = parseEntryRef(args.ref)
-    const value = await (await accessOf(process.env)).get(ref.name, args.reason)
+    const value = await getEntry(await accessOf(process.env), ref.name, args.reason)
     if (args.json) {
       const fields = Object.fromEntries(
         Object.entries(value.fields).map(([field, secret]) => [
@@ -263,7 +263,7 @@ export const otp = defineCommand({
   args: { name: { type: 'positional', description: ENTRY_REF_SYNTAX, required: true }, reason: { type: 'string' } },
   async run({ args }) {
     const ref = parseEntryRef(args.name)
-    const value = await (await accessOf(process.env)).get(ref.name, args.reason)
+    const value = await getEntry(await accessOf(process.env), ref.name, args.reason)
     const fallback = defaultFieldOf(value.fields)
     const totps = Object.values(value.fields).filter((candidate) => candidate.type === 'totp')
     const field =

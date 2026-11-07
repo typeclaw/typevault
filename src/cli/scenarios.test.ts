@@ -766,3 +766,30 @@ it(
   },
   SCENARIO_MS,
 )
+
+it(
+  'a name missing from the project vault points at the global vault only while an unlocked global session has it',
+  async () => {
+    // given a project vault, and a global vault holding openai, both unlocked
+    const alice = actor('alice', { HOME: join(base, 'home') })
+    const global = { ...alice, TYPEVAULT_GLOBAL: '1' }
+    actors.push(global)
+    await ok(alice, withPassword('init', '--name', 'alice'), line('a'))
+    await ok(global, withPassword('init', '--name', 'alice'), line('a'))
+    await ok(alice, withPassword('unlock'), line('a'))
+    await ok(global, withPassword('unlock'), line('a'))
+    await ok(global, ['set', 'typevault://openai', '--preset', 'api_key', '--stdin'], 'sk-global')
+
+    // when the project vault is asked for it, the miss names the global vault
+    expect(await fails(alice, ['get', 'typevault://openai'])).toContain('the global vault has it: rerun with -g')
+    expect((await ok(alice, ['run', '--only', 'typevault://openai', '--', 'true'])).stderr).toContain(
+      'the global vault has openai: rerun with -g',
+    )
+
+    // then a name the global vault lacks, or a locked global vault, says nothing about it
+    expect(await fails(alice, ['get', 'typevault://stripe'])).not.toContain('global')
+    await ok(global, ['lock'])
+    expect(await fails(alice, ['get', 'typevault://openai'])).not.toContain('global')
+  },
+  SCENARIO_MS,
+)
