@@ -59,6 +59,7 @@ typevault init                                   # the first time: choose a pass
 typevault unlock --for 8h                        # your key goes to the daemon until then
 typevault lock                                   # ends the session and every live grant now
 typevault passwd                                 # new password; your key and every vault stay the same
+typevault touch-id enable                        # on a Mac: unlock with Touch ID instead of the password
 
 # Someone joins (in their clone), then an owner adds them with the line it printed
 typevault join                                   # prints: typevault member add bob tvp1:... --tier <tiers>
@@ -85,6 +86,14 @@ One unlock serves every git worktree of the repository. An agent working in anot
 the unlocked one starts there, with the worktree's own files and state, until the original session ends; `typevault
 lock` in any of them locks them all. Only worktrees the repository lists count: a clone of the repository or a copy of
 the vault needs its own `unlock`.
+
+On a Mac with Touch ID, `typevault touch-id enable` asks for your password once and seals a copy of your member key to
+a key in the Mac's Secure Enclave that works only after a touch; from then on `unlock` (and owner commands) ask for
+your finger instead. The copy lives only in this device's `identity.json` and opens only on this Mac, with the
+fingerprints enrolled when you turned it on: after adding or removing one, or when you cancel the dialog, TypeVault asks
+for your password, and running `enable` again restores Touch ID. Like the password, it is asked only at a terminal, so
+an agent can't raise the dialog. `typevault touch-id disable` goes back to the password; other platforms keep the
+password.
 
 While a person's vault is locked, an agent's command fails with `the vault is locked: ask a human to run typevault
 unlock`; in a terminal, the command asks for the password and unlocks on the spot. Owner commands (`tier`, `member`,

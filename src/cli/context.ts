@@ -11,7 +11,13 @@ import { Admin } from '../core/admin'
 import type { SecretKey } from '../core/crypto'
 import { TypeVaultError } from '../core/errors'
 import { atomicWrite } from '../core/fsx'
-import { type Identity, readIdentity, sealedCopyPath, unlockIdentity } from '../core/identity'
+import {
+  type Identity,
+  readIdentity,
+  sealedCopyPath,
+  unlockIdentity,
+  unlockIdentityWithTouchId,
+} from '../core/identity'
 import { findLocalVault, globalLayout, type Layout, localLayout } from '../core/layout'
 import type { EntryName } from '../core/naming'
 import { loadState } from '../core/state'
@@ -62,13 +68,28 @@ export async function openDirect(env: Env): Promise<Vault> {
   if (machine.length === 0 && identity === undefined) {
     throw new TypeVaultError('denied', 'no grant and no identity here (set TYPEVAULT_GRANT, or run typevault join)')
   }
-  const keys = machine.length > 0 ? machine : [await unlockHuman(identity, passwords())]
+  const keys = machine.length > 0 ? machine : [await unlockHuman(env, identity, passwords())]
   return Vault.open(layout, keys, env)
 }
 
-async function unlockHuman(identity: Identity | undefined, passwords: Passwords): Promise<SecretKey> {
+/**
+ * A person's member key: through Touch ID when they turned it on and are at this Mac's terminal, else (or when Touch
+ * ID fails) their password. Without a terminal it stays the password's error, so an agent can't raise the dialog.
+ */
+export async function unlockHuman(env: Env, identity: Identity | undefined, passwords: Passwords): Promise<SecretKey> {
   if (identity === undefined) throw new TypeVaultError('not_found', 'no identity here (run typevault init or join)')
   if (identity.kind === 'machine') return unlockIdentity(identity)
+  if (identity.touchId !== undefined && process.platform === 'darwin' && process.stdin.isTTY && !passwordsFromStdin()) {
+    try {
+      return await unlockIdentityWithTouchId(env, identity, identity.touchId)
+    } catch (error) {
+      if (!(error instanceof TypeVaultError)) throw error
+      note(`${error.message}; asking for your password instead`)
+      if (error.message !== 'Touch ID was cancelled') {
+        note('if your fingerprints changed, run `typevault touch-id enable` again')
+      }
+    }
+  }
   return unlockIdentity(identity, await passwords.ask(`Password for ${identity.name}: `))
 }
 
@@ -80,7 +101,7 @@ export async function unlockSession(env: Env, passwords: Passwords, ttlMs: numbe
   const layout = layoutFrom(env)
   if (await hasSession(layout)) return false
   const identity = readIdentity(env)
-  const key = await unlockHuman(identity, passwords)
+  const key = await unlockHuman(env, identity, passwords)
   const vault = await Vault.open(layout, [key], env)
   if (vault.member === undefined) {
     throw new TypeVaultError(
