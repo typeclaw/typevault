@@ -35,7 +35,7 @@ export async function newPassword(source: Passwords): Promise<string> {
   return password
 }
 
-async function promptHidden(question: string): Promise<string> {
+export async function promptHidden(question: string): Promise<string> {
   const { stdin, stderr } = process
   if (!stdin.isTTY) {
     throw new TypeVaultError(
