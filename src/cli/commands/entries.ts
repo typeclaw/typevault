@@ -22,6 +22,7 @@ import { FieldSchema } from '../../core/payload'
 import { parseTotpSeed, totpCode, totpRemainingSeconds } from '../../otp/totp'
 import { accessOf, getEntry, resolveAccess } from '../context'
 import { csv, note, print, readStdin, repeated, table } from '../output'
+import { promptHidden } from '../password'
 import { openBrowser, promptFields } from '../web-prompt'
 
 /** Runs after the listing it annotates. */
@@ -131,7 +132,7 @@ export const set = defineCommand({
   meta: {
     name: 'set',
     description:
-      'Create or update an entry. Pipe the secret on stdin with --stdin, or type it in a browser with --web.',
+      'Create or update an entry. Pipe the secret on stdin with --stdin, type it in a browser with --web, or in this terminal with --prompt.',
   },
   args: {
     name: { type: 'positional', description: ENTRY_NAME_SYNTAX, required: true },
@@ -143,6 +144,7 @@ export const set = defineCommand({
     },
     field: { type: 'string', description: 'k=v, repeatable (writes text fields; use stdin for secrets)' },
     stdin: { type: 'boolean', description: 'Read the main secret field from stdin' },
+    prompt: { type: 'boolean', description: 'Type the main secret field in this terminal, hidden' },
     web: {
       type: 'boolean',
       description: 'Type the fields in a local one-time browser page (default for a new entry from a terminal)',
@@ -166,9 +168,18 @@ export const set = defineCommand({
     const given = parseFields(repeated(rawArgs, '--field'), { ...known, ...suggested })
     const tier = args.tier ?? existing?.tier ?? process.env['TYPEVAULT_TIER']
     const target = preset?.input ?? defaultFieldOf(previous) ?? '$default'
+    if (args.prompt) checkPrompt(args, target, suggested[target] ?? previous[target]?.type)
     const stdin = args.stdin || args['stdin-json'] ? await readStdin() : undefined
     if (args.stdin && stdin === '') throw new TypeVaultError('invalid', '--stdin did not contain a value')
-    const fromStdin = args['stdin-json'] ? parseFieldsJson(stdin ?? '') : args.stdin ? { [target]: stdin ?? '' } : {}
+    const prompted = args.prompt ? await promptHidden(`Secret for ${name}#${target}: `) : undefined
+    if (prompted === '') throw new TypeVaultError('invalid', '--prompt did not get a value')
+    const fromStdin = args['stdin-json']
+      ? parseFieldsJson(stdin ?? '')
+      : args.stdin
+        ? { [target]: stdin ?? '' }
+        : prompted !== undefined
+          ? { [target]: prompted }
+          : {}
     const typed: Record<string, Field> = {}
     for (const [field, value] of Object.entries(fromStdin)) {
       if (typeof value !== 'string') {
@@ -198,7 +209,8 @@ export const set = defineCommand({
           throw new TypeVaultError('invalid', `unexpected field type ${type satisfies never}`)
       }
     }
-    const web = args.web ?? (existing === undefined && !args.stdin && !args['stdin-json'] && process.stdin.isTTY)
+    const web =
+      args.web ?? (existing === undefined && !args.stdin && !args['stdin-json'] && !args.prompt && process.stdin.isTTY)
     const fromWeb = web
       ? await promptFields(
           { name, preset: args.preset === undefined ? undefined : parsePreset(args.preset), tier },
@@ -233,6 +245,27 @@ export const set = defineCommand({
     note(`stored ${stored.name} in ${stored.tier} (r${stored.rev})`)
   },
 })
+
+function checkPrompt(
+  args: {
+    readonly stdin?: boolean | undefined
+    readonly 'stdin-json'?: boolean | undefined
+    readonly web?: boolean | undefined
+  },
+  target: string,
+  type: FieldType | undefined,
+): void {
+  if (args.stdin || args['stdin-json'] || args.web)
+    throw new TypeVaultError('invalid', '--prompt cannot be combined with --stdin, --stdin-json or --web')
+  // Enter ends the prompt, so a pasted multi-line key would be cut at its first line.
+  if (type === 'oauth' || target === PRESETS.ssh.input)
+    throw new TypeVaultError(
+      'invalid',
+      `pass ${type === 'oauth' ? 'OAuth JSON' : 'an SSH key'} with --stdin, not --prompt`,
+    )
+  if (!process.stdin.isTTY)
+    throw new TypeVaultError('invalid', '--prompt needs a terminal; pipe the secret with --stdin')
+}
 
 function showPrompt(url: string, code: string): void {
   note(`Enter the secret at ${url}\nMatch code: ${code} (the page shows the same code)`)

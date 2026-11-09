@@ -195,6 +195,72 @@ it('refuses a new entry with --no-web and no fields without prompting', async ()
   })
 })
 
+// Runs `set` on a terminal and types `typed` once the hidden prompt appears.
+async function setViaPrompt(args: readonly string[], typed: string): Promise<{ code: number; output: string }> {
+  const decoder = new TextDecoder()
+  let output = ''
+  let sent = false
+  const proc = Bun.spawn([process.execPath, CLI, 'set', ...args], {
+    cwd: project,
+    env,
+    terminal: {
+      cols: 200,
+      rows: 40,
+      data: (terminal, data) => {
+        output += decoder.decode(data)
+        if (sent || !output.includes('Secret for ')) return
+        sent = true
+        terminal.write(`${typed}\r`)
+      },
+    },
+  })
+  return { code: await proc.exited, output }
+}
+
+const PROMPT_KEY = 'sk-prompt-test-1'
+
+it.each([
+  ['a new entry', ['typevault://typed-in', '--preset', 'api_key'], 'typevault://typed-in'],
+  ['an existing entry', ['typevault://svc', '--preset', 'password'], 'typevault://svc#password'],
+])('stores what was typed at the hidden --prompt for %s without echoing it', async (_, args, ref) => {
+  // when
+  const result = await setViaPrompt([...args, '--prompt'], PROMPT_KEY)
+
+  // then
+  expect(result.code).toBe(0)
+  expect(result.output).toContain('Secret for ')
+  expect(result.output).not.toContain(PROMPT_KEY)
+  expect(await cli(['get', ref, '--reveal'])).toMatchObject({ code: 0, stdout: `${PROMPT_KEY}\n` })
+})
+it('keeps the other fields of an entry updated with --prompt', async () => {
+  expect((await setViaPrompt(['typevault://svc', '--preset', 'password', '--prompt'], PROMPT_KEY)).code).toBe(0)
+  expect(await cli(['get', 'typevault://svc#username'])).toMatchObject({ code: 0, stdout: 'alice\n' })
+})
+it('refuses --prompt for an existing SSH key without --preset and keeps the key', async () => {
+  // given
+  const key = '-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaA\n-----END OPENSSH PRIVATE KEY-----'
+  expect(await cli(['set', 'typevault://box', '--preset', 'ssh', '--stdin'], key)).toMatchObject({ code: 0 })
+
+  // when
+  const result = await setViaPrompt(['typevault://box', '--prompt'], '-----BEGIN OPENSSH PRIVATE KEY-----')
+
+  // then
+  expect(result.code).toBe(1)
+  expect(result.output).toContain('not --prompt')
+  expect(await cli(['get', 'typevault://box#private_key', '--reveal'])).toMatchObject({ code: 0, stdout: `${key}\n` })
+})
+it.each([
+  ['without a terminal', ['typevault://p', '--prompt'], '--prompt needs a terminal'],
+  ['with --stdin', ['typevault://p', '--prompt', '--stdin'], 'cannot be combined'],
+  ['with --web', ['typevault://p', '--prompt', '--web'], 'cannot be combined'],
+  ['for an SSH key', ['typevault://p', '--preset', 'ssh', '--prompt'], 'not --prompt'],
+  ['for OAuth', ['typevault://p', '--preset', 'oauth', '--prompt'], 'not --prompt'],
+])('refuses --prompt %s', async (_, args, message) => {
+  const result = await cli(['set', ...args])
+  expect(result.code).toBe(1)
+  expect(result.stderr).toContain(message)
+})
+
 it('stores a value without a preset and resolves its bare reference', async () => {
   expect(await cli(['set', 'typevault://simple', '--stdin'], 'private-value')).toMatchObject({ code: 0 })
   const result = await cli(['get', 'typevault://simple', '--json', '--reveal'])

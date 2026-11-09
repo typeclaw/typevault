@@ -7,6 +7,7 @@ How entries are named and typed, what `run` loads, and how output is redacted.
 ```sh
 printf '%s' "$OPENAI_KEY" | typevault set typevault://openai --preset api_key --stdin
 typevault set typevault://anthropic --preset api_key        # from a terminal: type it in a one-time local page (--web)
+typevault set typevault://anthropic --preset api_key --prompt   # or type it hidden in this terminal
 typevault set typevault://github/bot --preset password --field username=bot --stdin < password.txt
 echo '{"access_token":"…","refresh_token":"…"}' | typevault set typevault://google --preset oauth --stdin
 printf '%s' "$STRIPE_KEY" | typevault set typevault://stripe --preset api_key --tier trusted --stdin
@@ -48,7 +49,7 @@ becomes `STRIPE_WEBHOOK_SECRET`. A field with no Latin letter or digit gets no v
 The `$default` field uses the entry name alone: `typevault://openai` becomes `OPENAI`. An entry whose name has a letter
 outside Latin gets no variables at all; reach its fields with references. Override the default field's variable with `--env`.
 In `run`, TOTP fields carry the current code; `otp [ref]` prints a selected TOTP field, the default when typed TOTP, or the only TOTP field. `get` keeps the raw stored seed.
-`--field k=v` always writes a `text` field. Pass secrets through stdin or the browser. `--stdin-json` accepts strings or full `{"type":"secret","value":"…"}` objects. Updates merge existing fields and preserve their types; `--replace` replaces all fields.
+`--field k=v` always writes a `text` field. Pass secrets through stdin, the browser, or `--prompt` (a hidden terminal prompt for the main field; not for OAuth JSON or SSH keys). `--stdin-json` accepts strings or full `{"type":"secret","value":"…"}` objects. Updates merge existing fields and preserve their types; `--replace` replaces all fields.
 
 ### What `run` loads
 
