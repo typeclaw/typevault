@@ -13,7 +13,7 @@ const SummaryShape = {
   needsRotation: z.boolean(),
 }
 
-export const EntrySummarySchema = z.object(SummaryShape)
+export const EntrySummarySchema = z.object({ ...SummaryShape, fieldNames: z.array(z.string()) })
 export const EntryValueSchema = z.object({
   ...SummaryShape,
   id: z.string(),

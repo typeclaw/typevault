@@ -44,10 +44,14 @@ export const ls = defineCommand({
       e.tier,
       `r${e.rev}`,
       e.rotated.slice(0, 10),
+      e.fieldNames.join(','),
       e.needsRotation ? 'needs-rotation' : '',
     ])
     print(
-      table([['NAME', 'TIER', 'REV', 'ROTATED', ''], ...rows.sort((a, b) => (a[0] ?? '').localeCompare(b[0] ?? ''))]),
+      table([
+        ['NAME', 'TIER', 'REV', 'ROTATED', 'FIELDS', ''],
+        ...rows.sort((a, b) => (a[0] ?? '').localeCompare(b[0] ?? '')),
+      ]),
     )
   },
 })

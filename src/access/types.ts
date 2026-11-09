@@ -11,9 +11,11 @@ export type EntrySummary = {
   readonly tags: readonly string[]
   readonly rotated: string
   readonly needsRotation: boolean
+  /** Names only: listing never hands out values. */
+  readonly fieldNames: readonly string[]
 }
 
-export type EntryValue = EntrySummary & {
+export type EntryValue = Omit<EntrySummary, 'fieldNames'> & {
   readonly id: string
   readonly created: string
   readonly fields: Readonly<Record<string, Field>>
@@ -93,6 +95,7 @@ export const toSummary = (value: EntryValue): EntrySummary => ({
   tags: value.tags,
   rotated: value.rotated,
   needsRotation: value.needsRotation,
+  fieldNames: Object.keys(value.fields),
 })
 
 /** Whether `signer` is at least as privileged as a reader holding `ownTiers`. */
