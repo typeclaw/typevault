@@ -8,7 +8,7 @@ import { TypeVaultError } from '../../core/errors'
 import { localLayout } from '../../core/layout'
 import { isDaemonAlive } from '../../daemon/client'
 import { startDaemon } from '../../daemon/daemon'
-import { ensureDaemon, stopDaemon } from '../../daemon/spawn'
+import { ensureDaemon, restartDaemon, stopDaemon } from '../../daemon/spawn'
 import { adminCall, DEFAULT_SESSION_MS, layoutFrom } from '../context'
 import { note, print, readStdin } from '../output'
 
@@ -75,6 +75,10 @@ export const daemon = defineCommand({
     stop: defineCommand({
       meta: { name: 'stop' },
       run: async () => stopDaemon(layoutFrom(process.env)),
+    }),
+    restart: defineCommand({
+      meta: { name: 'restart' },
+      run: async () => restartDaemon(layoutFrom(process.env), process.env),
     }),
     status: defineCommand({
       meta: { name: 'status' },
