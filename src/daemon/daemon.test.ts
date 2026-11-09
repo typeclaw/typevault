@@ -284,8 +284,6 @@ describe('secret prompt', () => {
       await expect(
         new LiveAccess(layout.agentSocket, token).call('/v1/request', { name: 'resend', reason: 'mail' }, z.json()),
       ).rejects.toMatchObject({ code: 'unavailable' })
-      const head = readAudit(layout).at(-1)
-      expect(head).toBeDefined()
 
       await daemon.stop()
 
@@ -297,8 +295,8 @@ describe('secret prompt', () => {
       ]
       expect(files.filter((file) => existsSync(file))).toEqual([])
       expect(isLockHeld(layout.daemonLock)).toBe(false)
-      const anchor: unknown = JSON.parse(readFileSync(layout.anchorsFile, 'utf8').trim().split('\n').at(-1) ?? 'null')
-      expect(anchor).toMatchObject({ seq: head?.seq, hash: head?.hash })
+      // Stopping leaves the committed anchors alone: they only change every 100th audit record.
+      expect(existsSync(layout.anchorsFile)).toBe(false)
       daemon = await startDaemon({ layout, env, keys: [owner] })
     } finally {
       await other.stop(true)

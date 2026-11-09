@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, readdirSync, realpathSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { anchorAudit, appendAudit } from '../audit/log'
+import { appendAudit } from '../audit/log'
 import { adoptCertWrites } from '../core/adopt'
 import { randomHex, type SecretKey } from '../core/crypto'
 import { TypeVaultError } from '../core/errors'
@@ -210,8 +210,6 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
 
         await Promise.all(servers.map((server) => server.stop(true)))
         await context.requests.stop()
-        // A vault deleted under its daemon has nowhere left to anchor (and writing there would half re-create it).
-        if (existsSync(layout.ownerFile)) await anchorAudit(layout)
         for (const file of [
           layout.agentSocket,
           ...ceilings.map((c) => layout.adminSocket(c.name)),
