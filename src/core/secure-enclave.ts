@@ -1,5 +1,5 @@
 import { dlopen, FFIType, type Pointer, ptr, read, toArrayBuffer } from 'bun:ffi'
-import { existsSync, linkSync, renameSync, rmSync, statSync } from 'node:fs'
+import { copyFileSync, existsSync, renameSync, rmSync, statSync, utimesSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 
 import { z } from 'zod'
@@ -45,9 +45,9 @@ export function createEnclaveKey(): EnclaveKey {
 const ENCLAVE_MODULE = import.meta.path
 
 /**
- * The Touch ID dialog is titled with the name of the program asking, which under npm is `bun`. So the exchange runs
- * in a child started through a hard link to this bun named `typevault`; where no such link can be made (another
- * volume), it runs here and the dialog says bun.
+ * The Touch ID dialog is titled with the code-signing identifier of the program asking, which under npm is `bun`. So
+ * the exchange runs in a child started from a copy of this bun re-signed (ad hoc) as `typevault`; where no such copy
+ * can be made, it runs here and the dialog says bun.
  */
 export async function exchangeWithEnclave(
   env: Env,
@@ -56,7 +56,7 @@ export async function exchangeWithEnclave(
   reason: string,
 ): Promise<Uint8Array> {
   requireMac()
-  const runner = typevaultNamedRuntime(env)
+  const runner = await typevaultSignedRuntime(env)
   if (runner === undefined) return exchangeHere(handle, ephemeral, reason)
   const request = JSON.stringify({ handle: toBase64(handle), peer: toBase64(ephemeral), reason })
   const child = Bun.spawn([runner, ENCLAVE_MODULE], {
@@ -77,17 +77,43 @@ export async function exchangeWithEnclave(
   return fromBase64(out.trim())
 }
 
-function typevaultNamedRuntime(env: Env): string | undefined {
-  if (basename(process.execPath) === 'typevault') return undefined
-  const link = join(configDir(env), 'bin', 'typevault')
+/**
+ * The copy keeps the source's mtime (to the millisecond, as far as `utimes` takes it), so a bun upgrade (new mtime) or
+ * an old hard link (same inode) is replaced. Each call signs its own temporary copy, so overlapping calls never publish
+ * a file another call is still signing.
+ */
+export async function typevaultSignedRuntime(env: Env, source = process.execPath): Promise<string | undefined> {
+  if (basename(source) === 'typevault') return undefined
+  const runtime = join(configDir(env), 'bin', 'typevault')
   try {
-    if (existsSync(link) && statSync(link).ino === statSync(process.execPath).ino) return link
-    ensureDir(dirname(link), 0o700)
-    const pending = `${link}.${process.pid}`
-    rmSync(pending, { force: true })
-    linkSync(process.execPath, pending)
-    renameSync(pending, link)
-    return link
+    const original = statSync(source)
+    if (existsSync(runtime)) {
+      const current = statSync(runtime)
+      if (current.ino !== original.ino && Math.trunc(current.mtimeMs) === Math.trunc(original.mtimeMs)) return runtime
+    }
+    ensureDir(dirname(runtime), 0o700)
+    const pending = `${runtime}.${crypto.randomUUID()}`
+    copyFileSync(source, pending)
+    const signing = Bun.spawn(
+      [
+        '/usr/bin/codesign',
+        '--force',
+        '--sign',
+        '-',
+        '--identifier',
+        'typevault',
+        '--preserve-metadata=entitlements,flags',
+        pending,
+      ],
+      { stdout: 'ignore', stderr: 'ignore' },
+    )
+    if ((await signing.exited) !== 0) {
+      rmSync(pending, { force: true })
+      return undefined
+    }
+    utimesSync(pending, original.atime, original.mtime)
+    renameSync(pending, runtime)
+    return runtime
   } catch (error) {
     if (error instanceof Error && 'code' in error) return undefined
     throw error
