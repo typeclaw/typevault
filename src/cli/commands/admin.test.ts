@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, setSystemTime } from 'bun:test'
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -23,7 +24,7 @@ import { globalLayout, type Layout, localLayout } from '../../core/layout'
 import { parseEntryName } from '../../core/naming'
 import { Vault } from '../../core/vault'
 import { PACKAGE_VERSION } from '../../core/version'
-import { servingVersion } from '../../daemon/client'
+import { servingPid, servingVersion } from '../../daemon/client'
 
 const envIn = (dir: string) => ({ TYPEVAULT_DIR: join(dir, 'vault'), XDG_CONFIG_HOME: dir })
 
@@ -358,6 +359,68 @@ it('replaces a machine daemon from another release with this one', async () => {
   // then that daemon stopped, and this release's serves instead
   expect(await other.exited).toBe(0)
   expect(await servingVersion(layout.agentSocket)).toBe(PACKAGE_VERSION)
+}, 30_000)
+
+it('restarts a machine daemon as a new process', async () => {
+  // given a machine member's daemon serving this checkout
+  const key = await addMachineMember()
+  const machine = { ...owner, TYPEVAULT_KEY: key }
+  const layout = localLayout(join(project, '.typevault'), owner)
+  succeeds(await cli(['daemon', 'start'], machine))
+  const before = await servingPid(layout.agentSocket)
+
+  // when it is restarted
+  succeeds(await cli(['daemon', 'restart'], machine))
+
+  // then another process of this release serves instead
+  const after = await servingPid(layout.agentSocket)
+  expect({ running: after !== undefined, replaced: after !== before }).toEqual({ running: true, replaced: true })
+  expect(await servingVersion(layout.agentSocket)).toBe(PACKAGE_VERSION)
+}, 30_000)
+
+it('restarts over a session token left by a killed daemon', async () => {
+  // given a machine member, and an unlocked session whose daemon was killed before its cleanup
+  const key = await addMachineMember()
+  succeeds(await cli(['unlock', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
+  const layout = localLayout(join(project, '.typevault'), owner)
+  const pid = Number(readFileSync(join(layout.run, 'daemon.pid'), 'utf8'))
+  process.kill(pid, 'SIGKILL')
+  while (isProcessRunning(pid)) await Bun.sleep(10)
+
+  // when the machine member restarts the daemon
+  succeeds(await cli(['daemon', 'restart'], { ...owner, TYPEVAULT_KEY: key }))
+
+  // then this release serves, and the stale token is gone
+  expect(await servingVersion(layout.agentSocket)).toBe(PACKAGE_VERSION)
+  expect(existsSync(layout.sessionFile)).toBe(false)
+}, 30_000)
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+it('refuses to restart an unlocked session, and leaves it running', async () => {
+  // given an unlocked session
+  succeeds(await cli(['unlock', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
+  const layout = localLayout(join(project, '.typevault'), owner)
+  const before = await servingPid(layout.agentSocket)
+
+  // when the owner restarts the daemon
+  const run = await cli(['daemon', 'restart'], owner)
+
+  // then they are told how to replace it, and the session keeps serving
+  expect({ code: run.code, stderr: run.stderr }).toEqual({
+    code: 1,
+    stderr:
+      'typevault: this daemon holds an unlocked session, which a restart would end: ' +
+      'run `typevault lock`, then `typevault unlock`\n',
+  })
+  expect(await servingPid(layout.agentSocket)).toBe(before)
 }, 30_000)
 
 it('refuses an unlocked session from another release, and leaves it running', async () => {

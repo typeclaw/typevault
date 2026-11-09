@@ -14,7 +14,7 @@ typevault import 1password --account Acme --tier member   # straight from the 1P
 typevault doctor --fix                           # verify signatures, resolve git merges and duplicates
 typevault audit --verify
 typevault audit --label ci:deploy --follow       # stream one grant's reads
-typevault daemon status                          # also: daemon start | stop | run (foreground)
+typevault daemon status                          # also: daemon start | stop | restart | run (foreground)
                                                  # a background daemon writes to run/daemon.log; a failed start quotes it.
                                                  # it holds run/daemon.lock until its cleanup is done, so a stop waits for that
 ```

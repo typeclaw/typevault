@@ -50,6 +50,27 @@ export async function ensureDaemon(layout: Layout, env: Env): Promise<void> {
   await startBackground(layout, env, [process.execPath, CLI, 'daemon', 'run', ...vaultArgs(layout)])
 }
 
+/**
+ * Stops this checkout's daemon, if running, and starts a fresh one. Only a machine member's daemon can come back on
+ * its own: an unlocked session's key would be gone with it, so that one is refused before anything stops.
+ */
+export async function restartDaemon(layout: Layout, env: Env): Promise<void> {
+  // A token with no daemon answering was left by a killed session; the new daemon clears it on start.
+  if (existsSync(layout.sessionFile) && (await isDaemonAlive(layout.agentSocket))) {
+    throw new TypeVaultError(
+      'conflict',
+      'this daemon holds an unlocked session, which a restart would end: run `typevault lock`, then `typevault unlock`',
+    )
+  }
+  if (machineKeys(env).length === 0) throw new TypeVaultError('locked', LOCKED_MESSAGE)
+  try {
+    await stopDaemon(layout)
+  } catch (error) {
+    if (!(error instanceof TypeVaultError && error.code === 'not_found')) throw error
+  }
+  await ensureDaemon(layout, env)
+}
+
 function versionMismatch(layout: Layout, running: string | null, version: string): TypeVaultError {
   const from = running === null ? 'is from an older release' : `is version ${running}`
   const fix = existsSync(layout.sessionFile)
