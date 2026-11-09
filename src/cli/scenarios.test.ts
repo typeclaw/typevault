@@ -222,8 +222,11 @@ it(
     const token = (await ok(alice, ['grant', '--tier', 'default', '--label', 'agent:a'])).stdout.trim()
     const agent = { ...alice, TYPEVAULT_GRANT: token }
 
-    // then the agent reads through it
-    expect(JSON.parse((await ok(agent, ['ls', '--json'])).stdout)).toMatchObject([{ name: 'openai' }])
+    // then the agent reads through it, field names included
+    expect(JSON.parse((await ok(agent, ['ls', '--json'])).stdout)).toMatchObject([
+      { name: 'openai', fieldNames: ['$default'] },
+    ])
+    expect((await ok(agent, ['ls'])).stdout).toMatch(/FIELDS[\s\S]*openai .*\$default/)
 
     // and when the session is locked, the grant can't reach the vault until a person unlocks again
     await ok(alice, ['lock'])

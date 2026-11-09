@@ -106,6 +106,7 @@ export class SealedAccess implements Access {
       tags: payload.tags,
       rotated: payload.rotated,
       needsRotation: false,
+      fieldNames: Object.keys(payload.fields),
     }
   }
 
