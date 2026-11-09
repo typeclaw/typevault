@@ -16,7 +16,8 @@
   },
   "files": [
     "src",
-    "!**/*.test.ts"
+    "!**/*.test.ts",
+    "!**/*.harness.ts"
   ],
   "type": "module",
   "exports": {
