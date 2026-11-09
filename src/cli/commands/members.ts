@@ -17,6 +17,7 @@ import {
   readIdentity,
   sealedCopyPath,
   sealMemberKey,
+  sealMemberKeyForTouchId,
   writeIdentity,
 } from '../../core/identity'
 import { type Layout, localLayout, vaultIdOf } from '../../core/layout'
@@ -283,6 +284,36 @@ export const lock = defineCommand({
       await endLiveGrants(target, env)
     }
     print(locked ? 'locked' : 'already locked')
+  },
+})
+
+export const touchId = defineCommand({
+  meta: { name: 'touch-id', description: 'Unlock with Touch ID on this Mac instead of typing your password' },
+  subCommands: {
+    enable: defineCommand({
+      meta: { name: 'enable', description: 'Turn on Touch ID unlock: asks for your password, then a touch' },
+      async run() {
+        const env = process.env
+        const current = readIdentity(env)
+        if (current?.kind !== 'human') throw new TypeVaultError('invalid', 'only a human identity has a password')
+        if (process.platform !== 'darwin') throw new TypeVaultError('unavailable', 'Touch ID unlock needs macOS')
+        const password = await passwords().ask(`Password for ${current.name}: `)
+        const key = await openMemberKey(current.sealedKey, password, current.secretKey)
+        writeIdentity(env, { ...current, touchId: await sealMemberKeyForTouchId(env, key) })
+        print('Touch ID unlock is on for this Mac; your password still works')
+      },
+    }),
+    disable: defineCommand({
+      meta: { name: 'disable', description: 'Turn off Touch ID unlock: back to your password' },
+      run() {
+        const env = process.env
+        const current = readIdentity(env)
+        if (current?.kind !== 'human' || current.touchId === undefined) return print('Touch ID unlock is already off')
+        const { touchId: _, ...rest } = current
+        writeIdentity(env, rest)
+        print('Touch ID unlock is off')
+      },
+    }),
   },
 })
 

@@ -6,7 +6,7 @@ import { ceiling, doctor, tier, init, key, signer } from './commands/admin'
 import { daemon } from './commands/daemon'
 import { get, ls, mv, otp, rm, set, whoami } from './commands/entries'
 import { audit, grant } from './commands/grant'
-import { identity, joinCommand, lock, member, passwd, unlock } from './commands/members'
+import { identity, joinCommand, lock, member, passwd, touchId, unlock } from './commands/members'
 import { importCommand, redact, request, run, scrub } from './commands/run'
 import { readPasswordsFromStdin } from './password'
 
@@ -27,6 +27,7 @@ const main = defineCommand({
     unlock,
     lock,
     passwd,
+    'touch-id': touchId,
     tier,
     ceiling,
     signer,

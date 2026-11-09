@@ -18,6 +18,7 @@ import { readJsonFile } from './json-file'
 import { configDir, type Layout } from './layout'
 import { generateSecretKeyCode, openWithPassword, sealWithPassword } from './password'
 import { type MemberKind, parseMemberName } from './state'
+import { enableTouchId, openWithTouchId, type TouchIdSeal, TouchIdSealSchema } from './touch-id'
 
 type Env = Readonly<Record<string, string | undefined>>
 
@@ -33,6 +34,8 @@ export type Identity = PublicKey &
         readonly name: string
         readonly secretKey: string
         readonly sealedKey: string
+        /** The member key sealed to this Mac's Secure Enclave, opened with Touch ID instead of the password. */
+        readonly touchId?: TouchIdSeal | undefined
       }
     | { readonly v: 1; readonly kind: 'machine'; readonly name: string; readonly key: string }
   )
@@ -47,6 +50,7 @@ const IdentitySchema = z.discriminatedUnion('kind', [
     name: z.string(),
     secretKey: z.string(),
     sealedKey: z.string(),
+    touchId: TouchIdSealSchema.optional(),
     ...PublicFields,
   }),
   z.object({ v: z.literal(1), kind: z.literal('machine'), name: z.string(), key: z.string(), ...PublicFields }),
@@ -115,6 +119,19 @@ export function unlockIdentity(identity: Identity, password?: string): Promise<S
   if (identity.kind === 'machine') return Promise.resolve(decodeSecretKey(identity.key))
   if (password === undefined) throw new TypeVaultError('locked', 'a password is needed to unlock this identity')
   return openMemberKey(identity.sealedKey, password, identity.secretKey)
+}
+
+export const sealMemberKeyForTouchId = (env: Env, key: SecretKey): Promise<TouchIdSeal> =>
+  enableTouchId(env, utf8(encodeSecretKey(key)))
+
+/** The member key through Touch ID; it must be this identity's own, whatever identity.json was given. */
+export async function unlockIdentityWithTouchId(env: Env, identity: Identity, seal: TouchIdSeal): Promise<SecretKey> {
+  const key = decodeSecretKey(fromUtf8(await openWithTouchId(env, seal)))
+  const pub = await publicKeyOf(key)
+  if (key.role.kind !== 'member' || pub.recipient !== identity.recipient || pub.signPublic !== identity.signPublic) {
+    throw new TypeVaultError('tampered', "the Touch ID copy is not this identity's key")
+  }
+  return key
 }
 
 export const encodeMemberPublic = (member: MemberPublic): string =>
