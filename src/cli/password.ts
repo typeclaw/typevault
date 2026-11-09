@@ -43,8 +43,9 @@ export async function promptHidden(question: string): Promise<string> {
       'no terminal to ask for your TypeVault password (pass --vault-password-stdin to pipe it)',
     )
   }
-  stderr.write(question)
+  // Echo goes off before the question shows, so nothing typed once it appears reaches the screen.
   stdin.setRawMode(true)
+  stderr.write(question)
   stdin.resume()
   const { promise, resolve, reject } = Promise.withResolvers<string>()
   let typed = ''
