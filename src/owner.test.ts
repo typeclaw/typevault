@@ -131,7 +131,7 @@ describe('a state directory shared by openers', () => {
 
     // then there is one chain and one anchors file
     expect(readdirSync(join(dir, 'audit-anchors'))).toHaveLength(1)
-    expect(openers.map(verifyAudit)).toEqual([
+    expect(openers.map((opener) => verifyAudit(opener))).toEqual([
       { ok: true, records: 2 },
       { ok: true, records: 2 },
     ])

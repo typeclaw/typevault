@@ -107,17 +107,20 @@ export type AuditVerdict =
   | { readonly ok: true; readonly records: number }
   | { readonly ok: false; readonly reason: string }
 
-/** Recomputes the chain and checks every anchor against it. A log too damaged to read fails the check. */
-export function verifyAudit(layout: Layout): AuditVerdict {
+/**
+ * Recomputes the chain and checks every anchor against it. A log too damaged to read fails the check. `anchorsFile`
+ * defaults to the one owner.json names; pass the one a validated vault state names instead.
+ */
+export function verifyAudit(layout: Layout, anchorsFile = layout.anchorsFile): AuditVerdict {
   try {
-    return verifyChain(layout)
+    return verifyChain(layout, anchorsFile)
   } catch (error) {
     if (error instanceof TypeVaultError && error.code === 'tampered') return { ok: false, reason: error.message }
     throw error
   }
 }
 
-function verifyChain(layout: Layout): AuditVerdict {
+function verifyChain(layout: Layout, anchorsFile: string): AuditVerdict {
   const records = readAudit(layout)
   let prev = GENESIS
   const heads = new Map<number, string>()
@@ -130,7 +133,7 @@ function verifyChain(layout: Layout): AuditVerdict {
     heads.set(record.seq, hash)
     prev = hash
   }
-  const anchors = [layout.legacyAnchorsFile, layout.anchorsFile].flatMap((file) =>
+  const anchors = [layout.legacyAnchorsFile, anchorsFile].flatMap((file) =>
     existsSync(file)
       ? readFileSync(file, 'utf8')
           .split('\n')

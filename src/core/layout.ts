@@ -3,11 +3,9 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
-import { z } from 'zod'
-
 import { sha256Hex } from './crypto'
 import { utf8 } from './encoding'
-import { readJsonFile } from './json-file'
+import { firstOwnerSignPublic, readOwnerFile } from './owner-trust'
 
 export type Layout = {
   /** `global`: one vault per user, `~/.typevault/`. `local`: a `.typevault/` committed in a project. */
@@ -29,6 +27,8 @@ export type Layout = {
   readonly ceilingsFile: string
   /** This checkout's audit anchors: one committed file per audit chain, so clones never check each other's. */
   readonly anchorsFile: string
+  /** The anchors file for a first owner key already validated, so it isn't read again from owner.json. */
+  readonly anchorsFileFor: (origin: string) => string
   /** Anchors from before chains had their own file; still checked against this checkout's log. */
   readonly legacyAnchorsFile: string
   readonly txnDir: string
@@ -149,16 +149,13 @@ function vaultLayout(scope: Layout['scope'], dir: string, env: Env): Layout {
   const stateDir = setting(env, 'TYPEVAULT_STATE_DIR')
   const root = stateDir ?? join(configDir(env), 'checkouts', shortHash(resolve(dir)))
   // Without a state directory, a chain is named by where its log lives. With one, it is the vault's single chain,
-  // named by its owner key: nothing kept in the state directory can be lost or swapped to escape its anchors.
+  // named by its first owner key: nothing kept in the state directory can be lost or swapped to escape its anchors,
+  // and the name survives owner rotations.
   const chain =
     stateDir === undefined
       ? () => shortHash(`${hostId(env)}\0${root}`)
-      : () => `state-${vaultIdOf(ownerSignPublic(dir))}`
+      : (origin = firstOwnerSignPublic(readOwnerFile(join(dir, 'owner.json')))) => `state-${vaultIdOf(origin)}`
   return build(scope, root, dir, setting(env, 'TYPEVAULT_RUN_DIR'), chain)
-}
-
-function ownerSignPublic(vault: string): string {
-  return readJsonFile(join(vault, 'owner.json'), z.object({ signPublic: z.string() })).signPublic
 }
 
 // A home directory reached through a symlink (macOS's /tmp, say) is still the same directory.
@@ -187,7 +184,7 @@ function build(
   root: string,
   vault: string,
   runDir: string | undefined,
-  chain: () => string,
+  chain: (origin?: string) => string,
 ): Layout {
   const audit = join(root, 'audit')
   const run = join(root, 'run')
@@ -209,6 +206,7 @@ function build(
     get anchorsFile() {
       return join(vault, 'audit-anchors', `${chain()}.jsonl`)
     },
+    anchorsFileFor: (origin) => join(vault, 'audit-anchors', `${chain(origin)}.jsonl`),
     legacyAnchorsFile: join(vault, 'audit-anchors.jsonl'),
     // Staging lives in run/, which is never committed: a txn dir from git must not be able to steer deletes.
     txnDir: join(run, 'txn'),
