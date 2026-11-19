@@ -10,6 +10,7 @@ import { GrantInfoSchema, IssuedSchema } from '../../admin'
 import { readAudit, verifyAudit } from '../../audit/log'
 import { TypeVaultError } from '../../core/errors'
 import { loadState } from '../../core/state'
+import { readSnapshot } from '../../core/vault'
 import { adminCall, layoutFrom, openDirect } from '../context'
 import { csv, print, table } from '../output'
 
@@ -73,8 +74,11 @@ export const audit = defineCommand({
   async run({ args }) {
     const layout = layoutFrom(process.env)
     if (args.verify) {
-      loadState(layout, process.env)
-      const verdict = verifyAudit(layout)
+      // The anchors file comes from the owner chain that just passed the trust check, not from rereading owner.json.
+      const verdict = await readSnapshot(layout, process.env, async () => {
+        const { origin } = loadState(layout, process.env)
+        return verifyAudit(layout, layout.anchorsFileFor(origin))
+      })
       print(verdict.ok ? `ok (${verdict.records} records)` : `BROKEN: ${verdict.reason}`)
       if (!verdict.ok) process.exitCode = 1
       return

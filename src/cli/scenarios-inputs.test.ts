@@ -1,7 +1,11 @@
 import { expect, it } from 'bun:test'
-import { appendFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
+import { anchorAudit, appendAudit } from '../audit/log'
+import { createIdentity, encodeMemberPublic, memberPublicOfIdentity } from '../core/identity'
+import { localLayout } from '../core/layout'
+import { ownerDoc, readOwner } from '../core/owner-trust'
 import {
   type Actor,
   actor,
@@ -18,6 +22,33 @@ import {
   withPassword,
 } from './scenarios.harness'
 
+it.each([
+  ['audit --verify', ['audit', '--verify'], {}],
+  ['the TYPEVAULT_OWNER check', ['ls'], { TYPEVAULT_GRANT: 'tvl1.test.test' }],
+] as const)(
+  '%s leaves a journal alone while another machine holds the state directory',
+  async (_, args, extra) => {
+    // given another machine's daemon claim and a transaction it has staged but not committed
+    const alice = actor('alice')
+    await ok(alice, ['init', '--name', 'alice', '--machine'])
+    const layout = localLayout(join(project, '.typevault'), alice)
+    const pin = { ...alice, ...extra, TYPEVAULT_OWNER: readOwner(layout).signPublic }
+    const claim = { host: 'other-host', name: 'other', pid: 1, token: 'x', at: new Date().toISOString() }
+    writeFileSync(layout.daemonHolder, JSON.stringify(claim))
+    const staged = join(layout.txnDir, 'theirs')
+    mkdirSync(staged, { recursive: true })
+
+    // when this machine runs the command
+    const result = await cli(pin, [...args])
+
+    // then it refuses before recovery could discard their staging
+    expect(result.code).not.toBe(0)
+    expect(result.stderr).toContain('another machine')
+    expect(existsSync(staged)).toBe(true)
+  },
+  SCENARIO_MS,
+)
+
 it(
   'audit --verify reports a damaged log as broken',
   async () => {
@@ -33,6 +64,39 @@ it(
 
     // then the verdict says so, rather than the command crashing
     expect({ code: verified.code, broken: verified.stdout.startsWith('BROKEN') }).toEqual({ code: 1, broken: true })
+  },
+  SCENARIO_MS,
+)
+
+it.each(['original', 'rotated', 'stripped'] as const)(
+  'audit --verify rejects a missing anchored state-directory log with the %s owner history',
+  async (history) => {
+    // given an anchored log in a state directory and, where applicable, a trusted owner rotation
+    const alice = actor('alice', { TYPEVAULT_STATE_DIR: join(base, 'state') })
+    await ok(alice, ['init', '--name', 'alice', '--machine'])
+    const layout = localLayout(join(project, '.typevault'), alice)
+    await appendAudit(layout, { action: 'read', mode: 'direct', entries: ['openai'] })
+    await anchorAudit(layout)
+    if (history !== 'original') {
+      const { identity } = await createIdentity('bob', 'machine')
+      const key = encodeMemberPublic(memberPublicOfIdentity(identity))
+      await ok(alice, ['member', 'add', 'bob', key, '--owner'])
+      await ok(alice, ['member', 'rm', 'bob'])
+    }
+    await ok(alice, ['audit', '--verify'])
+    if (history === 'stripped') {
+      const { recipient, signPublic } = readOwner(layout)
+      writeFileSync(layout.ownerFile, ownerDoc({ recipient, signPublic }))
+    }
+    rmSync(layout.auditLog)
+
+    // when it is verified
+    const verified = await cli(alice, ['audit', '--verify'])
+
+    // then the anchored log is broken, or its altered owner history is refused before checking the log
+    expect(verified.code).toBe(1)
+    if (history === 'stripped') expect(verified.stderr).toContain('handovers')
+    else expect(verified.stdout).toMatch(/^BROKEN: .*anchor/)
   },
   SCENARIO_MS,
 )

@@ -209,7 +209,8 @@ export const doctor = defineCommand({
         `same name in several tiers: ${dup} (if the tiers are unrelated, reads of it fail: keep one with \`typevault rm <name> --tier <g>\`)`,
       )
     for (const name of report.needsRotation) print(`needs rotation: ${name}`)
-    const audit = verifyAudit(vault.layout)
+    // Anchors from the owner chain this vault was opened against, not from rereading owner.json.
+    const audit = verifyAudit(vault.layout, vault.layout.anchorsFileFor(vault.state.origin))
     print(audit.ok ? `audit: ok (${audit.records} records)` : `audit: BROKEN: ${audit.reason}`)
     if (report.problems.length > 0 || !audit.ok) process.exitCode = 1
   },

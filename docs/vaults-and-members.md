@@ -98,8 +98,12 @@ password.
 While a person's vault is locked, an agent's command fails with `the vault is locked: ask a human to run typevault
 unlock`; in a terminal, the command asks for the password and unlocks on the spot. Owner commands (`tier`, `member`,
 `key rotate`, ...) ask for the password every time, because only they open the owner key. Scripts pass passwords on
-stdin with `--vault-password-stdin`, one per line. Removing an owner member isn't supported yet: every entry is also
-sealed to the owner key, which can't be rotated yet.
+stdin with `--vault-password-stdin`, one per line. Removing an owner requires another owner to remain. It rotates the
+owner key and every tier key. Commit and pull the change, lock and unlock existing sessions, and issue fresh grants.
+Previously distributed plaintext, offline sealed snapshots, and old ciphertext in Git history cannot be recalled;
+rotate exposed secrets at their source. Removal refuses to run while any entry file is unreadable, and names those
+files: run `typevault doctor`, and move a file you can't vouch for (say, an expired sealed-grant write) out of
+`entries/` or restore it from Git before retrying.
 
 ## Working with a teammate
 

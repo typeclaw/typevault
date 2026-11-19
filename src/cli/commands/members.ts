@@ -4,6 +4,7 @@ import { userInfo } from 'node:os'
 import { defineCommand } from 'citty'
 
 import { parseTtl } from '../../access/scope'
+import { Admin } from '../../core/admin'
 import { publicKeyOf } from '../../core/crypto'
 import { TypeVaultError } from '../../core/errors'
 import { atomicWrite } from '../../core/fsx'
@@ -32,6 +33,7 @@ import {
   findLayout,
   layoutFrom,
   openAdmin,
+  openDirect,
   openPublic,
   unlockSession,
   worktreeSessions,
@@ -137,8 +139,15 @@ export const member = defineCommand({
       meta: { name: 'rm', description: 'Remove a member and rotate every tier they reached' },
       args: { name: { type: 'positional', required: true } },
       async run({ args }) {
-        const affected = await (await openAdmin(process.env)).removeMember(args.name)
+        const vault = await openDirect(process.env)
+        const previous = vault.state.owner.signPublic
+        const affected = await new Admin(vault).removeMember(args.name)
         print(`removed ${args.name}`)
+        if (vault.state.owner.signPublic !== previous) {
+          note(
+            'Owner key rotated. Commit the vault; members must pull it. For an open session, run typevault lock then typevault unlock.',
+          )
+        }
         if (affected.length === 0) return
         note('They may have kept what they read. Rotate these secrets at their source, then re-set them:')
         for (const name of affected) note(`  ${name}`)
