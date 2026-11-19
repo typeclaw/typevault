@@ -8,6 +8,7 @@ import { atomicWrite, ensureDir } from './fsx'
 import { type Identity, type MemberPublic, memberPublicOfIdentity, sealedCopyPath } from './identity'
 import { ownerWrapPath } from './keyring'
 import { globalLayout, type Layout, localLayout } from './layout'
+import { ownerDoc } from './owner-trust'
 import { ceilingsDoc, membersDoc, parseMemberName, signersDoc, tiersDoc } from './state'
 
 type Env = Readonly<Record<string, string | undefined>>
@@ -75,6 +76,6 @@ async function writeVault(layout: Layout, founder: Founder): Promise<SecretKey> 
   if (founder.sealedKey !== undefined) atomicWrite(sealedCopyPath(layout, name), founder.sealedKey)
   atomicWrite(layout.trustFile, JSON.stringify({ ownerSignPublic: owner.signPublic }), 0o600)
   // owner.json last: its presence is what marks the directory as an initialized vault.
-  atomicWrite(layout.ownerFile, `${JSON.stringify({ v: 1, ...owner }, null, 2)}\n`)
+  atomicWrite(layout.ownerFile, ownerDoc(owner))
   return ownerKey
 }
