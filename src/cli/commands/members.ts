@@ -22,7 +22,7 @@ import {
   writeIdentity,
 } from '../../core/identity'
 import { type Layout, localLayout, vaultIdOf } from '../../core/layout'
-import { readOwner } from '../../core/state'
+import { firstOwnerSignPublic, readOwner } from '../../core/owner-trust'
 import { Vault } from '../../core/vault'
 import { worktreeVaults } from '../../core/worktrees'
 import { endLiveGrants, stopDaemon } from '../../daemon/spawn'
@@ -257,9 +257,10 @@ export const lock = defineCommand({
     if (layout === undefined) throw new TypeVaultError('not_found', 'no vault here')
     const env = process.env
     // An owner that can't be read doesn't prove another vault, so lock still reaches it.
-    const ownerOf = (target: Layout): string | undefined => {
+    const ownerOf = (target: Layout): { readonly current: string; readonly origin: string } | undefined => {
       try {
-        return readOwner(target).signPublic
+        const owner = readOwner(target)
+        return { current: owner.signPublic, origin: firstOwnerSignPublic(owner) }
       } catch (error) {
         if (error instanceof TypeVaultError) return undefined
         throw error
@@ -272,7 +273,8 @@ export const lock = defineCommand({
       .map((vault) => localLayout(vault, env))
       .filter((worktree) => {
         const other = ownerOf(worktree)
-        return own === undefined || other === undefined || other === own
+        // Same current owner, or the same vault on another owner generation (one that hasn't pulled a rotation yet).
+        return own === undefined || other === undefined || other.current === own.current || other.origin === own.origin
       })
     // A session unlocked in any other worktree would only be shared here again on the next read, so it stops too, but
     // the grants of a different vault are its own.

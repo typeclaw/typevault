@@ -4,8 +4,9 @@ import { join } from 'node:path'
 
 import { z } from 'zod'
 
+import { createIdentity, encodeMemberPublic, memberPublicOfIdentity } from '../core/identity'
 import { localLayout } from '../core/layout'
-import { callDaemon } from '../daemon/client'
+import { callDaemon, servingPid } from '../daemon/client'
 import { addWorktree, base, cli, git, LOCKED, main, owner, PASSWORD, succeeds } from './worktree.harness'
 
 it('shares a session unlocked in one worktree with the others, and locks them together', async () => {
@@ -46,6 +47,35 @@ it('ends a grant issued in a worktree whose daemon already stopped', async () =>
   owner['TYPEVAULT_GRANT'] = token
   expect((await cli(['ls'], worktree)).stderr).toContain('unknown grant')
 })
+
+it('stops a worktree daemon on an older owner generation and revokes its live grants', async () => {
+  // given a linked worktree with a running daemon and a usable grant, still on the original owner
+  const worktree = await addWorktree()
+  succeeds(await cli(['unlock', '--vault-password-stdin'], worktree, `${PASSWORD}\n`))
+  const token = succeeds(await cli(['grant', '--tier', 'default'], worktree)).stdout.trim()
+  owner['TYPEVAULT_GRANT'] = token
+  succeeds(await cli(['ls'], worktree))
+  delete owner['TYPEVAULT_GRANT']
+  const { identity } = await createIdentity('bob', 'machine')
+  const key = encodeMemberPublic(memberPublicOfIdentity(identity))
+  succeeds(await cli(['member', 'add', 'bob', key, '--owner', '--vault-password-stdin'], main, `${PASSWORD}\n`))
+  succeeds(await cli(['member', 'rm', 'bob', '--vault-password-stdin'], main, `${PASSWORD}\n`))
+  const { agentSocket } = localLayout(join(worktree, '.typevault'), owner)
+  expect(await servingPid(agentSocket)).toBeNumber()
+
+  // when the rotated checkout locks the vault
+  succeeds(await cli(['lock'], main))
+
+  // then the daemon is gone and the old token cannot be reused even after unlocking again
+  expect(await servingPid(agentSocket)).toBeUndefined()
+  succeeds(await cli(['unlock', '--vault-password-stdin'], worktree, `${PASSWORD}\n`))
+  try {
+    owner['TYPEVAULT_GRANT'] = token
+    expect((await cli(['ls'], worktree)).stderr).toContain('unknown grant')
+  } finally {
+    delete owner['TYPEVAULT_GRANT']
+  }
+}, 60_000)
 
 it("still ends grants in a worktree whose owner can't be read", async () => {
   // given a worktree with grants and a damaged owner.json
