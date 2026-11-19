@@ -8,7 +8,7 @@ import { TypeVaultError } from '../core/errors'
 import { atomicWrite, ensureDir } from '../core/fsx'
 import { claimDaemon, type DaemonClaim, refuseForeignDaemon } from '../core/holder'
 import { type Layout, localLayout } from '../core/layout'
-import { holdLock, isLockHeld } from '../core/lock'
+import { holdLock, isLockHeld, withLock } from '../core/lock'
 import { loadState, readOwner } from '../core/state'
 import { Vault } from '../core/vault'
 import { worktreeVaults } from '../core/worktrees'
@@ -145,10 +145,18 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
   // A shared session whose source is gone answers nothing but ping (how `stopDaemon` finds it) until it stops.
   const bound =
     (fetch: (request: Request) => Promise<Response>) =>
-    async (request: Request): Promise<Response> =>
-      sourceAlive() || new URL(request.url).pathname === '/v1/ping'
-        ? fetch(request)
-        : errorResponse(new TypeVaultError('locked', LOCKED_MESSAGE))
+    async (request: Request): Promise<Response> => {
+      if (new URL(request.url).pathname === '/v1/ping') return fetch(request)
+      if (!sourceAlive()) return errorResponse(new TypeVaultError('locked', LOCKED_MESSAGE))
+      try {
+        // Includes cached redaction values and worktree attachment: neither necessarily scans the vault. The shared lock
+        // keeps a rotation's half-written files out of view; it's released before dispatch so writes can take it.
+        await withLock(layout.lockFile, 'shared', async () => vault.refresh())
+      } catch (error) {
+        return errorResponse(error)
+      }
+      return fetch(request)
+    }
   const listen = (path: string, fetch: (request: Request) => Promise<Response>) => {
     const server = Bun.serve({ unix: path, fetch, maxRequestBodySize: 1 << 20 })
     // Windows sockets take the run directory's ACL; chmod there only toggles read-only.
