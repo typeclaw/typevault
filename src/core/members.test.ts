@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, spyOn } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -9,8 +9,10 @@ import { fromBase64 } from './encoding'
 import { type Envelope, signerOf } from './entries'
 import { createIdentity } from './identity'
 import { founderOf, initGlobalVault } from './init'
+import { wrapPath } from './keyring'
 import { globalLayout } from './layout'
 import { parseEntryName } from './naming'
+import { membersDoc } from './state'
 import { Txn } from './txn'
 import { Vault } from './vault'
 
@@ -18,6 +20,7 @@ const envIn = (dir: string) => ({ TYPEVAULT_DIR: join(dir, 'vault'), XDG_CONFIG_
 
 let root: string
 let owner: SecretKey
+let alice: SecretKey
 let admin: Admin
 
 const open = (keys: readonly SecretKey[]): Promise<Vault> => Vault.open(globalLayout(envIn(root)), keys, {})
@@ -42,7 +45,8 @@ beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'typevault-members-'))
   const founder = await createIdentity('alice', 'human', 'correct horse')
   ;({ owner } = await initGlobalVault(founderOf(founder.identity), envIn(root)))
-  admin = new Admin(await open([founder.key]))
+  alice = founder.key
+  admin = new Admin(await open([alice]))
   await admin.addTier('member')
   await admin.addTier('trusted')
 })
@@ -113,7 +117,90 @@ it('locks a removed member out and lists what it could read for rotation', async
 })
 
 it('refuses to remove an owner', async () => {
-  await expect(admin.removeMember('alice')).rejects.toMatchObject({ code: 'invalid' })
+  await expect(admin.removeMember('alice')).rejects.toMatchObject({
+    code: 'invalid',
+    message: expect.stringContaining('add another owner first'),
+  })
+})
+
+it('revokes a co-owner even if they saved the shared owner key and a tier key', async () => {
+  // given two owners and secrets in independent tiers
+  const bob = await createIdentity('bob', 'machine')
+  await admin.addMember('bob', { ...founderOf(bob.identity).member, owner: true, tiers: [] })
+  await put('openai', 'member')
+  await put('stripe', 'trusted')
+  const oldTier = await (await open([bob.key])).keyring.unlock('member')
+  if (oldTier === undefined) throw new Error('expected a tier key')
+
+  // when Bob removes Alice, and writes another entry under the new owner
+  expect(await new Admin(await open([bob.key])).removeMember('alice')).toEqual(['openai', 'stripe'])
+  const remaining = await open([bob.key])
+  const next = remaining.keyring.owner
+  if (next === undefined) throw new Error('expected the new owner key')
+  await remaining.put(
+    { name: parseEntryName('later'), fields: { key: { type: 'secret', value: 'new' } }, tier: 'member' },
+    signerOf(next),
+  )
+
+  // then all three ciphertexts are readable by Bob, but none by the saved keys
+  const { entries, problems } = await remaining.scan()
+  expect(problems).toEqual([])
+  expect(
+    entries.map(({ payload }): [string, boolean] => [payload.name, payload.needsRotation === true]).sort(),
+  ).toEqual([
+    ['later', false],
+    ['openai', true],
+    ['stripe', true],
+  ])
+  for (const { envelope } of entries) {
+    await expect(unseal([owner.identity, oldTier.identity], fromBase64(envelope.payload))).rejects.toMatchObject({
+      code: 'denied',
+    })
+  }
+  const revoked = await open([alice])
+  expect(revoked.keyring.owner).toBeUndefined()
+  expect((await revoked.scan()).entries).toEqual([])
+  expect(existsSync(join(remaining.layout.membersDir, 'alice.key'))).toBe(false)
+  expect(existsSync(join(remaining.layout.ownerWrapsDir, 'alice.age'))).toBe(false)
+  await expect(open([owner])).rejects.toMatchObject({ code: 'denied' })
+  await expect(admin.addTier('stale')).rejects.toMatchObject({ code: 'locked' })
+})
+
+it('refuses to list one key under a second name', async () => {
+  const { identity } = await createIdentity('ci', 'machine')
+  await admin.addMember('ci', { ...founderOf(identity).member, owner: false, tiers: ['member'] })
+
+  await expect(
+    admin.addMember('ci-copy', { ...founderOf(identity).member, owner: true, tiers: [] }),
+  ).rejects.toMatchObject({ code: 'conflict' })
+})
+
+it.each([
+  ['an owner', true, []],
+  ['a tier member', false, ['member']],
+] as const)("removes %s listing a removed owner's key under another name", async (_, aliasOwner, aliasTiers) => {
+  // given Bob as a second owner, and Alice's key also listed under another name
+  const bob = await createIdentity('bob', 'machine')
+  await admin.addMember('bob', { ...founderOf(bob.identity).member, owner: true, tiers: [] })
+  const before = (await open([])).state
+  const listed = before.members['alice']
+  if (listed === undefined) throw new Error('expected alice')
+  const alias = { ...listed, owner: aliasOwner, tiers: [...aliasTiers] }
+  const layout = globalLayout(envIn(root))
+  writeFileSync(
+    layout.membersFile,
+    membersDoc({ ...before.members, 'alice-alias': alias }, owner, before.seqs.members + 1),
+  )
+
+  // when Bob removes Alice
+  await new Admin(await open([bob.key])).removeMember('alice')
+
+  // then the alias is gone too, so no new owner or tier key is wrapped to Alice's key
+  const after = (await open([])).state
+  expect(Object.keys(after.members)).toEqual(['bob'])
+  expect(existsSync(join(layout.ownerWrapsDir, 'alice-alias.age'))).toBe(false)
+  const gen = after.tiers['member']?.gen ?? 0
+  expect(existsSync(join(layout.vault, wrapPath('member', gen, { kind: 'member', name: 'alice-alias' })))).toBe(false)
 })
 
 it('commits a human founder only in sealed form', async () => {

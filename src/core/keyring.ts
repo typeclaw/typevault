@@ -49,7 +49,11 @@ export async function unwrapOwner(
   keys: readonly SecretKey[],
 ): Promise<SecretKey | undefined> {
   const held = keys.find((key) => key.role.kind === 'owner')
-  if (held !== undefined) return held
+  if (held !== undefined) {
+    if (!samePublic(await publicKeyOf(held), state.owner))
+      throw new TypeVaultError('denied', 'this owner key no longer owns the vault')
+    return held
+  }
   for (const { name, key } of await heldMembers(state, keys)) {
     if (state.members[name]?.owner !== true) continue
     const owner = await openSealedKey(layout, ownerWrapPath(name), key, state.owner)

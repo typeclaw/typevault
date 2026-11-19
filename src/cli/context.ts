@@ -22,7 +22,7 @@ import { findLocalVault, globalLayout, type Layout, localLayout } from '../core/
 import type { EntryName } from '../core/naming'
 import { loadState } from '../core/state'
 import { touchIdAvailable } from '../core/touch-id'
-import { Vault } from '../core/vault'
+import { readSnapshot, Vault } from '../core/vault'
 import { worktreeVaults } from '../core/worktrees'
 import { callDaemon, isDaemonAlive } from '../daemon/client'
 import { LiveAccess } from '../daemon/live-access'
@@ -190,7 +190,7 @@ export async function resolveAccess(env: Env): Promise<ResolvedAccess> {
   }
   if (grant.startsWith('tvl1.')) {
     const layout = layoutFrom(env)
-    checkOwnerPin(layout, env)
+    await checkOwnerPin(layout, env)
     await ensureDaemon(layout, env)
     return { kind: 'live', access: new LiveAccess(layout.agentSocket, grant) }
   }
@@ -206,7 +206,7 @@ export async function resolveAccess(env: Env): Promise<ResolvedAccess> {
  */
 async function sessionAccess(env: Env): Promise<LiveAccess> {
   const layout = layoutFrom(env)
-  checkOwnerPin(layout, env)
+  await checkOwnerPin(layout, env)
   if (!(await hasSession(layout)) && !(await shareWorktreeSession(layout, env))) {
     const identity = readIdentity(env)
     if (identity === undefined) {
@@ -225,8 +225,8 @@ async function sessionAccess(env: Env): Promise<LiveAccess> {
  * A live connection reads through a daemon that may have trusted the owner without this process's pin, so a set
  * `TYPEVAULT_OWNER` is checked against the vault here, before anything is read through it.
  */
-function checkOwnerPin(layout: Layout, env: Env): void {
-  if (isSet(env['TYPEVAULT_OWNER'])) loadState(layout, env)
+async function checkOwnerPin(layout: Layout, env: Env): Promise<void> {
+  if (isSet(env['TYPEVAULT_OWNER'])) await readSnapshot(layout, env, async () => loadState(layout, env))
 }
 
 /**

@@ -4,7 +4,7 @@ import { signerOf } from './entries'
 import { TypeVaultError } from './errors'
 import { ownerWrapPath, wrapPath } from './keyring'
 import { withLock } from './lock'
-import { rotateTiers } from './rotate'
+import { rotateOwner, rotateTiers } from './rotate'
 import {
   ceilingsDoc,
   type MemberKind,
@@ -43,13 +43,14 @@ export class Admin {
     this.#owner = owner
   }
 
-  #mutate(build: (state: VaultState, txn: Txn) => Promise<void>): Promise<void> {
+  #mutate<T>(build: (state: VaultState, txn: Txn) => Promise<T>): Promise<T> {
     return withLock(this.#vault.layout.lockFile, 'exclusive', async () => {
       this.#vault.refresh()
       const txn = new Txn()
-      await build(this.#vault.state, txn)
+      const result = await build(this.#vault.state, txn)
       commitTxn(this.#vault.layout, txn)
-      this.#vault.refresh()
+      this.#vault.reload()
+      return result
     })
   }
 
@@ -152,6 +153,9 @@ export class Admin {
       const unknown = member.tiers.find((tier) => state.tiers[tier] === undefined)
       if (unknown !== undefined) throw new TypeVaultError('not_found', `no tier "${unknown}"`)
       const { kind, recipient, signPublic, owner, tiers } = member
+      // One key under two names would survive removing either name.
+      const alias = Object.entries(state.members).find(([, other]) => other.recipient === recipient)
+      if (alias !== undefined) throw new TypeVaultError('conflict', `this key is already member "${alias[0]}"`)
       const members = { ...state.members, [name]: { kind, recipient, signPublic, owner, tiers: [...tiers] } }
       if (owner) txn.put(ownerWrapPath(name), await seal([recipient], utf8(encodeSecretKey(this.#owner))))
       txn.put('members.json', membersDoc(members, this.#owner, state.seqs.members + 1))
@@ -163,22 +167,35 @@ export class Admin {
   /**
    * Drops a member and rotates every tier they reached, in one transaction: a crash leaves both or neither, never a
    * removed member whose keys still open new ciphertext. Returns the entries they could read, now flagged for
-   * rotation: what they already decrypted can only be revoked at each secret's source.
+   * rotation: what they already decrypted can only be revoked at each secret's source. Any other name listing the same
+   * key goes too: it would otherwise keep that key's access.
    */
-  async removeMember(name: string): Promise<readonly string[]> {
-    let affected: readonly string[] = []
-    await this.#mutate(async (state, txn) => {
+  removeMember(name: string): Promise<readonly string[]> {
+    return this.#mutate(async (state, txn) => {
       const member = state.members[name]
       if (member === undefined) throw new TypeVaultError('not_found', `no member "${name}"`)
-      // Every entry is also sealed to the owner key, which can't be rotated yet: a former owner would keep reading.
-      if (member.owner) throw new TypeVaultError('invalid', `"${name}" is an owner; removing an owner is not supported`)
-      const { [name]: _removed, ...rest } = state.members
-      txn.remove(`members/${name}.key`)
-      txn.put('members.json', membersDoc(rest, this.#owner, state.seqs.members + 1))
-      const context = { vault: this.#vault, owner: this.#owner, state: { ...state, members: rest }, txn, exposed: true }
-      affected = await rotateTiers(context, reachOf(state, member.tiers))
+      const removed = Object.entries(state.members).filter(([, other]) => other.recipient === member.recipient)
+      const members = Object.fromEntries(
+        Object.entries(state.members).filter(([, other]) => other.recipient !== member.recipient),
+      )
+      const context = { vault: this.#vault, owner: this.#owner, state: { ...state, members }, txn, exposed: true }
+      for (const [gone] of removed) txn.remove(`members/${gone}.key`)
+      if (removed.some(([, gone]) => gone.owner)) {
+        if (!Object.values(members).some((remaining) => remaining.owner)) {
+          throw new TypeVaultError('invalid', `"${name}" is the last owner; add another owner first`)
+        }
+        for (const [gone, { owner }] of removed) if (owner) txn.remove(ownerWrapPath(gone))
+        return rotateOwner(context)
+      }
+      txn.put('members.json', membersDoc(members, this.#owner, state.seqs.members + 1))
+      return rotateTiers(
+        context,
+        reachOf(
+          state,
+          removed.flatMap(([, gone]) => gone.tiers),
+        ),
+      )
     })
-    return affected
   }
 
   async setSigner(id: string, signPublic: string, tiers: readonly string[]): Promise<void> {

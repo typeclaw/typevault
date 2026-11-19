@@ -1,9 +1,10 @@
 import { encodeSecretKey, generateSecretKey, publicKeyOf, seal, type SecretKey } from './crypto'
-import { utf8 } from './encoding'
+import { canonicalJson, utf8 } from './encoding'
 import { sealEntry, type SignerRef, signerOf } from './entries'
 import { TypeVaultError } from './errors'
-import { wrapPath } from './keyring'
-import { type Tier, tiersDoc, includersOf, reach, type VaultState } from './state'
+import { ownerWrapPath, wrapPath } from './keyring'
+import { handover, ownerDoc, readOwner } from './owner-trust'
+import { type Tier, tiersDoc, includersOf, reach, type VaultState, membersDoc, signersDoc, ceilingsDoc } from './state'
 import type { Txn } from './txn'
 import type { Vault } from './vault'
 
@@ -15,6 +16,32 @@ export type RotateContext = {
   readonly txn: Txn
   /** Whether the old keys may have leaked, so every secret they reached must be rotated at its source. */
   readonly exposed: boolean
+}
+
+export async function rotateOwner(context: RotateContext): Promise<readonly string[]> {
+  const { vault, state, txn } = context
+  // Git doesn't take the vault lock, so owner.json can change under a rotation. The handover extends the owner document
+  // this rotation validated, and is staged only while owner.json still is exactly that document.
+  const previous = { recipient: state.owner.recipient, signPublic: state.owner.signPublic, handovers: state.handovers }
+  const unchanged = () => {
+    const { recipient, signPublic, handovers } = readOwner(vault.layout)
+    if (canonicalJson({ recipient, signPublic, handovers }) !== canonicalJson(previous))
+      throw new TypeVaultError('conflict', 'owner.json changed while rotating the owner key; pull and retry')
+  }
+  unchanged()
+  const owner = await generateSecretKey({ kind: 'owner' })
+  const pub = await publicKeyOf(owner)
+  const encoded = utf8(encodeSecretKey(owner))
+  for (const [name, member] of Object.entries(state.members)) {
+    if (member.owner) txn.put(ownerWrapPath(name), await seal([member.recipient], encoded))
+  }
+  txn.put('members.json', membersDoc(state.members, owner, state.seqs.members + 1))
+  txn.put('signers.json', signersDoc(state.signers, owner, state.seqs.signers + 1))
+  txn.put('ceilings.json', ceilingsDoc(state.ceilings, owner, state.seqs.ceilings + 1))
+  const affected = await rotateTiers({ ...context, owner, state: { ...state, owner: pub } }, Object.keys(state.tiers))
+  unchanged()
+  txn.put('owner.json', ownerDoc(pub, handover(previous, context.owner, pub)))
+  return affected
 }
 
 const signedBy = (signer: SignerRef, tier: string): boolean =>
@@ -29,7 +56,8 @@ const signedBy = (signer: SignerRef, tier: string): boolean =>
  */
 export async function rotateTiers(context: RotateContext, names: readonly string[]): Promise<readonly string[]> {
   const { vault, owner, state, txn, exposed } = context
-  if (names.length === 0) return []
+  const ownerChanged = state.owner.signPublic !== vault.state.owner.signPublic
+  if (names.length === 0 && !ownerChanged) return []
   const rotated = new Map<string, { readonly key: SecretKey; readonly tier: Tier }>()
   for (const name of new Set(names)) {
     const meta = state.tiers[name]
@@ -71,7 +99,14 @@ export async function rotateTiers(context: RotateContext, names: readonly string
   const reached = new Set([...rotated.keys()].flatMap((name) => [...reach(state.tiers, name)]))
   const affected: string[] = []
   const now = new Date().toISOString()
-  const { entries } = await vault.scan()
+  const { entries, problems } = await vault.scan()
+  if (ownerChanged && problems.length > 0) {
+    const files = problems.map(({ file, reason }) => `${file} (${reason})`).join(', ')
+    throw new TypeVaultError(
+      'tampered',
+      `cannot rotate the owner while entries are unreadable: ${files}. Run typevault doctor; move a file you can't vouch for out of entries/ (or restore it from git), then retry`,
+    )
+  }
   for (const { envelope, payload } of entries) {
     const reachable = reached.has(envelope.tier)
     if (!reachable && ![...rotated.keys()].some((name) => signedBy(envelope.signer, name))) continue

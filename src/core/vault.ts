@@ -86,9 +86,29 @@ export function resolveName(tiers: Tiers, copies: readonly StoredEntry[]): Store
 }
 
 /** An opened vault directory plus the keys this process holds. All reads and writes go through the vault lock. */
+const pendingTxn = (layout: Layout): boolean => existsSync(layout.txnDir) && readdirSync(layout.txnDir).length > 0
+
+/**
+ * Runs `read` under the shared vault lock, never on a half-applied transaction: a rotation re-signs manifests and wraps
+ * before owner.json, so an unlocked or unrecovered read could mix generations. A transaction left by a writer that died
+ * is rolled forward first; one that appears while waiting for the lock sends the read around again.
+ */
+export async function readSnapshot<T>(layout: Layout, env: Env, read: () => Promise<T>): Promise<T> {
+  // Recovery rewrites the journal, and the vault lock doesn't reach another host sharing this state directory.
+  refuseForeignDaemon(layout, env)
+  for (;;) {
+    if (pendingTxn(layout)) await withLock(layout.lockFile, 'exclusive', async () => recoverTxns(layout))
+    const snapshot = await withLock(layout.lockFile, 'shared', async () =>
+      pendingTxn(layout) ? undefined : { value: await read() },
+    )
+    if (snapshot !== undefined) return snapshot.value
+  }
+}
+
 export class Vault {
   readonly layout: Layout
   readonly #keys: readonly SecretKey[]
+  readonly #openedOwner: string
   readonly #env: Env
   readonly #member: string | undefined
   #state: VaultState
@@ -98,6 +118,7 @@ export class Vault {
     this.layout = layout
     this.#keys = keys
     this.#env = env
+    this.#openedOwner = state.owner.signPublic
     this.#member = member
     this.#state = state
     this.#keyring = new Keyring(layout, state, keys)
@@ -105,15 +126,13 @@ export class Vault {
 
   /** Opens the vault with `keys`. An owner member's key also brings the owner key it unwraps. */
   static async open(layout: Layout, keys: readonly SecretKey[], env: Env = process.env): Promise<Vault> {
-    refuseForeignDaemon(layout, env)
-    if (existsSync(layout.txnDir) && readdirSync(layout.txnDir).length > 0) {
-      await withLock(layout.lockFile, 'exclusive', async () => recoverTxns(layout))
-    }
-    const state = loadState(layout, env)
-    const owner = await unwrapOwner(layout, state, keys)
-    const [member] = await heldMembers(state, keys)
-    const all = owner === undefined || keys.includes(owner) ? keys : [...keys, owner]
-    return new Vault(layout, all, env, state, member?.name)
+    return readSnapshot(layout, env, async () => {
+      const state = loadState(layout, env)
+      const owner = await unwrapOwner(layout, state, keys)
+      const [member] = await heldMembers(state, keys)
+      const all = owner === undefined || keys.includes(owner) ? keys : [...keys, owner]
+      return new Vault(layout, all, env, state, member?.name)
+    })
   }
 
   get state(): VaultState {
@@ -135,8 +154,20 @@ export class Vault {
 
   /** Re-reads owner-signed state; call after another process may have changed it. */
   refresh(): void {
+    this.reload()
+    if (this.#state.owner.signPublic !== this.#openedOwner) {
+      throw new TypeVaultError(
+        'locked',
+        'the vault owner rotated; reopen the vault (for a session, run typevault lock then typevault unlock)',
+      )
+    }
+  }
+
+  /** Apply committed state without transferring an already-open handle's authority across a handover. */
+  reload(): void {
     this.#state = loadState(this.layout, this.#env)
-    this.#keyring = new Keyring(this.layout, this.#state, this.#keys)
+    const keys = this.#state.owner.signPublic === this.#openedOwner ? this.#keys : []
+    this.#keyring = new Keyring(this.layout, this.#state, keys)
   }
 
   /** Every entry this process can open. Untrustworthy files are reported, never returned. */
