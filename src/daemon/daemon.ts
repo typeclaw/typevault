@@ -8,9 +8,9 @@ import { TypeVaultError } from '../core/errors'
 import { atomicWrite, ensureDir } from '../core/fsx'
 import { claimDaemon, type DaemonClaim, refuseForeignDaemon } from '../core/holder'
 import { type Layout, localLayout } from '../core/layout'
-import { holdLock, isLockHeld, withLock } from '../core/lock'
+import { holdLock, isLockHeld } from '../core/lock'
 import { loadState, readOwner } from '../core/state'
-import { Vault } from '../core/vault'
+import { readSnapshot, Vault } from '../core/vault'
 import { worktreeVaults } from '../core/worktrees'
 import { adminRoutes, type Ceiling } from './admin-routes'
 import { agentRoutes, type DaemonContext } from './agent-routes'
@@ -149,9 +149,10 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
       if (new URL(request.url).pathname === '/v1/ping') return fetch(request)
       if (!sourceAlive()) return errorResponse(new TypeVaultError('locked', LOCKED_MESSAGE))
       try {
-        // Includes cached redaction values and worktree attachment: neither necessarily scans the vault. The shared lock
-        // keeps a rotation's half-written files out of view; it's released before dispatch so writes can take it.
-        await withLock(layout.lockFile, 'shared', async () => vault.refresh())
+        // Includes cached redaction values and worktree attachment: neither necessarily scans the vault. The snapshot
+        // finishes an interrupted rotation and keeps a running one's half-written files out of view; it's released
+        // before dispatch so writes can take the lock.
+        await readSnapshot(layout, options.env, async () => vault.refresh())
       } catch (error) {
         return errorResponse(error)
       }

@@ -17,6 +17,8 @@ import { type Founder, founderOf, initGlobalVault } from '../core/init'
 import { globalLayout, type Layout } from '../core/layout'
 import { holdLock, isLockHeld } from '../core/lock'
 import { parseEntryName } from '../core/naming'
+import { rotateOwner } from '../core/rotate'
+import { Txn } from '../core/txn'
 import { Vault } from '../core/vault'
 import { callDaemon } from './client'
 import { type RunningDaemon, startDaemon } from './daemon'
@@ -115,6 +117,30 @@ describe('live grants', () => {
       code: 'tampered',
       message: expect.stringContaining(layout.tiersFile),
     })
+  })
+
+  it('finishes an interrupted owner rotation before answering a live request', async () => {
+    // given a live grant, and an owner rotation that committed its journal but applied only members.json
+    const { token } = await grant('default', { tiers: ['member'] })
+    const vault = await Vault.open(layout, [owner], {})
+    const txn = new Txn()
+    await rotateOwner({ vault, owner, state: vault.state, txn, exposed: false })
+    const staged = join(layout.txnDir, 'interrupted')
+    mkdirSync(join(staged, 'files'), { recursive: true })
+    const puts = [...txn.puts.keys()]
+    puts.forEach((rel, index) => writeFileSync(join(staged, 'files', String(index)), txn.puts.get(rel) ?? ''))
+    writeFileSync(join(staged, 'manifest.json'), JSON.stringify({ puts, removes: [...txn.removes] }))
+    writeFileSync(join(staged, 'COMMITTED'), '')
+    const members = join(staged, 'files', String(puts.indexOf('members.json')))
+    writeFileSync(layout.membersFile, readFileSync(members))
+    rmSync(members)
+
+    // when the grant's agent asks the running daemon
+    const listed = new LiveAccess(layout.agentSocket, token).list()
+
+    // then the daemon rolls the rotation forward and refuses as locked, never reading the mixed generation as tampered
+    await expect(listed).rejects.toMatchObject({ code: 'locked' })
+    expect(existsSync(staged)).toBe(false)
   })
 
   it.each(['0s', '99999999999d'])('rejects TTL %s through the admin socket', async (ttl) => {
