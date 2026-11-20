@@ -22,7 +22,7 @@ import {
   writeIdentity,
 } from '../../core/identity'
 import { type Layout, localLayout, vaultIdOf } from '../../core/layout'
-import { firstOwnerSignPublic, readOwner } from '../../core/owner-trust'
+import { readOwner } from '../../core/owner-trust'
 import { Vault } from '../../core/vault'
 import { worktreeVaults } from '../../core/worktrees'
 import { endLiveGrants, stopDaemon } from '../../daemon/spawn'
@@ -257,10 +257,11 @@ export const lock = defineCommand({
     if (layout === undefined) throw new TypeVaultError('not_found', 'no vault here')
     const env = process.env
     // An owner that can't be read doesn't prove another vault, so lock still reaches it.
-    const ownerOf = (target: Layout): { readonly current: string; readonly origin: string } | undefined => {
+    // Every key the signature-verified handover chain passed through, ending at the current one.
+    const ownerOf = (target: Layout): { readonly keys: ReadonlySet<string> } | undefined => {
       try {
         const owner = readOwner(target)
-        return { current: owner.signPublic, origin: firstOwnerSignPublic(owner) }
+        return { keys: new Set([...owner.handovers.map(({ from }) => from), owner.signPublic]) }
       } catch (error) {
         if (error instanceof TypeVaultError) return undefined
         throw error
@@ -273,8 +274,9 @@ export const lock = defineCommand({
       .map((vault) => localLayout(vault, env))
       .filter((worktree) => {
         const other = ownerOf(worktree)
-        // Same current owner, or the same vault on another owner generation (one that hasn't pulled a rotation yet).
-        return own === undefined || other === undefined || other.current === own.current || other.origin === own.origin
+        // Any owner key both verified chains passed through: the same vault on another generation (one that hasn't pulled
+        // a rotation yet) or rotated independently from a common owner. Claimed origins alone could disagree.
+        return own === undefined || other === undefined || [...other.keys].some((key) => own.keys.has(key))
       })
     // A session unlocked in any other worktree would only be shared here again on the next read, so it stops too, but
     // the grants of a different vault are its own.
