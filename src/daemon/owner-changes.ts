@@ -23,13 +23,32 @@ export type Waited<T> = { readonly done: false } | { readonly done: true; readon
 const outcomesDir = (run: string): string => join(run, 'owner-changes')
 const outcomePath = (run: string, id: string): string => join(outcomesDir(run), `${OwnerChangeId.parse(id)}.json`)
 
-const expired = (path: string): boolean => statSync(path).mtimeMs + OWNER_CHANGE_KEEP_MS <= Date.now()
+const missing = (error: unknown): boolean => error instanceof Error && 'code' in error && error.code === 'ENOENT'
+
+/** Whether the receipt at `path` is past its window; one removed meanwhile counts as past it. */
+function expired(path: string): boolean {
+  try {
+    return statSync(path).mtimeMs + OWNER_CHANGE_KEEP_MS <= Date.now()
+  } catch (error) {
+    if (missing(error)) return true
+    throw error
+  }
+}
+
+// Cleanup only: a receipt removed meanwhile is already gone, and one that can't be removed is refused on reads anyway.
+function remove(path: string): void {
+  try {
+    rmSync(path)
+  } catch (error) {
+    if (!missing(error)) console.error('typevault daemon: removing an expired owner-change outcome failed', error)
+  }
+}
 
 export function readOutcome<T>(run: string, id: string, schema: z.ZodType<T>): T | undefined {
   const path = outcomePath(run, id)
   if (!existsSync(path)) return undefined
   if (expired(path)) {
-    rmSync(path, { force: true })
+    remove(path)
     return undefined
   }
   const outcome = Outcome.parse(JSON.parse(readFileSync(path, 'utf8')))
@@ -128,10 +147,20 @@ export class OwnerChanges<T> {
 
   #prune(): void {
     const dir = outcomesDir(this.#run)
-    if (!existsSync(dir) || !statSync(dir).isDirectory()) return
-    for (const file of readdirSync(dir)) {
+    let files: string[]
+    try {
+      files = existsSync(dir) && statSync(dir).isDirectory() ? readdirSync(dir) : []
+    } catch (error) {
+      console.error('typevault daemon: listing owner-change outcomes failed', error)
+      return
+    }
+    for (const file of files) {
       const path = join(dir, file)
-      if (expired(path)) rmSync(path, { force: true })
+      try {
+        if (expired(path)) remove(path)
+      } catch (error) {
+        console.error('typevault daemon: checking an owner-change outcome failed', error)
+      }
     }
   }
 }

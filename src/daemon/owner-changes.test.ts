@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, setSystemTime } from 'bun:test'
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -98,6 +98,33 @@ it('forgets an outcome once its window has passed, without another change', asyn
     setSystemTime()
   }
 })
+
+// Permissions don't stop the superuser, and Windows has no read-only directories in this sense.
+it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+  'starts and refuses an expired outcome whose file cannot be removed',
+  async () => {
+    // given an outcome kept on disk, in a directory that has since become read-only
+    const change = id()
+    const changes = queue()
+    changes.admit(change, async () => 'committed')
+    await changes.wait(change, 1_000)
+    chmodSync(join(run, 'owner-changes'), 0o500)
+    try {
+      // when its window has passed
+      setSystemTime(Date.now() + OWNER_CHANGE_KEEP_MS + 1_000)
+
+      // then a new queue still starts and admits, and the stale outcome is refused although it stays on disk
+      const restarted = queue()
+      expect(restarted.has(change)).toBe(false)
+      expect(readOutcome(run, change, z.string())).toBeUndefined()
+      restarted.admit(id(), async () => 'next')
+      expect(readdirSync(join(run, 'owner-changes'))).toEqual([`${change}.json`])
+    } finally {
+      setSystemTime()
+      chmodSync(join(run, 'owner-changes'), 0o700)
+    }
+  },
+)
 
 it('keeps going when an outcome cannot be written to disk', async () => {
   // given a run directory where outcomes can't be written
