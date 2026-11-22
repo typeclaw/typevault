@@ -713,6 +713,20 @@ describe('unlocked session', () => {
       const { token } = await grant('ops', { tiers: ['member'] })
       expect((await new LiveAccess(layout.agentSocket, token).list()).map((e): string => e.name)).toContain('openai')
     })
+
+    it('uncap the default socket once they remove its signed ceiling', async () => {
+      // given a signed default ceiling, and an owner's session started under it
+      await new Admin(await Vault.open(layout, [owner], {})).setCeiling('default', 'member')
+      const { session, key } = await ownerSession()
+      await expect(grant('default', { tiers: ['trusted'] })).rejects.toMatchObject({ code: 'denied' })
+
+      // when the session removes that ceiling
+      const request = { op: 'ceiling.rm', name: 'default' }
+      await session.call('/v1/admin', { request, proof: await proofBy(session, key) }, AdminResultSchema)
+
+      // then the default socket grants above it without a restart
+      expect((await grant('default', { tiers: ['trusted'] })).token).toStartWith('tvl1.')
+    })
   })
 
   it('imports through the session in one transaction, and never past a grant', async () => {
