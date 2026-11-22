@@ -60,6 +60,15 @@ function session(context: DaemonContext, request: Request): { grant: ResolvedGra
   return { grant, access }
 }
 
+/** The unlocked session's own grant: a grant derived from it (an agent's) can't widen itself to a worktree. */
+function ownSession(context: DaemonContext, request: Request, refusal: string): ResolvedGrant {
+  const { grant } = session(context, request)
+  if (grant.record.ceiling !== SESSION_CEILING || grant.record.parent !== undefined) {
+    throw new TypeVaultError('denied', refusal)
+  }
+  return grant
+}
+
 type StagedImport = {
   readonly grant: string
   readonly parts: Uint8Array[]
@@ -190,10 +199,9 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
         ),
       )
     },
-    // Only the session's own grant shares it: a grant derived from it (an agent's) can't widen itself to a worktree.
     '/v1/attach': async (request) => {
-      const { record } = session(context, request).grant
-      if (context.attach === undefined || record.ceiling !== SESSION_CEILING || record.parent !== undefined) {
+      const { record } = ownSession(context, request, 'only an unlocked session can be shared with a worktree')
+      if (context.attach === undefined) {
         throw new TypeVaultError('denied', 'only an unlocked session can be shared with a worktree')
       }
       const { vault } = await parseBody(request, AttachBody)
