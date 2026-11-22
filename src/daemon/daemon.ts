@@ -234,10 +234,12 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
       clearInterval(watch)
       stopping = true
       try {
+        // Closed before the first wait, so nothing is admitted while attachments settle. A change still running would
+        // otherwise persist grants or open sockets after cleanup.
+        const ownerChanges = context.ownerChanges?.stop()
         // An attachment still starting would otherwise leave its worktree unlocked after this stop.
         await Promise.allSettled(attaching)
-        // An owner change still running would otherwise persist grants or open sockets after cleanup.
-        await context.ownerChanges?.stop()
+        await ownerChanges
         // The claim was cleared and someone else's daemon now owns the grants, session and run files. Saving this
         // daemon's stale grant store or removing those files would undo its successor's, so only local resources go.
         if (!claim.owns()) {
