@@ -4,7 +4,6 @@ import { parseTtl } from '../access/scope'
 import { ScopedVault } from '../access/scoped'
 import { appendAudit } from '../audit/log'
 import { type AdminResult, runAdminOp } from '../core/admin'
-import { randomToken } from '../core/crypto'
 import { TypeVaultError } from '../core/errors'
 import type { Vault } from '../core/vault'
 import { PACKAGE_VERSION } from '../core/version'
@@ -242,7 +241,9 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
       const grant = ownSession(context, request, OWNER_ONLY)
       const { ownerWindow: window, ownerChanges } = context
       if (window === undefined || ownerChanges === undefined) throw new TypeVaultError('denied', OWNER_ONLY)
-      const { request: op, proof } = await parseBody(request, AdminBody)
+      const { request: op, proof, change } = await parseBody(request, AdminBody)
+      // A caller that lost the answer asks again under the same id: that change already has, or will have, its outcome.
+      if (ownerChanges.has(change)) return json({ change })
       if (proof !== undefined) {
         const { vault } = context
         const member = vault.member === undefined ? undefined : vault.state.members[vault.member]
@@ -250,7 +251,6 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
         window.open(proof.nonce, proof.signature, member.signPublic)
       }
       if (!window.isOpen) throw new TypeVaultError('locked', 'owner changes need your password or Touch ID again')
-      const change = randomToken(16)
       ownerChanges.admit(change, async () => {
         const result = await runAdminOp(context.vault, op)
         // Committed: what follows can't undo it, so a failure there is reported beside the result, never instead of it.

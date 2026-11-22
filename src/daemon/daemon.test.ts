@@ -9,7 +9,7 @@ import { envFor } from '../access/env'
 import { ScopedVault } from '../access/scoped'
 import { readAudit } from '../audit/log'
 import { Admin } from '../core/admin'
-import { decodeSecretKey, seal, type SecretKey, sign } from '../core/crypto'
+import { decodeSecretKey, randomToken, seal, type SecretKey, sign } from '../core/crypto'
 import { utf8 } from '../core/encoding'
 import { signerOf } from '../core/entries'
 import { createIdentity, memberPublicOfIdentity } from '../core/identity'
@@ -596,7 +596,7 @@ describe('unlocked session', () => {
 
     // An owner change as the CLI makes it: admitted, then polled until the daemon reports its outcome.
     async function change(access: LiveAccess, body: Record<string, unknown>) {
-      const { change: id } = await access.call('/v1/admin', body, AdmittedSchema)
+      const { change: id } = await access.call('/v1/admin', { change: randomToken(16), ...body }, AdmittedSchema)
       for (;;) {
         const waited = await access.call('/v1/admin/wait', { change: id }, AdminWaitedSchema)
         if (waited.done) return waited.result
@@ -745,7 +745,7 @@ describe('unlocked session', () => {
 
       // when a change is admitted, polling reports it as still running
       const body = { request: tierAdd('slow'), proof: await proofBy(session, key) }
-      const { change: id } = await session.call('/v1/admin', body, AdmittedSchema)
+      const { change: id } = await session.call('/v1/admin', { change: randomToken(16), ...body }, AdmittedSchema)
       expect(await session.call('/v1/admin/wait', { change: id, waitMs: 50 }, AdminWaitedSchema)).toEqual({
         done: false,
       })
@@ -763,7 +763,7 @@ describe('unlocked session', () => {
       const { session, key } = await ownerSession()
       const release = await holdShared()
       const body = { request: tierAdd('running'), proof: await proofBy(session, key) }
-      const { change: running } = await session.call('/v1/admin', body, AdmittedSchema)
+      const { change: running } = await session.call('/v1/admin', { change: randomToken(16), ...body }, AdmittedSchema)
 
       // when the daemon starts stopping, it waits for that change
       let stopped = false
@@ -786,9 +786,10 @@ describe('unlocked session', () => {
       // given an owner's session with a change held back by a reader
       const { session, key } = await ownerSession()
       const release = await holdShared()
-      const { change } = await session.call(
+      const change = randomToken(16)
+      await session.call(
         '/v1/admin',
-        { request: tierAdd('late'), proof: await proofBy(session, key) },
+        { change, request: tierAdd('late'), proof: await proofBy(session, key) },
         AdmittedSchema,
       )
 
@@ -804,6 +805,21 @@ describe('unlocked session', () => {
       expect(readOutcome(layout.run, change, AdminResultSchema)).toMatchObject({ affected: [], scopeRefreshed: true })
       expect(await tiers()).toContain('late')
       daemon = await startDaemon({ layout, env, keys: [owner] })
+    })
+
+    it('run a change once when its admission is sent again, used proof and all', async () => {
+      // given an owner change admitted and finished
+      const { session, key } = await ownerSession()
+      const body = { change: randomToken(16), request: tierAdd('once'), proof: await proofBy(session, key) }
+      await session.call('/v1/admin', body, AdmittedSchema)
+      const first = await session.call('/v1/admin/wait', { change: body.change }, AdminWaitedSchema)
+
+      // when the same admission arrives again, as after a dropped answer
+      expect(await session.call('/v1/admin', body, AdmittedSchema)).toEqual({ change: body.change })
+
+      // then it reports the same outcome, and the tier was added once
+      expect(await session.call('/v1/admin/wait', { change: body.change }, AdminWaitedSchema)).toEqual(first)
+      expect(await tiers()).toEqual(['member', 'once', 'trusted'])
     })
 
     it('keep a committed change when the session grant cannot be saved after it', async () => {

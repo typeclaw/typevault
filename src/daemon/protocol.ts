@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import { isPreset, parseEntryName } from '../core/naming'
 import { FieldsSchema } from '../core/payload'
+import { OwnerChangeId } from './owner-changes'
 
 const name = z.string().transform((value) => parseEntryName(value))
 const preset = z.string().refine(isPreset, 'unknown preset').optional()
@@ -64,6 +65,8 @@ export const AdminBody = z.object({
     z.object({ op: z.literal('member.add'), name: z.string(), publicKey: z.string(), owner: z.boolean(), tiers }),
   ]),
   proof: z.object({ nonce: z.string().max(64), signature: z.string().max(200) }).optional(),
+  /** The caller's own id for this change: admitting it again changes nothing. */
+  change: OwnerChangeId,
 })
 export const AdminResultSchema = z.object({
   affected: z.array(z.string()),
@@ -75,9 +78,9 @@ export const AdminResultSchema = z.object({
   scopeRefreshed: z.boolean(),
 })
 export const ChallengeSchema = z.object({ open: z.boolean(), nonce: z.string() })
-export const AdmittedSchema = z.object({ change: z.string() })
+export const AdmittedSchema = z.object({ change: OwnerChangeId })
 export const AdminWaitBody = z.object({
-  change: z.string().max(64),
+  change: OwnerChangeId,
   waitMs: z.number().int().min(0).max(5_000).optional(),
 })
 export const AdminWaitedSchema = z.union([
