@@ -48,6 +48,21 @@ it('asks once for a chain of owner commands, unlocking a session on the first, a
   succeeds(await cli(['ls'], owner))
 })
 
+it('refuses an agent owner changes through a session unlocked for reading', async () => {
+  // given the owner unlocked the vault, as for reads
+  succeeds(await cli(['unlock', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
+
+  // when an agent (no terminal, no password) runs an owner command through it
+  const agent = await cli(['member', 'rm', 'alice'], owner)
+
+  // then it is refused and nothing changed
+  expect({ code: agent.code, stderr: agent.stderr }).toEqual({
+    code: 1,
+    stderr: 'typevault: owner changes need your password or Touch ID: run this at a terminal\n',
+  })
+  expect(succeeds(await cli(['member', 'ls'], owner)).stdout).toContain('alice')
+})
+
 it('issues grants through a ceiling set from a locked vault, without a restart', async () => {
   succeeds(await cli(['ceiling', 'set', 'bot', 'default', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
   const issued = succeeds(await cli(['grant', '--tier', 'default'], { ...owner, TYPEVAULT_CEILING: 'bot' }))
