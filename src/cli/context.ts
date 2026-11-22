@@ -182,7 +182,12 @@ export async function runAdmin(env: Env, request: AdminOp): Promise<AdminResult>
   const { open, nonce } = await access.call('/v1/admin/challenge', {}, ChallengeSchema)
   const key = open ? undefined : (unlockedWith ?? (await ownerKey(env)))
   const proof = key === undefined ? undefined : { nonce, signature: sign(key.signSecret, ownerWindowMessage(nonce)) }
-  return access.call('/v1/admin', { request, ...(proof === undefined ? {} : { proof }) }, AdminResultSchema)
+  const body = { request, ...(proof === undefined ? {} : { proof }) }
+  const { unserved, ...result } = await access.call('/v1/admin', body, AdminResultSchema)
+  for (const name of unserved) {
+    note(`ceiling "${name}" is set, but its admin socket didn't open: run typevault lock, then typevault unlock`)
+  }
+  return result
 }
 
 async function ownerKey(env: Env): Promise<SecretKey> {

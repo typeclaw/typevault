@@ -714,6 +714,23 @@ describe('unlocked session', () => {
       expect((await new LiveAccess(layout.agentSocket, token).list()).map((e): string => e.name)).toContain('openai')
     })
 
+    it('report a ceiling whose socket could not open, and open it with the next change', async () => {
+      // given an owner's session, and something in the way of a new ceiling's socket
+      const { session, key } = await ownerSession()
+      mkdirSync(layout.adminSocket('ops'))
+
+      // when it sets that ceiling, the change commits and the socket is reported as not open
+      const request = { op: 'ceiling.set', name: 'ops', tier: 'member' }
+      const set = await session.call('/v1/admin', { request, proof: await proofBy(session, key) }, AdminResultSchema)
+      expect(set.unserved).toEqual(['ops'])
+      expect((await Vault.open(layout, [], {})).state.ceilings['ops']).toBe('member')
+
+      // then once the way is clear, the next owner change opens it
+      rmSync(layout.adminSocket('ops'), { recursive: true })
+      expect((await session.call('/v1/admin', { request: tierAdd('next') }, AdminResultSchema)).unserved).toEqual([])
+      expect((await grant('ops', { tiers: ['member'] })).token).toStartWith('tvl1.')
+    })
+
     it('uncap the default socket once they remove its signed ceiling', async () => {
       // given a signed default ceiling, and an owner's session started under it
       await new Admin(await Vault.open(layout, [owner], {})).setCeiling('default', 'member')

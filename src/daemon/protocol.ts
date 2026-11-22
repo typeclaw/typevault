@@ -69,5 +69,7 @@ export const AdminResultSchema = z.object({
   affected: z.array(z.string()),
   removed: z.array(z.string()),
   ownerRotated: z.boolean(),
+  /** Ceilings the change set whose admin sockets the session couldn't open. */
+  unserved: z.array(z.string()),
 })
 export const ChallengeSchema = z.object({ open: z.boolean(), nonce: z.string() })

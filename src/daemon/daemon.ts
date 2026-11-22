@@ -190,13 +190,22 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
       }),
     ),
   ]
-  // A ceiling set through this session gets its socket right away; stopping removes it with the others.
-  const serveNewCeilings = (): void => {
+  // A ceiling set through this session gets its socket right away; stopping removes it with the others. One whose socket
+  // can't open stays untracked, so the next owner change tries again, and is returned: the change itself committed.
+  const serveNewCeilings = (): readonly string[] => {
+    const unserved: string[] = []
     for (const ceiling of ceilingsOf(vault)) {
       if (ceilings.some((served) => served.name === ceiling.name)) continue
+      try {
+        servers.push(serveCeiling(ceiling))
+      } catch (error) {
+        console.error(`typevault daemon: opening the admin socket of ceiling "${ceiling.name}" failed`, error)
+        unserved.push(ceiling.name)
+        continue
+      }
       ceilings.push(ceiling)
-      servers.push(serveCeiling(ceiling))
     }
+    return unserved
   }
   atomicWrite(join(layout.run, 'daemon.pid'), String(process.pid), 0o600)
   const session = options.session === undefined ? undefined : await openSession(context, options.session.ttlMs)
