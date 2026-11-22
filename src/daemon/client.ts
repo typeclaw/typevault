@@ -49,7 +49,16 @@ export async function callDaemon<T>(
     }
     throw error
   }
-  const payload: unknown = await response.json()
+  let payload: unknown
+  try {
+    payload = await response.json()
+  } catch (error) {
+    // A reply cut off after its headers was lost in transport like a dropped connection: it is no answer from the daemon.
+    if (error instanceof Error) {
+      throw new TypeVaultError('unavailable', 'the typevault daemon reply was cut off', { cause: error })
+    }
+    throw error
+  }
   if (!response.ok) {
     const parsed = ErrorSchema.safeParse(payload)
     throw parsed.success
