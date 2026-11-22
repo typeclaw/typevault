@@ -4,7 +4,7 @@ import { TypeVaultError } from '../core/errors'
 import type { Layout } from '../core/layout'
 import { isDaemonAlive } from '../daemon/client'
 import type { LiveAccess } from '../daemon/live-access'
-import { OWNER_CHANGE_KEEP_MS, readOutcome } from '../daemon/owner-changes'
+import { OWNER_CHANGE_KEEP_MS, readOutcome, settledResult } from '../daemon/owner-changes'
 import { AdminResultSchema, AdmittedSchema, AdminWaitedSchema } from '../daemon/protocol'
 
 const TRANSPORT_RETRIES = 5
@@ -75,11 +75,11 @@ export async function ownerChange(
     } catch (error) {
       if (!lostInTransport(error)) throw error
       const kept = readOutcome(layout.run, change, AdminResultSchema)
-      if (kept !== undefined) return kept
+      if (kept !== undefined) return settledResult(kept)
       if (++failures >= TRANSPORT_RETRIES || !(await isDaemonAlive(layout.agentSocket))) {
         // A draining daemon may have saved the outcome and closed while it was probed.
         const late = readOutcome(layout.run, change, AdminResultSchema)
-        if (late !== undefined) return late
+        if (late !== undefined) return settledResult(late)
         throw unknown(error)
       }
     }

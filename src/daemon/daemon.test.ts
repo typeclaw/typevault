@@ -832,7 +832,10 @@ describe('unlocked session', () => {
       expect(await noGrant.call('/v1/admin/wait', { change, waitMs: 50 }, AdminWaitedSchema)).toEqual({ done: false })
       await release()
       await stopping
-      expect(readOutcome(layout.run, change, AdminResultSchema)).toMatchObject({ affected: [], scopeRefreshed: true })
+      expect(readOutcome(layout.run, change, AdminResultSchema)).toMatchObject({
+        state: 'done',
+        result: { affected: [], scopeRefreshed: true },
+      })
       expect(await tiers()).toContain('late')
       daemon = await startDaemon({ layout, env, keys: [owner] })
     })

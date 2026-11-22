@@ -18,7 +18,12 @@ const Outcome = z.union([
   z.object({ error: z.object({ code: z.string(), message: z.string() }) }),
 ])
 type Outcome = z.infer<typeof Outcome>
-export type Waited<T> = { readonly done: false } | { readonly done: true; readonly result: T }
+export type ChangeError = { readonly code: string; readonly message: string }
+/** A settled change: what it returned, or the error it failed with. Neither is the same as having no receipt. */
+export type Settled<T> =
+  | { readonly state: 'done'; readonly result: T }
+  | { readonly state: 'failed'; readonly error: ChangeError }
+export type Waited<T> = Settled<T> | { readonly state: 'running' } | { readonly state: 'unknown' }
 
 const outcomesDir = (run: string): string => join(run, 'owner-changes')
 const outcomePath = (run: string, id: string): string => join(outcomesDir(run), `${OwnerChangeId.parse(id)}.json`)
@@ -44,7 +49,7 @@ function remove(path: string): void {
   }
 }
 
-export function readOutcome<T>(run: string, id: string, schema: z.ZodType<T>): T | undefined {
+export function readOutcome<T>(run: string, id: string, schema: z.ZodType<T>): Settled<T> | undefined {
   const path = outcomePath(run, id)
   if (!existsSync(path)) return undefined
   if (expired(path)) {
@@ -52,8 +57,14 @@ export function readOutcome<T>(run: string, id: string, schema: z.ZodType<T>): T
     return undefined
   }
   const outcome = Outcome.parse(JSON.parse(readFileSync(path, 'utf8')))
-  if ('error' in outcome) throw new TypeVaultError(toCode(outcome.error.code), outcome.error.message)
-  return schema.parse(outcome.result)
+  if ('error' in outcome) return { state: 'failed', error: outcome.error }
+  return { state: 'done', result: schema.parse(outcome.result) }
+}
+
+/** The settled change's own result, or its own error thrown. */
+export function settledResult<T>(settled: Settled<T>): T {
+  if (settled.state === 'done') return settled.result
+  throw new TypeVaultError(toCode(settled.error.code), settled.error.message)
 }
 
 /**
@@ -69,7 +80,7 @@ export class OwnerChanges<T> {
   readonly #schema: z.ZodType<T>
   #tail: Promise<unknown> = Promise.resolve()
   #stopping = false
-  readonly #changes = new Map<string, { readonly done: Promise<T>; settledAt?: number }>()
+  readonly #changes = new Map<string, { readonly settled: Promise<Settled<T>>; settledAt?: number }>()
 
   constructor(run: string, schema: z.ZodType<T>) {
     this.#run = run
@@ -93,24 +104,23 @@ export class OwnerChanges<T> {
         throw new TypeVaultError('locked', 'the session locked before this change started: nothing changed')
       return run()
     })
-    this.#changes.set(id, { done })
-    this.#tail = done.then(
-      (result) => this.#keep(id, { result }),
-      (error: unknown) => this.#keep(id, { error: outcomeError(error) }),
+    const settled = done.then(
+      (result): Settled<T> => ({ state: 'done', result }),
+      (error: unknown): Settled<T> => ({ state: 'failed', error: outcomeError(error) }),
+    )
+    this.#changes.set(id, { settled })
+    this.#tail = settled.then((outcome) =>
+      this.#keep(id, outcome.state === 'done' ? { result: outcome.result } : { error: outcome.error }),
     )
   }
 
   async wait(id: string, waitMs: number): Promise<Waited<T>> {
-    const done = this.#change(id)?.done
-    if (done === undefined) {
-      const result = readOutcome(this.#run, id, this.#schema)
-      if (result === undefined) throw new TypeVaultError('not_found', 'no such owner change')
-      return { done: true, result }
-    }
+    const settled = this.#change(id)?.settled
+    if (settled === undefined) return readOutcome(this.#run, id, this.#schema) ?? { state: 'unknown' }
     const { promise: timedOut, resolve } = Promise.withResolvers<Waited<T>>()
-    const timer = setTimeout(() => resolve({ done: false }), waitMs)
+    const timer = setTimeout(() => resolve({ state: 'running' }), waitMs)
     try {
-      return await Promise.race([done.then((result) => ({ done: true as const, result })), timedOut])
+      return await Promise.race([settled, timedOut])
     } finally {
       clearTimeout(timer)
     }
@@ -124,7 +134,7 @@ export class OwnerChanges<T> {
 
   // The change has settled whatever happens here: a receipt that can't be written leaves it in memory only, and never
   // stops the next change or a drain.
-  #change(id: string): { readonly done: Promise<T>; settledAt?: number } | undefined {
+  #change(id: string): { readonly settled: Promise<Settled<T>>; settledAt?: number } | undefined {
     const change = this.#changes.get(id)
     if (change?.settledAt !== undefined && change.settledAt + OWNER_CHANGE_KEEP_MS <= Date.now()) {
       this.#changes.delete(id)
@@ -165,7 +175,7 @@ export class OwnerChanges<T> {
   }
 }
 
-function outcomeError(error: unknown): { code: string; message: string } {
+function outcomeError(error: unknown): ChangeError {
   if (error instanceof TypeVaultError) return { code: error.code, message: error.message }
   // Unexpected failures stay out of outcomes, as out of responses: they may carry details an agent shouldn't see.
   console.error('typevault daemon: owner change failed', error)

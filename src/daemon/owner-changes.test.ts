@@ -34,13 +34,13 @@ it('runs changes one at a time, in the order they were admitted', async () => {
   })
 
   // then the second waits for the first
-  expect(await changes.wait(b, 0)).toEqual({ done: false })
+  expect(await changes.wait(b, 0)).toEqual({ state: 'running' })
   expect(started).toEqual(['a'])
 
   // and once the first finishes, both report their outcomes
   first.resolve('a done')
-  expect(await changes.wait(a, 1_000)).toEqual({ done: true, result: 'a done' })
-  expect(await changes.wait(b, 1_000)).toEqual({ done: true, result: 'b done' })
+  expect(await changes.wait(a, 1_000)).toEqual({ state: 'done', result: 'a done' })
+  expect(await changes.wait(b, 1_000)).toEqual({ state: 'done', result: 'b done' })
 })
 
 it('runs a change admitted twice under one id once', async () => {
@@ -50,9 +50,9 @@ it('runs a change admitted twice under one id once', async () => {
   const run = async () => `run ${++runs}`
   changes.admit(change, run)
   changes.admit(change, run)
-  expect(await changes.wait(change, 1_000)).toEqual({ done: true, result: 'run 1' })
+  expect(await changes.wait(change, 1_000)).toEqual({ state: 'done', result: 'run 1' })
   changes.admit(change, run)
-  expect(await changes.wait(change, 1_000)).toEqual({ done: true, result: 'run 1' })
+  expect(await changes.wait(change, 1_000)).toEqual({ state: 'done', result: 'run 1' })
   expect(runs).toBe(1)
 })
 
@@ -65,15 +65,17 @@ it('keeps an outcome readable after it was collected, and after its daemon is go
     throw new Error('rotation failed')
   })
   await changes.wait(done, 1_000)
-  await expect(changes.wait(failed, 1_000)).rejects.toThrow('rotation failed')
+  const internal = { state: 'failed', error: { code: 'unavailable', message: 'internal daemon error' } } as const
+  expect(await changes.wait(failed, 1_000)).toEqual(internal)
 
   // then each can be collected again, by this queue and from the run directory
-  expect(await changes.wait(done, 0)).toEqual({ done: true, result: 'committed' })
-  expect(await changes.wait(done, 0)).toEqual({ done: true, result: 'committed' })
-  expect(await queue().wait(done, 0)).toEqual({ done: true, result: 'committed' })
-  expect(readOutcome(run, done, z.string())).toBe('committed')
-  expect(() => readOutcome(run, failed, z.string())).toThrow('internal daemon error')
-  await expect(queue().wait(id(), 0)).rejects.toMatchObject({ code: 'not_found' })
+  expect(await changes.wait(done, 0)).toEqual({ state: 'done', result: 'committed' })
+  expect(await changes.wait(done, 0)).toEqual({ state: 'done', result: 'committed' })
+  expect(await queue().wait(done, 0)).toEqual({ state: 'done', result: 'committed' })
+  expect(readOutcome(run, done, z.string())).toEqual({ state: 'done', result: 'committed' })
+  expect(readOutcome(run, failed, z.string())).toEqual(internal)
+  expect(await queue().wait(failed, 0)).toEqual(internal)
+  expect(await queue().wait(id(), 0)).toEqual({ state: 'unknown' })
 })
 
 it('forgets an outcome once its window has passed, without another change', async () => {
@@ -88,7 +90,7 @@ it('forgets an outcome once its window has passed, without another change', asyn
 
     // then neither the queue nor the run directory knows it, and a new queue clears the stale file
     expect(changes.has(change)).toBe(false)
-    await expect(changes.wait(change, 0)).rejects.toMatchObject({ code: 'not_found' })
+    expect(await changes.wait(change, 0)).toEqual({ state: 'unknown' })
     expect(readOutcome(run, change, z.string())).toBeUndefined()
     writeFileSync(join(run, 'owner-changes', `${id()}.json`), JSON.stringify({ result: 'stale' }))
     setSystemTime(Date.now() + OWNER_CHANGE_KEEP_MS + 1_000)
@@ -137,8 +139,8 @@ it('keeps going when an outcome cannot be written to disk', async () => {
   changes.admit(next, async () => 'next')
 
   // then both report their outcomes from memory, and stopping still settles
-  expect(await changes.wait(first, 1_000)).toEqual({ done: true, result: 'committed' })
-  expect(await changes.wait(next, 1_000)).toEqual({ done: true, result: 'next' })
+  expect(await changes.wait(first, 1_000)).toEqual({ state: 'done', result: 'committed' })
+  expect(await changes.wait(next, 1_000)).toEqual({ state: 'done', result: 'next' })
   await changes.stop()
 })
 
@@ -156,7 +158,7 @@ it('stops by admitting nothing new, starting nothing queued, and waiting for the
     started.push('b')
     return 'b done'
   })
-  expect(await changes.wait(a, 0)).toEqual({ done: false })
+  expect(await changes.wait(a, 0)).toEqual({ state: 'running' })
 
   // when it stops, admission closes at once, and stopping waits for the running change
   let stopped = false
@@ -164,13 +166,13 @@ it('stops by admitting nothing new, starting nothing queued, and waiting for the
     stopped = true
   })
   expect(() => changes.admit(id(), async () => 'late')).toThrow('nothing changed')
-  expect(await changes.wait(a, 0)).toEqual({ done: false })
+  expect(await changes.wait(a, 0)).toEqual({ state: 'running' })
   expect(stopped).toBe(false)
 
   // then the running change finishes, the queued one never starts, and stopping completes
   running.resolve('a done')
   await stopping
-  expect(await changes.wait(a, 0)).toEqual({ done: true, result: 'a done' })
-  await expect(changes.wait(b, 0)).rejects.toThrow('nothing changed')
+  expect(await changes.wait(a, 0)).toEqual({ state: 'done', result: 'a done' })
+  expect(await changes.wait(b, 0)).toMatchObject({ state: 'failed', error: { code: 'locked' } })
   expect(started).toEqual(['a'])
 })
