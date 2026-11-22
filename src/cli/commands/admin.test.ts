@@ -48,6 +48,12 @@ it('asks once for a chain of owner commands, unlocking a session on the first, a
   succeeds(await cli(['ls'], owner))
 })
 
+it('issues grants through a ceiling set from a locked vault, without a restart', async () => {
+  succeeds(await cli(['ceiling', 'set', 'bot', 'default', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
+  const issued = succeeds(await cli(['grant', '--tier', 'default'], { ...owner, TYPEVAULT_CEILING: 'bot' }))
+  expect(issued.stdout).toStartWith('tvl1.')
+})
+
 it('keeps identity and checkout state directories private', () => {
   if (process.platform === 'win32') return
   const config = join(base, 'alice', 'typevault')

@@ -700,6 +700,19 @@ describe('unlocked session', () => {
       // then both values are still redacted
       expect([...(await session.readValues())].sort()).toEqual(['sk-test-openai', 'sk_live_x'])
     })
+
+    it('serve the admin socket of a ceiling they set right away', async () => {
+      // given an owner's session
+      const { session, key } = await ownerSession()
+
+      // when it sets a new ceiling
+      const request = { op: 'ceiling.set', name: 'ops', tier: 'member' }
+      await session.call('/v1/admin', { request, proof: await proofBy(session, key) }, AdminResultSchema)
+
+      // then that ceiling's socket issues grants without a restart
+      const { token } = await grant('ops', { tiers: ['member'] })
+      expect((await new LiveAccess(layout.agentSocket, token).list()).map((e): string => e.name)).toContain('openai')
+    })
   })
 
   it('imports through the session in one transaction, and never past a grant', async () => {

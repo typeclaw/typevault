@@ -101,7 +101,7 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
   if (vault.keyring.owner === undefined && vault.member === undefined) {
     throw new TypeVaultError('denied', 'this key is not a member of the vault')
   }
-  const ceilings = ceilingsOf(vault)
+  const ceilings = [...ceilingsOf(vault)]
   if (ceilings.length === 0 && options.session === undefined)
     throw new TypeVaultError('invalid', 'no ceilings configured (typevault ceiling set <name> <tier>)')
 
@@ -148,6 +148,7 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
       : {
           sessionTiers: member?.tiers ?? [],
           ownerWindow: new OwnerWindow(),
+          serveNewCeilings: () => serveNewCeilings(),
           ...(attach === undefined ? {} : { attach }),
         }),
   }
@@ -173,11 +174,11 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
     if (process.platform !== 'win32') chmodSync(path, 0o600)
     return server
   }
+  const serveCeiling = (ceiling: Ceiling) =>
+    listen(layout.adminSocket(ceiling.name), bound(router(adminRoutes(context, ceiling))))
   const servers = [
     listen(layout.agentSocket, bound(router(agentRoutes(context)))),
-    ...ceilings.map((ceiling) =>
-      listen(layout.adminSocket(ceiling.name), bound(router(adminRoutes(context, ceiling)))),
-    ),
+    ...ceilings.map(serveCeiling),
     listen(
       layout.controlSocket,
       router({
@@ -189,6 +190,14 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
       }),
     ),
   ]
+  // A ceiling set through this session gets its socket right away; stopping removes it with the others.
+  const serveNewCeilings = (): void => {
+    for (const ceiling of ceilingsOf(vault)) {
+      if (ceilings.some((served) => served.name === ceiling.name)) continue
+      ceilings.push(ceiling)
+      servers.push(serveCeiling(ceiling))
+    }
+  }
   atomicWrite(join(layout.run, 'daemon.pid'), String(process.pid), 0o600)
   const session = options.session === undefined ? undefined : await openSession(context, options.session.ttlMs)
   const adopt = (): void => {

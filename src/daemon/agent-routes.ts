@@ -38,6 +38,8 @@ export type DaemonContext = {
   readonly attach?: (vault: string, exp: number) => Promise<void>
   /** An unlocked session's: when its owner changes go through. */
   readonly ownerWindow?: OwnerWindow
+  /** An unlocked session's: opens the admin socket of a ceiling an owner change just set. */
+  readonly serveNewCeilings?: () => void
 }
 
 function bearer(request: Request): string {
@@ -233,6 +235,7 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
         const tiers = [...(await context.vault.keyring.reachableTiers())].sort()
         context.grants.retier(grant.record.id, tiers)
         context.sessions.get(grant.record.id)?.rescope([{ tiers, only: grant.record.only }])
+        context.serveNewCeilings?.()
         return result
       })
       ownerChanges = change.catch(() => undefined)
