@@ -19,6 +19,7 @@ import { GrantStore, SESSION_CEILING } from './grants'
 import { errorResponse, json, router } from './http'
 import { OwnerChanges } from './owner-changes'
 import { OwnerWindow } from './owner-window'
+import { AdminResultSchema } from './protocol'
 import { type PromptOptions, PromptRequests } from './requests'
 import { LOCKED_MESSAGE, startSession, stopDaemon } from './spawn'
 
@@ -149,7 +150,7 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
       : {
           sessionTiers: member?.tiers ?? [],
           ownerWindow: new OwnerWindow(),
-          ownerChanges: new OwnerChanges<OwnerChangeResult>(),
+          ownerChanges: new OwnerChanges<OwnerChangeResult>(layout.run, AdminResultSchema),
           serveNewCeilings: () => serveNewCeilings(),
           ...(attach === undefined ? {} : { attach }),
         }),

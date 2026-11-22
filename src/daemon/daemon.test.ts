@@ -24,8 +24,9 @@ import { callDaemon } from './client'
 import { type RunningDaemon, startDaemon } from './daemon'
 import { GrantStore, MAX_CHAIN } from './grants'
 import { LiveAccess } from './live-access'
+import { readOutcome } from './owner-changes'
 import { OWNER_WINDOW_MS, ownerWindowMessage } from './owner-window'
-import { AdminWaitedSchema, AdmittedSchema, ChallengeSchema } from './protocol'
+import { AdminResultSchema, AdminWaitedSchema, AdmittedSchema, ChallengeSchema } from './protocol'
 import { PromptRequests } from './requests'
 
 // Unix socket paths are limited to ~104 bytes (108 on Windows), too short under the default temp dir on macOS and
@@ -778,6 +779,30 @@ describe('unlocked session', () => {
       await release()
       await stopping
       expect(await tiers()).toEqual(['member', 'running', 'trusted'])
+      daemon = await startDaemon({ layout, env, keys: [owner] })
+    })
+
+    it('report the outcome of a change that outlasts its session, even once its daemon stopped', async () => {
+      // given an owner's session with a change held back by a reader
+      const { session, key } = await ownerSession()
+      const release = await holdShared()
+      const { change } = await session.call(
+        '/v1/admin',
+        { request: tierAdd('late'), proof: await proofBy(session, key) },
+        AdmittedSchema,
+      )
+
+      // when the session ends, as its expiry ends it: the daemon stops
+      const stopping = daemon.stop()
+
+      // then the change's own id polls without any live grant, and once the reader lets go and the daemon is gone, the
+      // outcome stays in the run directory
+      const noGrant = new LiveAccess(layout.agentSocket, 'tvl1.none.none')
+      expect(await noGrant.call('/v1/admin/wait', { change, waitMs: 50 }, AdminWaitedSchema)).toEqual({ done: false })
+      await release()
+      await stopping
+      expect(readOutcome(layout.run, change, AdminResultSchema)).toMatchObject({ affected: [], scopeRefreshed: true })
+      expect(await tiers()).toContain('late')
       daemon = await startDaemon({ layout, env, keys: [owner] })
     })
 

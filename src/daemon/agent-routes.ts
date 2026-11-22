@@ -4,6 +4,7 @@ import { parseTtl } from '../access/scope'
 import { ScopedVault } from '../access/scoped'
 import { appendAudit } from '../audit/log'
 import { type AdminResult, runAdminOp } from '../core/admin'
+import { randomToken } from '../core/crypto'
 import { TypeVaultError } from '../core/errors'
 import type { Vault } from '../core/vault'
 import { PACKAGE_VERSION } from '../core/version'
@@ -249,7 +250,8 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
         window.open(proof.nonce, proof.signature, member.signPublic)
       }
       if (!window.isOpen) throw new TypeVaultError('locked', 'owner changes need your password or Touch ID again')
-      const change = ownerChanges.admit(grant.record.id, async () => {
+      const change = randomToken(16)
+      ownerChanges.admit(change, async () => {
         const result = await runAdminOp(context.vault, op)
         // Committed: what follows can't undo it, so a failure there is reported beside the result, never instead of it.
         const scopeRefreshed = await refreshScope(context, grant)
@@ -257,11 +259,12 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
       })
       return json({ change })
     },
+    // The change's own random id authorizes collecting its outcome, which names no secret value: the session that
+    // admitted it may have expired meanwhile, and the caller must still learn what to rotate at the source.
     '/v1/admin/wait': async (request) => {
-      const grant = ownSession(context, request, OWNER_ONLY)
       if (context.ownerChanges === undefined) throw new TypeVaultError('denied', OWNER_ONLY)
       const { change, waitMs } = await parseBody(request, AdminWaitBody)
-      return json(await context.ownerChanges.wait(grant.record.id, change, waitMs ?? OWNER_CHANGE_POLL_MS))
+      return json(await context.ownerChanges.wait(change, waitMs ?? OWNER_CHANGE_POLL_MS))
     },
     '/v1/attach': async (request) => {
       const { record } = ownSession(context, request, 'only an unlocked session can be shared with a worktree')
