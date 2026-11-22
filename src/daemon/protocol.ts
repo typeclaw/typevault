@@ -71,6 +71,8 @@ export const AdminResultSchema = z.object({
   ownerRotated: z.boolean(),
   /** Ceilings the change set whose admin sockets the session couldn't open. */
   unserved: z.array(z.string()),
+  /** False when the change committed but the session's grant couldn't be widened to the tiers it now reaches. */
+  scopeRefreshed: z.boolean(),
 })
 export const ChallengeSchema = z.object({ open: z.boolean(), nonce: z.string() })
 export const AdmittedSchema = z.object({ change: z.string() })

@@ -187,7 +187,10 @@ export async function runAdmin(env: Env, request: AdminOp): Promise<AdminResult>
   // A rotation can outlast one request: poll until the daemon reports the outcome.
   let waited = await access.call('/v1/admin/wait', { change }, AdminWaitedSchema)
   while (!waited.done) waited = await access.call('/v1/admin/wait', { change }, AdminWaitedSchema)
-  const { unserved, ...result } = waited.result
+  const { unserved, scopeRefreshed, ...result } = waited.result
+  if (!scopeRefreshed) {
+    note('this session does not reach the tiers the change added yet: run typevault lock, then typevault unlock')
+  }
   for (const name of unserved) {
     note(`ceiling "${name}" is set, but its admin socket didn't open: run typevault lock, then typevault unlock`)
   }

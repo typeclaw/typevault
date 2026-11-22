@@ -781,6 +781,29 @@ describe('unlocked session', () => {
       daemon = await startDaemon({ layout, env, keys: [owner] })
     })
 
+    it('keep a committed change when the session grant cannot be saved after it', async () => {
+      // given an owner's session whose grant store can no longer be written
+      const { session, key } = await ownerSession()
+      const saved = readFileSync(layout.grantsFile, 'utf8')
+      rmSync(layout.grantsFile)
+      mkdirSync(layout.grantsFile)
+      try {
+        // when it adds a tier
+        const added = await change(session, { request: tierAdd('fresh'), proof: await proofBy(session, key) })
+
+        // then the change is reported as committed, with the session left on the scope it had
+        expect(added).toMatchObject({ affected: [], scopeRefreshed: false })
+        expect(await tiers()).toContain('fresh')
+        await expect(
+          session.set({ name: n('in-fresh'), tier: 'fresh', fields: secret('sk-fresh') }),
+        ).rejects.toMatchObject({ code: 'denied' })
+        expect((await session.list()).length).toBe(3)
+      } finally {
+        rmSync(layout.grantsFile, { recursive: true })
+        writeFileSync(layout.grantsFile, saved, { mode: 0o600 })
+      }
+    })
+
     it('uncap the default socket once they remove its signed ceiling', async () => {
       // given a signed default ceiling, and an owner's session started under it
       await new Admin(await Vault.open(layout, [owner], {})).setCeiling('default', 'member')

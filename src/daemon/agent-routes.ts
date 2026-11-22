@@ -46,7 +46,7 @@ export type DaemonContext = {
   readonly ownerChanges?: OwnerChanges<OwnerChangeResult>
 }
 
-export type OwnerChangeResult = AdminResult & { readonly unserved: readonly string[] }
+export type OwnerChangeResult = AdminResult & { readonly unserved: readonly string[]; readonly scopeRefreshed: boolean }
 
 function bearer(request: Request): string {
   const header = request.headers.get('authorization') ?? ''
@@ -83,6 +83,23 @@ function ownSession(context: DaemonContext, request: Request, refusal: string): 
 }
 
 const OWNER_ONLY = 'owner changes go through an unlocked session only'
+
+/**
+ * A session reaches every tier its key does, as when it opened: a tier an owner change added or included among them. Its
+ * cached scope is updated in place, keeping the values it handed out for redaction, and only once the grant is saved,
+ * so the two never disagree. False when saving failed.
+ */
+async function refreshScope(context: DaemonContext, grant: ResolvedGrant): Promise<boolean> {
+  const tiers = [...(await context.vault.keyring.reachableTiers())].sort()
+  try {
+    context.grants.retier(grant.record.id, tiers)
+  } catch (error) {
+    console.error('typevault daemon: widening the session grant after an owner change failed', error)
+    return false
+  }
+  context.sessions.get(grant.record.id)?.rescope([{ tiers, only: grant.record.only }])
+  return true
+}
 
 type StagedImport = {
   readonly grant: string
@@ -234,12 +251,9 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
       if (!window.isOpen) throw new TypeVaultError('locked', 'owner changes need your password or Touch ID again')
       const change = ownerChanges.admit(grant.record.id, async () => {
         const result = await runAdminOp(context.vault, op)
-        // A session reaches every tier its key does, as when it opened: a tier this change added or included among them.
-        // Its cached scope is updated in place, keeping the values it handed out for redaction.
-        const tiers = [...(await context.vault.keyring.reachableTiers())].sort()
-        context.grants.retier(grant.record.id, tiers)
-        context.sessions.get(grant.record.id)?.rescope([{ tiers, only: grant.record.only }])
-        return { ...result, unserved: context.serveNewCeilings?.() ?? [] }
+        // Committed: what follows can't undo it, so a failure there is reported beside the result, never instead of it.
+        const scopeRefreshed = await refreshScope(context, grant)
+        return { ...result, scopeRefreshed, unserved: context.serveNewCeilings?.() ?? [] }
       })
       return json({ change })
     },

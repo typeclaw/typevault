@@ -58,10 +58,12 @@ export class GrantStore {
     this.#records = existsSync(path) ? readJsonFile(path, z.array(RecordSchema)) : []
   }
 
-  #save(): void {
+  /** Writes `records` first, so a failed write leaves the grants in memory as they are on disk. */
+  #save(records: readonly GrantRecord[] = this.#records): void {
     const now = Date.now()
-    this.#records = this.#records.filter((record) => Date.parse(record.exp) > now)
-    atomicWrite(this.#path, JSON.stringify(this.#records), 0o600)
+    const live = records.filter((record) => Date.parse(record.exp) > now)
+    atomicWrite(this.#path, JSON.stringify(live), 0o600)
+    this.#records = live
   }
 
   issue(request: GrantRequest): { readonly token: string; readonly record: GrantRecord } {
@@ -118,8 +120,7 @@ export class GrantStore {
   }
 
   retier(id: string, tiers: readonly string[]): void {
-    this.#records = this.#records.map((record) => (record.id === id ? { ...record, tiers: [...tiers] } : record))
-    this.#save()
+    this.#save(this.#records.map((record) => (record.id === id ? { ...record, tiers: [...tiers] } : record)))
   }
 
   /** Whether grant `id` and all its ancestors are still unrevoked and unexpired. */
