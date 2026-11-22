@@ -178,14 +178,24 @@ export const openPublic = (env: Env): Promise<Vault> => Vault.open(layoutFrom(en
  * are there with the key that unlock used, or else asking for it once the session's owner window has closed.
  */
 export async function runAdmin(env: Env, request: AdminOp): Promise<AdminResult> {
-  if (machineKeys(env).length > 0 || isSet(env['TYPEVAULT_GRANT'])) return runAdminOp(await openDirect(env), request)
+  const direct = machineKeys(env).length > 0 || isSet(env['TYPEVAULT_GRANT'])
+  const result = direct ? await runAdminOp(await openDirect(env), request) : await sessionAdmin(env, request)
+  if (!result.reloaded) {
+    note(
+      'the change committed, but the vault could not be reloaded after it: run typevault lock, then typevault unlock',
+    )
+  }
+  return result
+}
+
+async function sessionAdmin(env: Env, request: AdminOp): Promise<AdminResult> {
   const { access, unlockedWith } = await sessionAccess(env)
   const { open, nonce } = await access.call('/v1/admin/challenge', {}, ChallengeSchema)
   const key = open ? undefined : (unlockedWith ?? (await ownerKey(env)))
   const proof = key === undefined ? undefined : { nonce, signature: sign(key.signSecret, ownerWindowMessage(nonce)) }
   const body = { request, change: randomToken(16), ...(proof === undefined ? {} : { proof }) }
   const { unserved, scopeRefreshed, ...result } = await ownerChange(access, layoutFrom(env), body)
-  if (!scopeRefreshed) {
+  if (!scopeRefreshed && result.reloaded) {
     note('this session does not reach the tiers the change added yet: run typevault lock, then typevault unlock')
   }
   for (const name of unserved) {
