@@ -13,10 +13,11 @@ import { loadState, readOwner } from '../core/state'
 import { readSnapshot, Vault } from '../core/vault'
 import { worktreeVaults } from '../core/worktrees'
 import { adminRoutes, type Ceiling } from './admin-routes'
-import { agentRoutes, type DaemonContext } from './agent-routes'
+import { agentRoutes, type DaemonContext, type OwnerChangeResult } from './agent-routes'
 import { isDaemonAlive } from './client'
 import { GrantStore, SESSION_CEILING } from './grants'
 import { errorResponse, json, router } from './http'
+import { OwnerChanges } from './owner-changes'
 import { OwnerWindow } from './owner-window'
 import { type PromptOptions, PromptRequests } from './requests'
 import { LOCKED_MESSAGE, startSession, stopDaemon } from './spawn'
@@ -148,6 +149,7 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
       : {
           sessionTiers: member?.tiers ?? [],
           ownerWindow: new OwnerWindow(),
+          ownerChanges: new OwnerChanges<OwnerChangeResult>(),
           serveNewCeilings: () => serveNewCeilings(),
           ...(attach === undefined ? {} : { attach }),
         }),
@@ -230,6 +232,8 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
       try {
         // An attachment still starting would otherwise leave its worktree unlocked after this stop.
         await Promise.allSettled(attaching)
+        // An owner change still running would otherwise persist grants or open sockets after cleanup.
+        await context.ownerChanges?.stop()
         // The claim was cleared and someone else's daemon now owns the grants, session and run files. Saving this
         // daemon's stale grant store or removing those files would undo its successor's, so only local resources go.
         if (!claim.owns()) {

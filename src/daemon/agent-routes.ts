@@ -3,12 +3,13 @@ import { randomBytes } from 'node:crypto'
 import { parseTtl } from '../access/scope'
 import { ScopedVault } from '../access/scoped'
 import { appendAudit } from '../audit/log'
-import { runAdminOp } from '../core/admin'
+import { type AdminResult, runAdminOp } from '../core/admin'
 import { TypeVaultError } from '../core/errors'
 import type { Vault } from '../core/vault'
 import { PACKAGE_VERSION } from '../core/version'
 import { type GrantStore, type ResolvedGrant, SESSION_CEILING } from './grants'
 import { type Handler, json, parseBody } from './http'
+import { OWNER_CHANGE_POLL_MS, type OwnerChanges } from './owner-changes'
 import type { OwnerWindow } from './owner-window'
 import {
   AdminBody,
@@ -40,7 +41,11 @@ export type DaemonContext = {
   readonly ownerWindow?: OwnerWindow
   /** An unlocked session's: opens the admin socket of a ceiling an owner change just set; returns those that failed. */
   readonly serveNewCeilings?: () => readonly string[]
+  /** An unlocked session's: the owner changes it admitted, run one at a time. */
+  readonly ownerChanges?: OwnerChanges<OwnerChangeResult>
 }
+
+export type OwnerChangeResult = AdminResult & { readonly unserved: readonly string[] }
 
 function bearer(request: Request): string {
   const header = request.headers.get('authorization') ?? ''
@@ -94,8 +99,6 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
   // An import, or even one entry, can exceed a request body, so its serialized JSON arrives in chunks and is written
   // by one final call, all or nothing.
   const staged = new Map<string, StagedImport>()
-  // Owner changes run one at a time, so each publishes the session's scope in the order the changes were committed.
-  let ownerChanges: Promise<unknown> = Promise.resolve()
   const stagedBy = (upload: string, grant: string): StagedImport => {
     const found = staged.get(upload)
     if (found === undefined || found.grant !== grant || found.exp <= Date.now()) {
@@ -218,8 +221,8 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
     },
     '/v1/admin': async (request) => {
       const grant = ownSession(context, request, OWNER_ONLY)
-      const window = context.ownerWindow
-      if (window === undefined) throw new TypeVaultError('denied', OWNER_ONLY)
+      const { ownerWindow: window, ownerChanges } = context
+      if (window === undefined || ownerChanges === undefined) throw new TypeVaultError('denied', OWNER_ONLY)
       const { request: op, proof } = await parseBody(request, AdminBody)
       if (proof !== undefined) {
         const { vault } = context
@@ -228,7 +231,7 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
         window.open(proof.nonce, proof.signature, member.signPublic)
       }
       if (!window.isOpen) throw new TypeVaultError('locked', 'owner changes need your password or Touch ID again')
-      const change = ownerChanges.then(async () => {
+      const change = ownerChanges.admit(grant.record.id, async () => {
         const result = await runAdminOp(context.vault, op)
         // A session reaches every tier its key does, as when it opened: a tier this change added or included among them.
         // Its cached scope is updated in place, keeping the values it handed out for redaction.
@@ -237,8 +240,10 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
         context.sessions.get(grant.record.id)?.rescope([{ tiers, only: grant.record.only }])
         return { ...result, unserved: context.serveNewCeilings?.() ?? [] }
       })
-      ownerChanges = change.catch(() => undefined)
-      return json(await change)
+      for (;;) {
+        const waited = await ownerChanges.wait(grant.record.id, change, OWNER_CHANGE_POLL_MS)
+        if (waited.done) return json(waited.result)
+      }
     },
     '/v1/attach': async (request) => {
       const { record } = ownSession(context, request, 'only an unlocked session can be shared with a worktree')
