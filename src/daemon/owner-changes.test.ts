@@ -1,12 +1,12 @@
-import { afterEach, beforeEach, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { afterEach, beforeEach, expect, it, setSystemTime } from 'bun:test'
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { z } from 'zod'
 
 import { randomToken } from '../core/crypto'
-import { OwnerChanges, readOutcome } from './owner-changes'
+import { OWNER_CHANGE_KEEP_MS, OwnerChanges, readOutcome } from './owner-changes'
 
 let run: string
 const deferred = () => Promise.withResolvers<string>()
@@ -74,6 +74,29 @@ it('keeps an outcome readable after it was collected, and after its daemon is go
   expect(readOutcome(run, done, z.string())).toBe('committed')
   expect(() => readOutcome(run, failed, z.string())).toThrow('internal daemon error')
   await expect(queue().wait(id(), 0)).rejects.toMatchObject({ code: 'not_found' })
+})
+
+it('forgets an outcome once its window has passed, without another change', async () => {
+  // given a change that finished and was kept on disk
+  const changes = queue()
+  const change = id()
+  changes.admit(change, async () => 'committed')
+  await changes.wait(change, 1_000)
+  try {
+    // when its window passes with nothing else admitted
+    setSystemTime(Date.now() + OWNER_CHANGE_KEEP_MS + 1_000)
+
+    // then neither the queue nor the run directory knows it, and a new queue clears the stale file
+    expect(changes.has(change)).toBe(false)
+    await expect(changes.wait(change, 0)).rejects.toMatchObject({ code: 'not_found' })
+    expect(readOutcome(run, change, z.string())).toBeUndefined()
+    writeFileSync(join(run, 'owner-changes', `${id()}.json`), JSON.stringify({ result: 'stale' }))
+    setSystemTime(Date.now() + OWNER_CHANGE_KEEP_MS + 1_000)
+    queue()
+    expect(existsSync(join(run, 'owner-changes')) && readdirSync(join(run, 'owner-changes'))).toEqual([])
+  } finally {
+    setSystemTime()
+  }
 })
 
 it('keeps going when an outcome cannot be written to disk', async () => {

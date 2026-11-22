@@ -9,7 +9,8 @@ import { toCode } from './client'
 
 /** Under Bun's 10-second idle timeout, which also cuts a request whose handler hasn't answered yet. */
 export const OWNER_CHANGE_POLL_MS = 5_000
-const KEEP_MS = 10 * 60_000
+/** How long an outcome stays readable, and so how long admitting the same id again is recognized as a retry. */
+export const OWNER_CHANGE_KEEP_MS = 10 * 60_000
 export const OwnerChangeId = z.string().regex(/^[A-Za-z0-9_-]{22}$/, 'not an owner change id')
 
 const Outcome = z.union([
@@ -22,9 +23,15 @@ export type Waited<T> = { readonly done: false } | { readonly done: true; readon
 const outcomesDir = (run: string): string => join(run, 'owner-changes')
 const outcomePath = (run: string, id: string): string => join(outcomesDir(run), `${OwnerChangeId.parse(id)}.json`)
 
+const expired = (path: string): boolean => statSync(path).mtimeMs + OWNER_CHANGE_KEEP_MS <= Date.now()
+
 export function readOutcome<T>(run: string, id: string, schema: z.ZodType<T>): T | undefined {
   const path = outcomePath(run, id)
   if (!existsSync(path)) return undefined
+  if (expired(path)) {
+    rmSync(path, { force: true })
+    return undefined
+  }
   const outcome = Outcome.parse(JSON.parse(readFileSync(path, 'utf8')))
   if ('error' in outcome) throw new TypeVaultError(toCode(outcome.error.code), outcome.error.message)
   return schema.parse(outcome.result)
@@ -34,7 +41,8 @@ export function readOutcome<T>(run: string, id: string, schema: z.ZodType<T>): T
  * Owner changes through a session, one at a time, so each publishes its effects in commit order. A rotation can outlast
  * any one request, and the session itself, so a change is admitted at once under the caller's own random id, the
  * receipt it polls with, and its outcome is kept for a while: in memory, and in the run directory for a caller whose
- * daemon stopped meanwhile. Admitting an id again changes nothing, so a caller that lost the answer can ask again.
+ * daemon stopped meanwhile. Within that window, admitting an id again changes nothing, so a caller that lost the answer
+ * can ask again; past it, the id is unknown.
  * Stopping admits nothing new, cancels what hasn't started and waits for the one running.
  */
 export class OwnerChanges<T> {
@@ -42,15 +50,19 @@ export class OwnerChanges<T> {
   readonly #schema: z.ZodType<T>
   #tail: Promise<unknown> = Promise.resolve()
   #stopping = false
-  readonly #changes = new Map<string, Promise<T>>()
+  readonly #changes = new Map<string, { readonly done: Promise<T>; settledAt?: number }>()
 
   constructor(run: string, schema: z.ZodType<T>) {
     this.#run = run
     this.#schema = schema
+    this.#prune()
   }
 
   has(id: string): boolean {
-    return this.#changes.has(id) || existsSync(outcomePath(this.#run, id))
+    const change = this.#change(id)
+    if (change !== undefined) return true
+    const path = outcomePath(this.#run, id)
+    return existsSync(path) && !expired(path)
   }
 
   admit(id: string, run: () => Promise<T>): void {
@@ -62,7 +74,7 @@ export class OwnerChanges<T> {
         throw new TypeVaultError('locked', 'the session locked before this change started: nothing changed')
       return run()
     })
-    this.#changes.set(id, done)
+    this.#changes.set(id, { done })
     this.#tail = done.then(
       (result) => this.#keep(id, { result }),
       (error: unknown) => this.#keep(id, { error: outcomeError(error) }),
@@ -70,7 +82,7 @@ export class OwnerChanges<T> {
   }
 
   async wait(id: string, waitMs: number): Promise<Waited<T>> {
-    const done = this.#changes.get(id)
+    const done = this.#change(id)?.done
     if (done === undefined) {
       const result = readOutcome(this.#run, id, this.#schema)
       if (result === undefined) throw new TypeVaultError('not_found', 'no such owner change')
@@ -93,8 +105,19 @@ export class OwnerChanges<T> {
 
   // The change has settled whatever happens here: a receipt that can't be written leaves it in memory only, and never
   // stops the next change or a drain.
+  #change(id: string): { readonly done: Promise<T>; settledAt?: number } | undefined {
+    const change = this.#changes.get(id)
+    if (change?.settledAt !== undefined && change.settledAt + OWNER_CHANGE_KEEP_MS <= Date.now()) {
+      this.#changes.delete(id)
+      return undefined
+    }
+    return change
+  }
+
   #keep(id: string, outcome: Outcome): void {
-    setTimeout(() => this.#changes.delete(id), KEEP_MS).unref()
+    const change = this.#changes.get(id)
+    if (change !== undefined) change.settledAt = Date.now()
+    setTimeout(() => this.#changes.delete(id), OWNER_CHANGE_KEEP_MS).unref()
     try {
       ensureDir(outcomesDir(this.#run), 0o700)
       atomicWrite(outcomePath(this.#run, id), JSON.stringify(outcome), 0o600)
@@ -106,10 +129,9 @@ export class OwnerChanges<T> {
   #prune(): void {
     const dir = outcomesDir(this.#run)
     if (!existsSync(dir) || !statSync(dir).isDirectory()) return
-    const cutoff = Date.now() - KEEP_MS
     for (const file of readdirSync(dir)) {
       const path = join(dir, file)
-      if (statSync(path).mtimeMs < cutoff) rmSync(path, { force: true })
+      if (expired(path)) rmSync(path, { force: true })
     }
   }
 }
