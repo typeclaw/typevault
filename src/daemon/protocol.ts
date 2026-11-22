@@ -83,7 +83,11 @@ export const AdminWaitBody = z.object({
   change: OwnerChangeId,
   waitMs: z.number().int().min(0).max(5_000).optional(),
 })
-export const AdminWaitedSchema = z.union([
-  z.object({ done: z.literal(false) }),
-  z.object({ done: z.literal(true), result: AdminResultSchema }),
+export const AdminWaitedSchema = z.discriminatedUnion('state', [
+  z.object({ state: z.literal('running') }),
+  /** No receipt for that id: never admitted, or past its window. */
+  z.object({ state: z.literal('unknown') }),
+  z.object({ state: z.literal('done'), result: AdminResultSchema }),
+  /** The change itself failed with this error. */
+  z.object({ state: z.literal('failed'), error: z.object({ code: z.string(), message: z.string() }) }),
 ])

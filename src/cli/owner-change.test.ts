@@ -58,7 +58,7 @@ it('collects a change whose admission answer was lost, without sending it again'
         throw new TypeVaultError('locked', 'the vault owner rotated')
       },
     ],
-    '/v1/admin/wait': [() => ({ done: false }), () => ({ done: true, result: outcome })],
+    '/v1/admin/wait': [() => ({ state: 'running' }), () => ({ state: 'done', result: outcome })],
   })
 
   // then the change is collected by its id, and the admission was sent once
@@ -75,12 +75,7 @@ it('sends an admission again only after the daemon shows it never arrived', asyn
       },
       () => ({ change }),
     ],
-    '/v1/admin/wait': [
-      () => {
-        throw new TypeVaultError('not_found', 'no such owner change')
-      },
-      () => ({ done: true, result: outcome }),
-    ],
+    '/v1/admin/wait': [() => ({ state: 'unknown' }), () => ({ state: 'done', result: outcome })],
   })
   expect(await ownerChange(access, alive(), { change })).toEqual(outcome)
   expect(asked).toEqual(['/v1/admin', '/v1/admin/wait', '/v1/admin', '/v1/admin/wait'])
@@ -92,9 +87,7 @@ it("collects a late original admission behind a refused resend, and never report
   const rotated = () => {
     throw new TypeVaultError('locked', 'the vault owner rotated')
   }
-  const missing = () => {
-    throw new TypeVaultError('not_found', 'no such owner change')
-  }
+  const missing = () => ({ state: 'unknown' })
   const late = daemon({
     '/v1/admin': [
       () => {
@@ -102,7 +95,7 @@ it("collects a late original admission behind a refused resend, and never report
       },
       rotated,
     ],
-    '/v1/admin/wait': [missing, () => ({ done: true, result: outcome })],
+    '/v1/admin/wait': [missing, () => ({ state: 'done', result: outcome })],
   })
 
   // then the original's receipt is asked again and its outcome collected
@@ -160,11 +153,11 @@ it('keeps polling a change that outlasts the 30-second request deadline', async 
   const pending = Array.from({ length: 12 }, () => () => {
     now += 5_000
     setSystemTime(now)
-    return { done: false }
+    return { state: 'running' }
   })
   const { access, asked } = daemon({
     '/v1/admin': [() => ({ change })],
-    '/v1/admin/wait': [...pending, () => ({ done: true, result: outcome })],
+    '/v1/admin/wait': [...pending, () => ({ state: 'done', result: outcome })],
   })
   try {
     // then the CLI waits out a minute with no deadline of its own, and none of those polls counts as a failure
@@ -174,6 +167,35 @@ it('keeps polling a change that outlasts the 30-second request deadline', async 
   } finally {
     setSystemTime()
   }
+})
+
+it('reports a change that failed with not_found as that failure, without sending it again', async () => {
+  // given a lost admission answer, and a change that then failed because the member it removes doesn't exist
+  const change = randomToken(16)
+  const { access, asked } = daemon({
+    '/v1/admin': [
+      () => {
+        throw lost()
+      },
+    ],
+    '/v1/admin/wait': [() => ({ state: 'failed', error: { code: 'not_found', message: 'no member "nobody"' } })],
+  })
+
+  // then that failure is the outcome, and the admission is not sent again
+  await expect(ownerChange(access, alive(), { change })).rejects.toMatchObject({
+    code: 'not_found',
+    message: 'no member "nobody"',
+  })
+  expect(asked).toEqual(['/v1/admin', '/v1/admin/wait'])
+})
+
+it('reports the outcome as unknown when an admitted change has no receipt', async () => {
+  const change = randomToken(16)
+  const { access } = daemon({ '/v1/admin': [() => ({ change })], '/v1/admin/wait': [() => ({ state: 'unknown' })] })
+  await expect(ownerChange(access, alive(), { change })).rejects.toMatchObject({
+    code: 'unavailable',
+    message: expect.stringContaining('outcome is unknown'),
+  })
 })
 
 it('reports the outcome as unknown once the daemon is gone and kept none', async () => {

@@ -35,7 +35,7 @@ import { callDaemon } from './client'
 import { type RunningDaemon, startDaemon } from './daemon'
 import { GrantStore, MAX_CHAIN } from './grants'
 import { LiveAccess } from './live-access'
-import { readOutcome } from './owner-changes'
+import { readOutcome, settledResult } from './owner-changes'
 import { OWNER_WINDOW_MS, ownerWindowMessage } from './owner-window'
 import { AdminResultSchema, AdminWaitedSchema, AdmittedSchema, ChallengeSchema } from './protocol'
 import { PromptRequests } from './requests'
@@ -610,7 +610,8 @@ describe('unlocked session', () => {
       const { change: id } = await access.call('/v1/admin', { change: randomToken(16), ...body }, AdmittedSchema)
       for (;;) {
         const waited = await access.call('/v1/admin/wait', { change: id }, AdminWaitedSchema)
-        if (waited.done) return waited.result
+        if (waited.state === 'unknown') throw new Error('no receipt for this owner change')
+        if (waited.state !== 'running') return settledResult(waited)
       }
     }
 
@@ -758,14 +759,15 @@ describe('unlocked session', () => {
       const body = { request: tierAdd('slow'), proof: await proofBy(session, key) }
       const { change: id } = await session.call('/v1/admin', { change: randomToken(16), ...body }, AdmittedSchema)
       expect(await session.call('/v1/admin/wait', { change: id, waitMs: 50 }, AdminWaitedSchema)).toEqual({
-        done: false,
+        state: 'running',
       })
 
       // then once the reader lets go, the next polls collect its outcome
       await release()
       let waited = await session.call('/v1/admin/wait', { change: id }, AdminWaitedSchema)
-      while (!waited.done) waited = await session.call('/v1/admin/wait', { change: id }, AdminWaitedSchema)
-      expect(waited.result.affected).toEqual([])
+      while (waited.state === 'running')
+        waited = await session.call('/v1/admin/wait', { change: id }, AdminWaitedSchema)
+      expect(waited).toMatchObject({ state: 'done', result: { affected: [] } })
       expect(await tiers()).toContain('slow')
     })
 
@@ -782,7 +784,7 @@ describe('unlocked session', () => {
         stopped = true
       })
       expect(await session.call('/v1/admin/wait', { change: running, waitMs: 50 }, AdminWaitedSchema)).toEqual({
-        done: false,
+        state: 'running',
       })
       expect(stopped).toBe(false)
 
@@ -803,7 +805,7 @@ describe('unlocked session', () => {
       await session.call('/v1/admin', body, AdmittedSchema)
       const collected = ownerChange(session, layout, body)
       expect(await session.call('/v1/admin/wait', { change: body.change, waitMs: 50 }, AdminWaitedSchema)).toEqual({
-        done: false,
+        state: 'running',
       })
       await release()
 
@@ -829,7 +831,9 @@ describe('unlocked session', () => {
       // then the change's own id polls without any live grant, and once the reader lets go and the daemon is gone, the
       // outcome stays in the run directory
       const noGrant = new LiveAccess(layout.agentSocket, 'tvl1.none.none')
-      expect(await noGrant.call('/v1/admin/wait', { change, waitMs: 50 }, AdminWaitedSchema)).toEqual({ done: false })
+      expect(await noGrant.call('/v1/admin/wait', { change, waitMs: 50 }, AdminWaitedSchema)).toEqual({
+        state: 'running',
+      })
       await release()
       await stopping
       expect(readOutcome(layout.run, change, AdminResultSchema)).toMatchObject({
@@ -869,11 +873,13 @@ describe('unlocked session', () => {
 
       // then reads and admissions are refused, but the change's outcome is still collected once it commits
       await expect(session.list()).rejects.toMatchObject({ code: 'locked' })
-      expect(await session.call('/v1/admin/wait', { change, waitMs: 50 }, AdminWaitedSchema)).toEqual({ done: false })
+      expect(await session.call('/v1/admin/wait', { change, waitMs: 50 }, AdminWaitedSchema)).toEqual({
+        state: 'running',
+      })
       await release()
       let waited = await session.call('/v1/admin/wait', { change }, AdminWaitedSchema)
-      while (!waited.done) waited = await session.call('/v1/admin/wait', { change }, AdminWaitedSchema)
-      expect(waited.result.affected).toEqual([])
+      while (waited.state === 'running') waited = await session.call('/v1/admin/wait', { change }, AdminWaitedSchema)
+      expect(waited).toMatchObject({ state: 'done', result: { affected: [] } })
       expect(await tiers()).toContain('shared')
     })
 

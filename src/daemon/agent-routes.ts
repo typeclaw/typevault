@@ -9,7 +9,7 @@ import type { Vault } from '../core/vault'
 import { PACKAGE_VERSION } from '../core/version'
 import { type GrantStore, type ResolvedGrant, SESSION_CEILING } from './grants'
 import { type Handler, json, parseBody } from './http'
-import { OWNER_CHANGE_POLL_MS, type OwnerChanges, settledResult } from './owner-changes'
+import { OWNER_CHANGE_POLL_MS, type OwnerChanges } from './owner-changes'
 import type { OwnerWindow } from './owner-window'
 import {
   AdminBody,
@@ -265,10 +265,7 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
     '/v1/admin/wait': async (request) => {
       if (context.ownerChanges === undefined) throw new TypeVaultError('denied', OWNER_ONLY)
       const { change, waitMs } = await parseBody(request, AdminWaitBody)
-      const waited = await context.ownerChanges.wait(change, waitMs ?? OWNER_CHANGE_POLL_MS)
-      if (waited.state === 'running') return json({ done: false })
-      if (waited.state === 'unknown') throw new TypeVaultError('not_found', 'no such owner change')
-      return json({ done: true, result: settledResult(waited) })
+      return json(await context.ownerChanges.wait(change, waitMs ?? OWNER_CHANGE_POLL_MS))
     },
     '/v1/attach': async (request) => {
       const { record } = ownSession(context, request, 'only an unlocked session can be shared with a worktree')

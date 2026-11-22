@@ -19,8 +19,9 @@ const lostInTransport = (error: unknown): error is TypeVaultError =>
  * Admits an owner change under the caller's own id and polls until its outcome arrives. After an answer lost in
  * transport, the id's receipt decides what happened before anything is sent again: a change the daemon already took
  * (which may have rotated the owner or outlived the session since) is collected, and only a definite miss within the
- * daemon's retry window is sent again. Once the daemon is gone, the outcome it kept in the run directory answers.
- * Without either, the outcome is unknown, never reported as a failure.
+ * daemon's retry window is sent again. A change that failed is reported with its own error, never sent again. Once the
+ * daemon is gone, the outcome it kept in the run directory answers. Without either, the outcome is unknown, never
+ * reported as a failure.
  */
 export async function ownerChange(
   access: Pick<LiveAccess, 'call'>,
@@ -41,21 +42,19 @@ export async function ownerChange(
   for (let failures = 0; ;) {
     try {
       if (admission === 'unsure') {
-        const waited = await access.call('/v1/admin/wait', { change }, AdminWaitedSchema).catch((error: unknown) => {
-          if (!(error instanceof TypeVaultError && error.code === 'not_found' && !lostInTransport(error))) throw error
-          if (resent || Date.now() - sentAt >= OWNER_CHANGE_KEEP_MS) throw unknown(error)
-          return undefined
-        })
-        if (waited === undefined) admission = 'unsent'
-        else {
+        const waited = await access.call('/v1/admin/wait', { change }, AdminWaitedSchema)
+        if (waited.state === 'unknown') {
+          if (resent || Date.now() - sentAt >= OWNER_CHANGE_KEEP_MS) throw unknown(undefined)
+          admission = 'unsent'
+        } else {
           admission = 'admitted'
-          if (waited.done) return waited.result
+          if (waited.state !== 'running') return settledResult(waited)
           failures = 0
           continue
         }
       }
       if (admission === 'unsent') {
-        const resending = admission !== 'unsent' || sentOnce
+        const resending = sentOnce
         sentOnce = true
         admission = 'unsure'
         try {
@@ -70,7 +69,9 @@ export async function ownerChange(
         admission = 'admitted'
       }
       const waited = await access.call('/v1/admin/wait', { change }, AdminWaitedSchema)
-      if (waited.done) return waited.result
+      // An admitted change has a receipt for as long as its window lasts: without one, nothing can say what happened.
+      if (waited.state === 'unknown') throw unknown(undefined)
+      if (waited.state !== 'running') return settledResult(waited)
       failures = 0
     } catch (error) {
       if (!lostInTransport(error)) throw error
