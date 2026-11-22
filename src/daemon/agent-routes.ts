@@ -3,12 +3,15 @@ import { randomBytes } from 'node:crypto'
 import { parseTtl } from '../access/scope'
 import { ScopedVault } from '../access/scoped'
 import { appendAudit } from '../audit/log'
+import { runAdminOp } from '../core/admin'
 import { TypeVaultError } from '../core/errors'
 import type { Vault } from '../core/vault'
 import { PACKAGE_VERSION } from '../core/version'
 import { type GrantStore, type ResolvedGrant, SESSION_CEILING } from './grants'
 import { type Handler, json, parseBody } from './http'
+import type { OwnerWindow } from './owner-window'
 import {
+  AdminBody,
   AttachBody,
   DeriveBody,
   ImportBody,
@@ -33,6 +36,8 @@ export type DaemonContext = {
   readonly sessionTiers?: readonly string[]
   /** An unlocked session's: starts the same session in another worktree of this vault's repository, until `exp`. */
   readonly attach?: (vault: string, exp: number) => Promise<void>
+  /** An unlocked session's: when its owner changes go through. */
+  readonly ownerWindow?: OwnerWindow
 }
 
 function bearer(request: Request): string {
@@ -60,7 +65,7 @@ function session(context: DaemonContext, request: Request): { grant: ResolvedGra
   return { grant, access }
 }
 
-/** The unlocked session's own grant: a grant derived from it (an agent's) can't widen itself to a worktree. */
+/** The unlocked session's own grant: a grant derived from it (an agent's) can't share it or change the vault's owner state. */
 function ownSession(context: DaemonContext, request: Request, refusal: string): ResolvedGrant {
   const { grant } = session(context, request)
   if (grant.record.ceiling !== SESSION_CEILING || grant.record.parent !== undefined) {
@@ -68,6 +73,8 @@ function ownSession(context: DaemonContext, request: Request, refusal: string): 
   }
   return grant
 }
+
+const OWNER_ONLY = 'owner changes go through an unlocked session only'
 
 type StagedImport = {
   readonly grant: string
@@ -198,6 +205,26 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
           await parseBody(request, RequestBody),
         ),
       )
+    },
+    '/v1/admin/challenge': async (request) => {
+      ownSession(context, request, OWNER_ONLY)
+      const window = context.ownerWindow
+      if (window === undefined) throw new TypeVaultError('denied', OWNER_ONLY)
+      return json({ open: window.isOpen, nonce: window.challenge() })
+    },
+    '/v1/admin': async (request) => {
+      ownSession(context, request, OWNER_ONLY)
+      const window = context.ownerWindow
+      if (window === undefined) throw new TypeVaultError('denied', OWNER_ONLY)
+      const { request: op, proof } = await parseBody(request, AdminBody)
+      if (proof !== undefined) {
+        const { vault } = context
+        const member = vault.member === undefined ? undefined : vault.state.members[vault.member]
+        if (member === undefined) throw new TypeVaultError('denied', 'this session holds no member key to prove')
+        window.open(proof.nonce, proof.signature, member.signPublic)
+      }
+      if (!window.isOpen) throw new TypeVaultError('locked', 'owner changes need your password or Touch ID again')
+      return json(await runAdminOp(context.vault, op))
     },
     '/v1/attach': async (request) => {
       const { record } = ownSession(context, request, 'only an unlocked session can be shared with a worktree')

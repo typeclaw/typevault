@@ -51,3 +51,23 @@ export const GrantBody = z.object({
 })
 export const RevokeBody = z.object({ id: z.string().optional(), label: z.string().optional() })
 export const AuditBody = z.object({ label: z.string().optional() })
+const named = z.object({
+  op: z.enum(['tier.add', 'tier.rm', 'key.rotate', 'ceiling.rm', 'signer.rm', 'member.rm']),
+  name: z.string(),
+})
+export const AdminBody = z.object({
+  request: z.union([
+    named,
+    z.object({ op: z.enum(['tier.include', 'tier.exclude']), tier: z.string(), included: z.string() }),
+    z.object({ op: z.literal('ceiling.set'), name: z.string(), tier: z.string() }),
+    z.object({ op: z.literal('signer.add'), id: z.string(), publicKey: z.string(), tiers }),
+    z.object({ op: z.literal('member.add'), name: z.string(), publicKey: z.string(), owner: z.boolean(), tiers }),
+  ]),
+  proof: z.object({ nonce: z.string().max(64), signature: z.string().max(200) }).optional(),
+})
+export const AdminResultSchema = z.object({
+  affected: z.array(z.string()),
+  removed: z.array(z.string()),
+  ownerRotated: z.boolean(),
+})
+export const ChallengeSchema = z.object({ open: z.boolean(), nonce: z.string() })

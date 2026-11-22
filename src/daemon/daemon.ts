@@ -17,6 +17,7 @@ import { agentRoutes, type DaemonContext } from './agent-routes'
 import { isDaemonAlive } from './client'
 import { GrantStore, SESSION_CEILING } from './grants'
 import { errorResponse, json, router } from './http'
+import { OwnerWindow } from './owner-window'
 import { type PromptOptions, PromptRequests } from './requests'
 import { LOCKED_MESSAGE, startSession, stopDaemon } from './spawn'
 
@@ -144,7 +145,11 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
     requests: new PromptRequests(vault, options.prompt ?? {}),
     ...(options.session === undefined
       ? {}
-      : { sessionTiers: member?.tiers ?? [], ...(attach === undefined ? {} : { attach }) }),
+      : {
+          sessionTiers: member?.tiers ?? [],
+          ownerWindow: new OwnerWindow(sourceLock === undefined),
+          ...(attach === undefined ? {} : { attach }),
+        }),
   }
   // A shared session whose source is gone answers nothing but ping (how `stopDaemon` finds it) until it stops.
   const bound =

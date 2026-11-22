@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, setSystemTime } from 'bun:test'
 import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, parse } from 'node:path'
@@ -9,10 +9,10 @@ import { envFor } from '../access/env'
 import { ScopedVault } from '../access/scoped'
 import { readAudit } from '../audit/log'
 import { Admin } from '../core/admin'
-import { seal, type SecretKey } from '../core/crypto'
+import { decodeSecretKey, seal, type SecretKey, sign } from '../core/crypto'
 import { utf8 } from '../core/encoding'
 import { signerOf } from '../core/entries'
-import { createIdentity } from '../core/identity'
+import { createIdentity, memberPublicOfIdentity } from '../core/identity'
 import { type Founder, founderOf, initGlobalVault } from '../core/init'
 import { globalLayout, type Layout } from '../core/layout'
 import { holdLock, isLockHeld } from '../core/lock'
@@ -24,6 +24,8 @@ import { callDaemon } from './client'
 import { type RunningDaemon, startDaemon } from './daemon'
 import { GrantStore, MAX_CHAIN } from './grants'
 import { LiveAccess } from './live-access'
+import { OWNER_WINDOW_MS, ownerWindowMessage } from './owner-window'
+import { AdminResultSchema, ChallengeSchema } from './protocol'
 import { PromptRequests } from './requests'
 
 // Unix socket paths are limited to ~104 bytes (108 on Windows), too short under the default temp dir on macOS and
@@ -569,6 +571,94 @@ describe('unlocked session', () => {
     expect(existsSync(layout.sessionFile)).toBe(false)
     daemon = await startDaemon({ layout, env, keys: [owner] })
     await expect(new LiveAccess(layout.agentSocket, token).list()).rejects.toMatchObject({ code: 'denied' })
+  })
+
+  describe('owner changes', () => {
+    const tierAdd = (name: string) => ({ op: 'tier.add', name })
+    const tiers = async () => Object.keys((await Vault.open(layout, [], {})).state.tiers).sort()
+
+    // An owner member's session, as `typevault unlock` starts it: the daemon holds the member key, not the owner key.
+    async function ownerSession(): Promise<{ session: LiveAccess; key: SecretKey }> {
+      const { identity } = await createIdentity('bob', 'machine')
+      if (identity.kind !== 'machine') throw new Error('expected a machine identity')
+      await new Admin(await Vault.open(layout, [owner], {})).addMember('bob', {
+        ...memberPublicOfIdentity(identity),
+        owner: true,
+        tiers: [],
+      })
+      const key = decodeSecretKey(identity.key)
+      await daemon.stop()
+      daemon = await startDaemon({ layout, env, keys: [key], session: { ttlMs: 3_600_000 } })
+      return { session: new LiveAccess(layout.agentSocket, readFileSync(layout.sessionFile, 'utf8')), key }
+    }
+
+    it('go through the session only within its owner window, reopened by a signed challenge used once', async () => {
+      // given an owner's session just unlocked
+      const { session, key } = await ownerSession()
+      try {
+        // when an owner change comes in right away, it goes through
+        await session.call('/v1/admin', { request: tierAdd('first') }, AdminResultSchema)
+
+        // and once the window has closed, the next one is refused
+        setSystemTime(Date.now() + OWNER_WINDOW_MS + 1_000)
+        const closed = await session.call('/v1/admin/challenge', {}, ChallengeSchema)
+        expect(closed.open).toBe(false)
+        await expect(
+          session.call('/v1/admin', { request: tierAdd('refused') }, AdminResultSchema),
+        ).rejects.toMatchObject({ code: 'locked' })
+
+        // until the member signs a challenge with their key
+        const proof = { nonce: closed.nonce, signature: sign(key.signSecret, ownerWindowMessage(closed.nonce)) }
+        await session.call('/v1/admin', { request: tierAdd('second'), proof }, AdminResultSchema)
+        expect((await session.call('/v1/admin/challenge', {}, ChallengeSchema)).open).toBe(true)
+
+        // and that proof can't open the window again
+        setSystemTime(Date.now() + 2 * OWNER_WINDOW_MS)
+        await expect(
+          session.call('/v1/admin', { request: tierAdd('replayed'), proof }, AdminResultSchema),
+        ).rejects.toMatchObject({ code: 'denied' })
+      } finally {
+        setSystemTime()
+      }
+      expect(await tiers()).toEqual(['first', 'member', 'second', 'trusted'])
+    })
+
+    it('refuse a challenge signed by a key other than the member', async () => {
+      // given an owner's session whose window has closed
+      const { session } = await ownerSession()
+      try {
+        setSystemTime(Date.now() + OWNER_WINDOW_MS + 1_000)
+        const { nonce } = await session.call('/v1/admin/challenge', {}, ChallengeSchema)
+
+        // when the challenge is signed with the owner key instead of the member's own
+        const proof = { nonce, signature: sign(owner.signSecret, ownerWindowMessage(nonce)) }
+
+        // then it is refused
+        await expect(
+          session.call('/v1/admin', { request: tierAdd('forged'), proof }, AdminResultSchema),
+        ).rejects.toMatchObject({ code: 'denied' })
+      } finally {
+        setSystemTime()
+      }
+      expect(await tiers()).toEqual(['member', 'trusted'])
+    })
+
+    it('are refused to grants derived from the session and to admin-socket grants', async () => {
+      // given an owner's session in its window, a grant derived from it (an agent's), and one an admin socket issued
+      const { session } = await ownerSession()
+      const derived = await session.call('/v1/derive', { tiers: ['member'] }, Token)
+      const issued = await grant('bot', { tiers: ['member'] })
+
+      // then neither can make owner changes
+      for (const { token } of [derived, issued]) {
+        const access = new LiveAccess(layout.agentSocket, token)
+        await expect(access.call('/v1/admin/challenge', {}, ChallengeSchema)).rejects.toMatchObject({ code: 'denied' })
+        await expect(access.call('/v1/admin', { request: tierAdd('agent') }, AdminResultSchema)).rejects.toMatchObject({
+          code: 'denied',
+        })
+      }
+      expect(await tiers()).toEqual(['member', 'trusted'])
+    })
   })
 
   it('imports through the session in one transaction, and never past a grant', async () => {
