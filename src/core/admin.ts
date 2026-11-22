@@ -113,9 +113,8 @@ export class Admin {
    * Drops an include and rotates the included tier in one transaction: a crash leaves both or neither, never a
    * dropped include whose old wrap still opens the included tier.
    */
-  async exclude(tier: string, included: string): Promise<readonly string[]> {
-    let affected: readonly string[] = []
-    await this.#mutate(async (state, txn) => {
+  exclude(tier: string, included: string): Promise<readonly string[]> {
+    return this.#mutate(async (state, txn) => {
       const holder = state.tiers[tier]
       if (holder === undefined || !holder.includes.includes(included)) {
         throw new TypeVaultError('not_found', `"${tier}" does not include "${included}"`)
@@ -123,23 +122,15 @@ export class Admin {
       const updated = { ...holder, includes: holder.includes.filter((name) => name !== included) }
       // Rotating removes the included tier's old generation, the dropped wrap with it, and rewrites tiers.json.
       const context = { vault: this.#vault, owner: this.#owner, txn, exposed: true }
-      affected = await rotateTiers({ ...context, state: { ...state, tiers: { ...state.tiers, [tier]: updated } } }, [
-        included,
-      ])
+      return rotateTiers({ ...context, state: { ...state, tiers: { ...state.tiers, [tier]: updated } } }, [included])
     })
-    return affected
   }
 
   /** Rotates every tier `name` reaches. Returns their entry names, now flagged for rotation at the source. */
-  async rotate(name: string): Promise<readonly string[]> {
-    let affected: readonly string[] = []
-    await this.#mutate(async (state, txn) => {
-      affected = await rotateTiers(
-        { vault: this.#vault, owner: this.#owner, state, txn, exposed: true },
-        reachOf(state, [name]),
-      )
-    })
-    return affected
+  rotate(name: string): Promise<readonly string[]> {
+    return this.#mutate(async (state, txn) =>
+      rotateTiers({ vault: this.#vault, owner: this.#owner, state, txn, exposed: true }, reachOf(state, [name])),
+    )
   }
 
   /**
