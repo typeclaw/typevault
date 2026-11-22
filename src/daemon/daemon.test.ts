@@ -576,6 +576,7 @@ describe('unlocked session', () => {
   describe('owner changes', () => {
     const tierAdd = (name: string) => ({ op: 'tier.add', name })
     const tiers = async () => Object.keys((await Vault.open(layout, [], {})).state.tiers).sort()
+    const secret = (value: string) => ({ key: { type: 'secret' as const, value } })
 
     // An owner member's session, as `typevault unlock` starts it: the daemon holds the member key, not the owner key.
     async function ownerSession(): Promise<{ session: LiveAccess; key: SecretKey }> {
@@ -592,28 +593,32 @@ describe('unlocked session', () => {
       return { session: new LiveAccess(layout.agentSocket, readFileSync(layout.sessionFile, 'utf8')), key }
     }
 
-    it('go through the session only within its owner window, reopened by a signed challenge used once', async () => {
+    // The proof an owner command makes: the session's challenge, signed with `key`.
+    async function proofBy(session: LiveAccess, key: SecretKey) {
+      const { nonce } = await session.call('/v1/admin/challenge', {}, ChallengeSchema)
+      return { nonce, signature: sign(key.signSecret, ownerWindowMessage(nonce)) }
+    }
+
+    it('need a signed challenge, even right after unlock, then go through for the owner window', async () => {
       // given an owner's session just unlocked
       const { session, key } = await ownerSession()
       try {
-        // when an owner change comes in right away, it goes through
-        await session.call('/v1/admin', { request: tierAdd('first') }, AdminResultSchema)
-
-        // and once the window has closed, the next one is refused
-        setSystemTime(Date.now() + OWNER_WINDOW_MS + 1_000)
-        const closed = await session.call('/v1/admin/challenge', {}, ChallengeSchema)
-        expect(closed.open).toBe(false)
+        // then its token alone can't make an owner change
+        expect((await session.call('/v1/admin/challenge', {}, ChallengeSchema)).open).toBe(false)
         await expect(
-          session.call('/v1/admin', { request: tierAdd('refused') }, AdminResultSchema),
+          session.call('/v1/admin', { request: tierAdd('unproven') }, AdminResultSchema),
         ).rejects.toMatchObject({ code: 'locked' })
 
-        // until the member signs a challenge with their key
-        const proof = { nonce: closed.nonce, signature: sign(key.signSecret, ownerWindowMessage(closed.nonce)) }
-        await session.call('/v1/admin', { request: tierAdd('second'), proof }, AdminResultSchema)
-        expect((await session.call('/v1/admin/challenge', {}, ChallengeSchema)).open).toBe(true)
+        // when the member signs a challenge, that change and the next ones go through
+        const proof = await proofBy(session, key)
+        await session.call('/v1/admin', { request: tierAdd('first'), proof }, AdminResultSchema)
+        await session.call('/v1/admin', { request: tierAdd('second') }, AdminResultSchema)
 
-        // and that proof can't open the window again
-        setSystemTime(Date.now() + 2 * OWNER_WINDOW_MS)
+        // and once the window has closed, they are refused again, and the used proof can't reopen it
+        setSystemTime(Date.now() + OWNER_WINDOW_MS + 1_000)
+        await expect(session.call('/v1/admin', { request: tierAdd('late') }, AdminResultSchema)).rejects.toMatchObject({
+          code: 'locked',
+        })
         await expect(
           session.call('/v1/admin', { request: tierAdd('replayed'), proof }, AdminResultSchema),
         ).rejects.toMatchObject({ code: 'denied' })
@@ -623,41 +628,44 @@ describe('unlocked session', () => {
       expect(await tiers()).toEqual(['first', 'member', 'second', 'trusted'])
     })
 
+    it('refuse a challenge signed by a key other than the member', async () => {
+      // given an owner's session
+      const { session } = await ownerSession()
+
+      // when its challenge is signed with the owner key instead of the member's own
+      const proof = await proofBy(session, owner)
+
+      // then it is refused
+      await expect(
+        session.call('/v1/admin', { request: tierAdd('forged'), proof }, AdminResultSchema),
+      ).rejects.toMatchObject({ code: 'denied' })
+      expect(await tiers()).toEqual(['member', 'trusted'])
+    })
+
     it('widen the session to a tier they just added', async () => {
       // given an owner's session that adds a tier
-      const { session } = await ownerSession()
-      await session.call('/v1/admin', { request: tierAdd('fresh') }, AdminResultSchema)
+      const { session, key } = await ownerSession()
+      await session.call(
+        '/v1/admin',
+        { request: tierAdd('fresh'), proof: await proofBy(session, key) },
+        AdminResultSchema,
+      )
 
       // when the session writes to it
-      await session.set({ name: n('new'), tier: 'fresh', fields: { key: { type: 'secret', value: 'sk-fresh' } } })
+      await session.set({ name: n('new'), tier: 'fresh', fields: secret('sk-fresh') })
 
       // then the entry landed there
       expect((await session.get(n('new'))).fields['key']?.value).toBe('sk-fresh')
     })
 
-    it('refuse a challenge signed by a key other than the member', async () => {
-      // given an owner's session whose window has closed
-      const { session } = await ownerSession()
-      try {
-        setSystemTime(Date.now() + OWNER_WINDOW_MS + 1_000)
-        const { nonce } = await session.call('/v1/admin/challenge', {}, ChallengeSchema)
-
-        // when the challenge is signed with the owner key instead of the member's own
-        const proof = { nonce, signature: sign(owner.signSecret, ownerWindowMessage(nonce)) }
-
-        // then it is refused
-        await expect(
-          session.call('/v1/admin', { request: tierAdd('forged'), proof }, AdminResultSchema),
-        ).rejects.toMatchObject({ code: 'denied' })
-      } finally {
-        setSystemTime()
-      }
-      expect(await tiers()).toEqual(['member', 'trusted'])
-    })
-
     it('are refused to grants derived from the session and to admin-socket grants', async () => {
       // given an owner's session in its window, a grant derived from it (an agent's), and one an admin socket issued
-      const { session } = await ownerSession()
+      const { session, key } = await ownerSession()
+      await session.call(
+        '/v1/admin',
+        { request: tierAdd('opened'), proof: await proofBy(session, key) },
+        AdminResultSchema,
+      )
       const derived = await session.call('/v1/derive', { tiers: ['member'] }, Token)
       const issued = await grant('bot', { tiers: ['member'] })
 
@@ -669,7 +677,7 @@ describe('unlocked session', () => {
           code: 'denied',
         })
       }
-      expect(await tiers()).toEqual(['member', 'trusted'])
+      expect(await tiers()).toEqual(['member', 'opened', 'trusted'])
     })
   })
 

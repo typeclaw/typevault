@@ -247,7 +247,7 @@ export const unlock = defineCommand({
     const env = process.env
     const ttlMs = args.for === undefined ? DEFAULT_SESSION_MS : parseTtl(args.for)
     if (ttlMs > MAX_TIMER_MS) throw new TypeVaultError('invalid', '--for is too long (at most 24 days)')
-    const started = await unlockSession(env, passwords(), ttlMs)
+    const started = (await unlockSession(env, passwords(), ttlMs)) !== undefined
     const id = vaultIdOf((await openPublic(env)).state.owner.signPublic)
     print(started ? `unlocked vault ${id} for ${args.for}` : `vault ${id} is already unlocked`)
   },

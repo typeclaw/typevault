@@ -147,7 +147,7 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
       ? {}
       : {
           sessionTiers: member?.tiers ?? [],
-          ownerWindow: new OwnerWindow(sourceLock === undefined),
+          ownerWindow: new OwnerWindow(),
           ...(attach === undefined ? {} : { attach }),
         }),
   }

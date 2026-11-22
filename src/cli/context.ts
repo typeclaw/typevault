@@ -104,11 +104,11 @@ export async function unlockHuman(env: Env, identity: Identity | undefined, pass
 
 /**
  * Unlocks a human member's session: their key goes to a daemon that holds it for `ttlMs`, and this user's CLI
- * reads through the session grant it writes. Returns false when a session already runs.
+ * reads through the session grant it writes. Returns the key it unlocked with, or undefined when a session already runs.
  */
-export async function unlockSession(env: Env, passwords: Passwords, ttlMs: number): Promise<boolean> {
+export async function unlockSession(env: Env, passwords: Passwords, ttlMs: number): Promise<SecretKey | undefined> {
   const layout = layoutFrom(env)
-  if (await hasSession(layout)) return false
+  if (await hasSession(layout)) return undefined
   const identity = readIdentity(env)
   const key = await unlockHuman(env, identity, passwords)
   const vault = await Vault.open(layout, [key], env)
@@ -126,7 +126,7 @@ export async function unlockSession(env: Env, passwords: Passwords, ttlMs: numbe
     note('replaced a running daemon that held no unlocked session')
   }
   await startSession(layout, env, key, ttlMs)
-  return true
+  return key
 }
 
 const hasSession = async (layout: Layout): Promise<boolean> =>
@@ -172,23 +172,24 @@ function refreshSealedCopy(vault: Vault, identity: Identity & { readonly kind: '
 export const openPublic = (env: Env): Promise<Vault> => Vault.open(layoutFrom(env), [], env)
 
 /**
- * An owner change. A machine member makes it with its own key; a person's goes through their unlocked session (unlocking
- * it first, as a read does), asking again only once the session's owner window has closed.
+ * An owner change. A machine member makes it with its own key, and a process under a grant never borrows the person's
+ * session for one. A person's goes through their unlocked session (unlocking it first, as a read does), proving they
+ * are there with the key that unlock used, or else asking for it once the session's owner window has closed.
  */
 export async function runAdmin(env: Env, request: AdminOp): Promise<AdminResult> {
-  if (machineKeys(env).length > 0) return runAdminOp(await openDirect(env), request)
-  const access = await sessionAccess(env)
+  if (machineKeys(env).length > 0 || isSet(env['TYPEVAULT_GRANT'])) return runAdminOp(await openDirect(env), request)
+  const { access, unlockedWith } = await sessionAccess(env)
   const { open, nonce } = await access.call('/v1/admin/challenge', {}, ChallengeSchema)
-  const proof = open ? undefined : await ownerProof(env, nonce)
+  const key = open ? undefined : (unlockedWith ?? (await ownerKey(env)))
+  const proof = key === undefined ? undefined : { nonce, signature: sign(key.signSecret, ownerWindowMessage(nonce)) }
   return access.call('/v1/admin', { request, ...(proof === undefined ? {} : { proof }) }, AdminResultSchema)
 }
 
-async function ownerProof(env: Env, nonce: string): Promise<{ nonce: string; signature: string }> {
+async function ownerKey(env: Env): Promise<SecretKey> {
   if (!process.stdin.isTTY && !passwordsFromStdin()) {
     throw new TypeVaultError('locked', 'owner changes need your password or Touch ID: run this at a terminal')
   }
-  const key = await unlockHuman(env, readIdentity(env), passwords())
-  return { nonce, signature: sign(key.signSecret, ownerWindowMessage(nonce)) }
+  return unlockHuman(env, readIdentity(env), passwords())
 }
 
 export type ResolvedAccess =
@@ -201,7 +202,7 @@ export async function resolveAccess(env: Env): Promise<ResolvedAccess> {
   const grant = env['TYPEVAULT_GRANT']?.trim()
   if (grant === undefined || grant === '') {
     const machine = machineKeys(env)
-    if (machine.length === 0) return { kind: 'live', access: await sessionAccess(env) }
+    if (machine.length === 0) return { kind: 'live', access: (await sessionAccess(env)).access }
     const tier = env['TYPEVAULT_TIER']
     const vault = await Vault.open(layoutFrom(env), machine, env)
     const ownTiers = vault.member === undefined ? [] : (vault.state.members[vault.member]?.tiers ?? [])
@@ -222,11 +223,13 @@ export async function resolveAccess(env: Env): Promise<ResolvedAccess> {
 
 /**
  * A human member's CLI reads through the unlocked session's grant. On a terminal a locked vault asks for the
- * password right away; anywhere else (an agent) it stays locked until a human unlocks it.
+ * password right away; anywhere else (an agent) it stays locked until a human unlocks it. `unlockedWith` is the key a
+ * person just unlocked with here.
  */
-async function sessionAccess(env: Env): Promise<LiveAccess> {
+async function sessionAccess(env: Env): Promise<{ readonly access: LiveAccess; readonly unlockedWith?: SecretKey }> {
   const layout = layoutFrom(env)
   await checkOwnerPin(layout, env)
+  let unlockedWith: SecretKey | undefined
   if (!(await hasSession(layout)) && !(await shareWorktreeSession(layout, env))) {
     const identity = readIdentity(env)
     if (identity === undefined) {
@@ -234,11 +237,12 @@ async function sessionAccess(env: Env): Promise<LiveAccess> {
     }
     const canAsk = process.stdin.isTTY || passwordsFromStdin()
     if (identity.kind !== 'human' || !canAsk) throw new TypeVaultError('locked', LOCKED_MESSAGE)
-    await unlockSession(env, passwords(), DEFAULT_SESSION_MS)
+    unlockedWith = await unlockSession(env, passwords(), DEFAULT_SESSION_MS)
   }
   // A session daemon from another release fails here instead of misreading this CLI's requests.
   await ensureDaemon(layout, env)
-  return new LiveAccess(layout.agentSocket, readFileSync(layout.sessionFile, 'utf8').trim())
+  const access = new LiveAccess(layout.agentSocket, readFileSync(layout.sessionFile, 'utf8').trim())
+  return unlockedWith === undefined ? { access } : { access, unlockedWith }
 }
 
 /**

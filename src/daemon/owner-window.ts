@@ -9,17 +9,13 @@ export const ownerWindowMessage = (nonce: string): Uint8Array => utf8(`typevault
 
 /**
  * Agents run as the same user and can read the session token, so a session alone never makes owner changes: they go
- * through only within a few minutes of an unlock or of a fresh proof, a challenge signed with the member's own key.
- * A chain of owner commands asks once; an agent can't open the window itself.
+ * through only within a few minutes of a proof, a challenge signed with the member's own key, which only an owner
+ * command makes. It starts closed, so an unlock for reading opens nothing. A chain of owner commands asks once; an
+ * agent can't open the window itself.
  */
 export class OwnerWindow {
-  #until: number
+  #until = 0
   readonly #challenges = new Map<string, number>()
-
-  /** Open when a person just unlocked; a session shared to a worktree starts closed, since an agent's read starts it. */
-  constructor(open: boolean) {
-    this.#until = open ? Date.now() + OWNER_WINDOW_MS : 0
-  }
 
   get isOpen(): boolean {
     return Date.now() < this.#until
