@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -74,6 +74,22 @@ it('keeps an outcome readable after it was collected, and after its daemon is go
   expect(readOutcome(run, done, z.string())).toBe('committed')
   expect(() => readOutcome(run, failed, z.string())).toThrow('internal daemon error')
   await expect(queue().wait(id(), 0)).rejects.toMatchObject({ code: 'not_found' })
+})
+
+it('keeps going when an outcome cannot be written to disk', async () => {
+  // given a run directory where outcomes can't be written
+  writeFileSync(join(run, 'owner-changes'), 'not a directory')
+  const changes = queue()
+  const [first, next] = [id(), id()]
+
+  // when a change finishes, and another follows
+  changes.admit(first, async () => 'committed')
+  changes.admit(next, async () => 'next')
+
+  // then both report their outcomes from memory, and stopping still settles
+  expect(await changes.wait(first, 1_000)).toEqual({ done: true, result: 'committed' })
+  expect(await changes.wait(next, 1_000)).toEqual({ done: true, result: 'next' })
+  await changes.stop()
 })
 
 it('stops by admitting nothing new, starting nothing queued, and waiting for the running change', async () => {

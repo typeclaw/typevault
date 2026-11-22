@@ -91,15 +91,21 @@ export class OwnerChanges<T> {
     return this.#tail.then(() => undefined)
   }
 
+  // The change has settled whatever happens here: a receipt that can't be written leaves it in memory only, and never
+  // stops the next change or a drain.
   #keep(id: string, outcome: Outcome): void {
-    ensureDir(outcomesDir(this.#run), 0o700)
-    atomicWrite(outcomePath(this.#run, id), JSON.stringify(outcome), 0o600)
     setTimeout(() => this.#changes.delete(id), KEEP_MS).unref()
+    try {
+      ensureDir(outcomesDir(this.#run), 0o700)
+      atomicWrite(outcomePath(this.#run, id), JSON.stringify(outcome), 0o600)
+    } catch (error) {
+      console.error('typevault daemon: keeping the outcome of an owner change on disk failed', error)
+    }
   }
 
   #prune(): void {
     const dir = outcomesDir(this.#run)
-    if (!existsSync(dir)) return
+    if (!existsSync(dir) || !statSync(dir).isDirectory()) return
     const cutoff = Date.now() - KEEP_MS
     for (const file of readdirSync(dir)) {
       const path = join(dir, file)
