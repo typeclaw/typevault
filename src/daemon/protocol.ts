@@ -72,6 +72,8 @@ export const AdminResultSchema = z.object({
   affected: z.array(z.string()),
   removed: z.array(z.string()),
   ownerRotated: z.boolean(),
+  /** False when the change committed but the session's vault couldn't be reloaded after it. */
+  reloaded: z.boolean(),
   /** Ceilings the change set whose admin sockets the session couldn't open. */
   unserved: z.array(z.string()),
   /** False when the change committed but the session's grant couldn't be widened to the tiers it now reaches. */

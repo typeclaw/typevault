@@ -28,7 +28,14 @@ function alive(): { run: string; agentSocket: string } {
   return { run, agentSocket }
 }
 
-const outcome = { affected: ['openai'], removed: [], ownerRotated: true, unserved: [], scopeRefreshed: true }
+const outcome = {
+  affected: ['openai'],
+  removed: [],
+  ownerRotated: true,
+  reloaded: true,
+  unserved: [],
+  scopeRefreshed: true,
+}
 const lost = () =>
   new TypeVaultError('unavailable', 'the typevault daemon reply was cut off', { cause: new Error('cut') })
 

@@ -32,6 +32,20 @@ export type NewMember = PublicKey & {
 const reachOf = (state: VaultState, tiers: readonly string[]): readonly string[] =>
   [...new Set(tiers.flatMap((tier) => [...reach(state.tiers, tier)]))].sort()
 
+/**
+ * A change that committed, after which the vault couldn't be reloaded: its result stands, and the vault keeps the state
+ * it had until its next refresh tries again.
+ */
+export class CommittedChange extends Error {
+  readonly result: unknown
+
+  constructor(result: unknown, cause: unknown) {
+    super('the change committed, but the vault could not be reloaded', { cause })
+    this.name = 'CommittedChange'
+    this.result = result
+  }
+}
+
 /** Owner-only changes to tiers, members, signers and ceilings. Each one lands as a single transaction. */
 export class Admin {
   readonly #vault: Vault
@@ -50,7 +64,11 @@ export class Admin {
       const txn = new Txn()
       const result = await build(this.#vault.state, txn)
       commitTxn(this.#vault.layout, txn)
-      this.#vault.reload()
+      try {
+        this.#vault.reload()
+      } catch (error) {
+        throw new CommittedChange(result, error)
+      }
       return result
     })
   }
@@ -265,18 +283,33 @@ export type AdminResult = {
   /** Members `member.rm` removed: every name sharing the removed key. */
   readonly removed: readonly string[]
   readonly ownerRotated: boolean
+  /** False when the change committed but the vault couldn't be reloaded after it. */
+  readonly reloaded: boolean
 }
 
 export async function runAdminOp(vault: Vault, request: AdminOp): Promise<AdminResult> {
   const admin = new Admin(vault)
-  const before = Object.keys(vault.state.members)
-  const owner = vault.state.owner.signPublic
-  const affected = await dispatch(admin, request)
-  return {
-    affected,
-    removed: before.filter((name) => vault.state.members[name] === undefined),
-    ownerRotated: vault.state.owner.signPublic !== owner,
+  // What a removal takes comes from the state the change started from: after a failed reload there is no other.
+  const before = vault.state
+  let affected: readonly string[]
+  let reloaded = true
+  try {
+    affected = await dispatch(admin, request)
+  } catch (error) {
+    if (!(error instanceof CommittedChange)) throw error
+    affected = Array.isArray(error.result)
+      ? error.result.filter((name): name is string => typeof name === 'string')
+      : []
+    reloaded = false
   }
+  const removed = request.op === 'member.rm' ? sharingKey(before, request.name) : []
+  return { affected, removed, ownerRotated: removed.some((name) => before.members[name]?.owner === true), reloaded }
+}
+
+/** Every member listing the same key as `name`, which removing `name` removes too. */
+function sharingKey(state: VaultState, name: string): readonly string[] {
+  const recipient = state.members[name]?.recipient
+  return Object.entries(state.members).flatMap(([other, member]) => (member.recipient === recipient ? [other] : []))
 }
 
 async function dispatch(admin: Admin, request: AdminOp): Promise<readonly string[]> {

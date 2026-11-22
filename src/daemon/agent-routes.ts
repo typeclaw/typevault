@@ -255,7 +255,8 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
       ownerChanges.admit(change, async () => {
         const result = await runAdminOp(context.vault, op)
         // Committed: what follows can't undo it, so a failure there is reported beside the result, never instead of it.
-        const scopeRefreshed = await refreshScope(context, grant)
+        // A vault left on its old state can't say what the session now reaches; its next refresh reloads it or fails closed.
+        const scopeRefreshed = result.reloaded && (await refreshScope(context, grant))
         return { ...result, scopeRefreshed, unserved: context.serveNewCeilings?.() ?? [] }
       })
       return json({ change })
