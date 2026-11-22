@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -123,6 +123,33 @@ it("collects a late original admission behind a refused resend, and never report
     code: 'unavailable',
     message: expect.stringContaining('outcome is unknown'),
   })
+})
+
+it('collects an outcome the daemon saved while it was being probed', async () => {
+  // given a lost poll, and a daemon that saves the outcome and stops just as the CLI checks whether it is still there
+  const change = randomToken(16)
+  const agentSocket = join(run, 'agent.sock')
+  servers.push(
+    Bun.serve({
+      unix: agentSocket,
+      fetch: () => {
+        mkdirSync(join(run, 'owner-changes'), { recursive: true })
+        writeFileSync(join(run, 'owner-changes', `${change}.json`), JSON.stringify({ result: outcome }))
+        return Response.json({ error: { code: 'unavailable', message: 'stopping' } }, { status: 503 })
+      },
+    }),
+  )
+  const { access } = daemon({
+    '/v1/admin': [() => ({ change })],
+    '/v1/admin/wait': [
+      () => {
+        throw lost()
+      },
+    ],
+  })
+
+  // then the CLI returns that outcome instead of reporting it unknown
+  expect(await ownerChange(access, { run, agentSocket }, { change })).toEqual(outcome)
 })
 
 it('reports the outcome as unknown once the daemon is gone and kept none', async () => {

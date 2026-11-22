@@ -76,7 +76,12 @@ export async function ownerChange(
       if (!lostInTransport(error)) throw error
       const kept = readOutcome(layout.run, change, AdminResultSchema)
       if (kept !== undefined) return kept
-      if (++failures >= TRANSPORT_RETRIES || !(await isDaemonAlive(layout.agentSocket))) throw unknown(error)
+      if (++failures >= TRANSPORT_RETRIES || !(await isDaemonAlive(layout.agentSocket))) {
+        // A draining daemon may have saved the outcome and closed while it was probed.
+        const late = readOutcome(layout.run, change, AdminResultSchema)
+        if (late !== undefined) return late
+        throw unknown(error)
+      }
     }
   }
 }
