@@ -623,6 +623,18 @@ describe('unlocked session', () => {
       expect(await tiers()).toEqual(['first', 'member', 'second', 'trusted'])
     })
 
+    it('widen the session to a tier they just added', async () => {
+      // given an owner's session that adds a tier
+      const { session } = await ownerSession()
+      await session.call('/v1/admin', { request: tierAdd('fresh') }, AdminResultSchema)
+
+      // when the session writes to it
+      await session.set({ name: n('new'), tier: 'fresh', fields: { key: { type: 'secret', value: 'sk-fresh' } } })
+
+      // then the entry landed there
+      expect((await session.get(n('new'))).fields['key']?.value).toBe('sk-fresh')
+    })
+
     it('refuse a challenge signed by a key other than the member', async () => {
       // given an owner's session whose window has closed
       const { session } = await ownerSession()

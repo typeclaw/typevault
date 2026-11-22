@@ -213,7 +213,7 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
       return json({ open: window.isOpen, nonce: window.challenge() })
     },
     '/v1/admin': async (request) => {
-      ownSession(context, request, OWNER_ONLY)
+      const grant = ownSession(context, request, OWNER_ONLY)
       const window = context.ownerWindow
       if (window === undefined) throw new TypeVaultError('denied', OWNER_ONLY)
       const { request: op, proof } = await parseBody(request, AdminBody)
@@ -224,7 +224,11 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
         window.open(proof.nonce, proof.signature, member.signPublic)
       }
       if (!window.isOpen) throw new TypeVaultError('locked', 'owner changes need your password or Touch ID again')
-      return json(await runAdminOp(context.vault, op))
+      const result = await runAdminOp(context.vault, op)
+      // A session reaches every tier its key does, as when it opened: a tier this change added or included among them.
+      context.grants.retier(grant.record.id, [...(await context.vault.keyring.reachableTiers())].sort())
+      context.sessions.delete(grant.record.id)
+      return json(result)
     },
     '/v1/attach': async (request) => {
       const { record } = ownSession(context, request, 'only an unlocked session can be shared with a worktree')

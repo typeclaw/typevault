@@ -117,6 +117,11 @@ export class GrantStore {
     return { record, chain: chain.map(({ tiers, only }) => ({ tiers, only })) }
   }
 
+  retier(id: string, tiers: readonly string[]): void {
+    this.#records = this.#records.map((record) => (record.id === id ? { ...record, tiers: [...tiers] } : record))
+    this.#save()
+  }
+
   /** Whether grant `id` and all its ancestors are still unrevoked and unexpired. */
   isLive(id: string): boolean {
     for (let link = this.#records.find((r) => r.id === id); link !== undefined;) {
