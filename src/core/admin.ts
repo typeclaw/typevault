@@ -2,6 +2,7 @@ import { encodeSecretKey, generateSecretKey, type PublicKey, publicKeyOf, seal, 
 import { fromBase64, utf8 } from './encoding'
 import { signerOf } from './entries'
 import { TypeVaultError } from './errors'
+import { decodeMemberPublic } from './identity'
 import { ownerWrapPath, wrapPath } from './keyring'
 import { withLock } from './lock'
 import { rotateOwner, rotateTiers } from './rotate'
@@ -247,5 +248,79 @@ export class Admin {
 
   get signer(): ReturnType<typeof signerOf> {
     return signerOf(this.#owner)
+  }
+}
+
+/** One owner change, as the CLI asks it: run here in direct mode, or by an unlocked session's daemon. */
+export type AdminOp =
+  | {
+      readonly op: 'tier.add' | 'tier.rm' | 'key.rotate' | 'ceiling.rm' | 'signer.rm' | 'member.rm'
+      readonly name: string
+    }
+  | { readonly op: 'tier.include' | 'tier.exclude'; readonly tier: string; readonly included: string }
+  | { readonly op: 'ceiling.set'; readonly name: string; readonly tier: string }
+  | { readonly op: 'signer.add'; readonly id: string; readonly publicKey: string; readonly tiers: readonly string[] }
+  | {
+      readonly op: 'member.add'
+      readonly name: string
+      readonly publicKey: string
+      readonly owner: boolean
+      readonly tiers: readonly string[]
+    }
+
+export type AdminResult = {
+  /** Entries flagged for rotation at their source. */
+  readonly affected: readonly string[]
+  /** Members `member.rm` removed: every name sharing the removed key. */
+  readonly removed: readonly string[]
+  readonly ownerRotated: boolean
+}
+
+export async function runAdminOp(vault: Vault, request: AdminOp): Promise<AdminResult> {
+  const admin = new Admin(vault)
+  const before = Object.keys(vault.state.members)
+  const owner = vault.state.owner.signPublic
+  const affected = await dispatch(admin, request)
+  return {
+    affected,
+    removed: before.filter((name) => vault.state.members[name] === undefined),
+    ownerRotated: vault.state.owner.signPublic !== owner,
+  }
+}
+
+async function dispatch(admin: Admin, request: AdminOp): Promise<readonly string[]> {
+  switch (request.op) {
+    case 'tier.add':
+      await admin.addTier(request.name)
+      return []
+    case 'tier.rm':
+      await admin.removeTier(request.name)
+      return []
+    case 'tier.include':
+      await admin.include(request.tier, request.included)
+      return []
+    case 'tier.exclude':
+      return admin.exclude(request.tier, request.included)
+    case 'key.rotate':
+      return admin.rotate(request.name)
+    case 'ceiling.set':
+      await admin.setCeiling(request.name, request.tier)
+      return []
+    case 'ceiling.rm':
+      await admin.removeCeiling(request.name)
+      return []
+    case 'signer.add':
+      await admin.setSigner(request.id, request.publicKey, request.tiers)
+      return []
+    case 'signer.rm':
+      await admin.removeSigner(request.name)
+      return []
+    case 'member.add': {
+      const pub = decodeMemberPublic(request.publicKey)
+      await admin.addMember(request.name, { ...pub, owner: request.owner, tiers: request.tiers })
+      return []
+    }
+    case 'member.rm':
+      return admin.removeMember(request.name)
   }
 }

@@ -7,7 +7,7 @@ import { ScopedVault } from '../access/scoped'
 import { readSealedGrant } from '../access/sealed'
 import { SealedAccess } from '../access/sealed-access'
 import type { Access, EntryValue } from '../access/types'
-import { Admin } from '../core/admin'
+import { type AdminOp, type AdminResult, runAdminOp } from '../core/admin'
 import type { SecretKey } from '../core/crypto'
 import { TypeVaultError } from '../core/errors'
 import { atomicWrite } from '../core/fsx'
@@ -169,7 +169,8 @@ function refreshSealedCopy(vault: Vault, identity: Identity & { readonly kind: '
 /** The vault's public, owner-signed state, readable without any key. */
 export const openPublic = (env: Env): Promise<Vault> => Vault.open(layoutFrom(env), [], env)
 
-export const openAdmin = async (env: Env): Promise<Admin> => new Admin(await openDirect(env))
+export const runAdmin = async (env: Env, request: AdminOp): Promise<AdminResult> =>
+  runAdminOp(await openDirect(env), request)
 
 export type ResolvedAccess =
   | { readonly kind: 'live'; readonly access: LiveAccess }

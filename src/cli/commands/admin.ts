@@ -14,7 +14,7 @@ import { parseEntryName } from '../../core/naming'
 import { Vault } from '../../core/vault'
 import { GrantStore } from '../../daemon/grants'
 import { stopDaemon } from '../../daemon/spawn'
-import { layoutFrom, openAdmin, openDirect, openPublic, wantsGlobal } from '../context'
+import { layoutFrom, openDirect, openPublic, runAdmin, wantsGlobal } from '../context'
 import { csv, note, print, table } from '../output'
 import { ensureIdentity, identityArgs } from './members'
 
@@ -74,23 +74,29 @@ export const tier = defineCommand({
     add: defineCommand({
       meta: { name: 'add' },
       args: named,
-      run: async ({ args }) => (await openAdmin(process.env)).addTier(args.name),
+      run: async ({ args }) => void (await runAdmin(process.env, { op: 'tier.add', name: args.name })),
     }),
     rm: defineCommand({
       meta: { name: 'rm' },
       args: named,
-      run: async ({ args }) => (await openAdmin(process.env)).removeTier(args.name),
+      run: async ({ args }) => void (await runAdmin(process.env, { op: 'tier.rm', name: args.name })),
     }),
     include: defineCommand({
       meta: { name: 'include', description: '<tier> reaches everything <included> reaches' },
       args: pair,
-      run: async ({ args }) => (await openAdmin(process.env)).include(args.tier, args.included),
+      run: async ({ args }) =>
+        void (await runAdmin(process.env, { op: 'tier.include', tier: args.tier, included: args.included })),
     }),
     exclude: defineCommand({
       meta: { name: 'exclude', description: 'Drop an include and rotate the included tier' },
       args: pair,
       async run({ args }) {
-        printRotation(args.included, await (await openAdmin(process.env)).exclude(args.tier, args.included))
+        const { affected } = await runAdmin(process.env, {
+          op: 'tier.exclude',
+          tier: args.tier,
+          included: args.included,
+        })
+        printRotation(args.included, affected)
       },
     }),
   },
@@ -121,7 +127,7 @@ export const key = defineCommand({
       },
       args: named,
       async run({ args }) {
-        printRotation(args.name, await (await openAdmin(process.env)).rotate(args.name))
+        printRotation(args.name, (await runAdmin(process.env, { op: 'key.rotate', name: args.name })).affected)
       },
     }),
   },
@@ -140,12 +146,13 @@ export const ceiling = defineCommand({
     set: defineCommand({
       meta: { name: 'set' },
       args: { name: { type: 'positional', required: true }, tier: { type: 'positional', required: true } },
-      run: async ({ args }) => (await openAdmin(process.env)).setCeiling(args.name, args.tier),
+      run: async ({ args }) =>
+        void (await runAdmin(process.env, { op: 'ceiling.set', name: args.name, tier: args.tier })),
     }),
     rm: defineCommand({
       meta: { name: 'rm' },
       args: named,
-      run: async ({ args }) => (await openAdmin(process.env)).removeCeiling(args.name),
+      run: async ({ args }) => void (await runAdmin(process.env, { op: 'ceiling.rm', name: args.name })),
     }),
   },
 })
@@ -169,12 +176,18 @@ export const signer = defineCommand({
         publicKey: { type: 'positional', required: true, description: 'Base64 Ed25519 public key' },
         tiers: { type: 'string', required: true, description: 'Comma-separated tiers, or *' },
       },
-      run: async ({ args }) => (await openAdmin(process.env)).setSigner(args.id, args.publicKey, csv(args.tiers)),
+      run: async ({ args }) =>
+        void (await runAdmin(process.env, {
+          op: 'signer.add',
+          id: args.id,
+          publicKey: args.publicKey,
+          tiers: csv(args.tiers),
+        })),
     }),
     rm: defineCommand({
       meta: { name: 'rm' },
       args: named,
-      run: async ({ args }) => (await openAdmin(process.env)).removeSigner(args.name),
+      run: async ({ args }) => void (await runAdmin(process.env, { op: 'signer.rm', name: args.name })),
     }),
   },
 })
