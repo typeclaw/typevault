@@ -27,7 +27,7 @@ import { worktreeVaults } from '../core/worktrees'
 import { callDaemon, isDaemonAlive } from '../daemon/client'
 import { LiveAccess } from '../daemon/live-access'
 import { ownerWindowMessage } from '../daemon/owner-window'
-import { AdminResultSchema, ChallengeSchema } from '../daemon/protocol'
+import { AdmittedSchema, AdminWaitedSchema, ChallengeSchema } from '../daemon/protocol'
 import { ensureDaemon, LOCKED_MESSAGE, startSession, stopDaemon } from '../daemon/spawn'
 import { note } from './output'
 import { type Passwords, passwords, passwordsFromStdin } from './password'
@@ -183,7 +183,11 @@ export async function runAdmin(env: Env, request: AdminOp): Promise<AdminResult>
   const key = open ? undefined : (unlockedWith ?? (await ownerKey(env)))
   const proof = key === undefined ? undefined : { nonce, signature: sign(key.signSecret, ownerWindowMessage(nonce)) }
   const body = { request, ...(proof === undefined ? {} : { proof }) }
-  const { unserved, ...result } = await access.call('/v1/admin', body, AdminResultSchema)
+  const { change } = await access.call('/v1/admin', body, AdmittedSchema)
+  // A rotation can outlast one request: poll until the daemon reports the outcome.
+  let waited = await access.call('/v1/admin/wait', { change }, AdminWaitedSchema)
+  while (!waited.done) waited = await access.call('/v1/admin/wait', { change }, AdminWaitedSchema)
+  const { unserved, ...result } = waited.result
   for (const name of unserved) {
     note(`ceiling "${name}" is set, but its admin socket didn't open: run typevault lock, then typevault unlock`)
   }

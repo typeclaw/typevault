@@ -13,6 +13,7 @@ import { OWNER_CHANGE_POLL_MS, type OwnerChanges } from './owner-changes'
 import type { OwnerWindow } from './owner-window'
 import {
   AdminBody,
+  AdminWaitBody,
   AttachBody,
   DeriveBody,
   ImportBody,
@@ -240,10 +241,13 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
         context.sessions.get(grant.record.id)?.rescope([{ tiers, only: grant.record.only }])
         return { ...result, unserved: context.serveNewCeilings?.() ?? [] }
       })
-      for (;;) {
-        const waited = await ownerChanges.wait(grant.record.id, change, OWNER_CHANGE_POLL_MS)
-        if (waited.done) return json(waited.result)
-      }
+      return json({ change })
+    },
+    '/v1/admin/wait': async (request) => {
+      const grant = ownSession(context, request, OWNER_ONLY)
+      if (context.ownerChanges === undefined) throw new TypeVaultError('denied', OWNER_ONLY)
+      const { change, waitMs } = await parseBody(request, AdminWaitBody)
+      return json(await context.ownerChanges.wait(grant.record.id, change, waitMs ?? OWNER_CHANGE_POLL_MS))
     },
     '/v1/attach': async (request) => {
       const { record } = ownSession(context, request, 'only an unlocked session can be shared with a worktree')

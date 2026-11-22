@@ -25,7 +25,7 @@ import { type RunningDaemon, startDaemon } from './daemon'
 import { GrantStore, MAX_CHAIN } from './grants'
 import { LiveAccess } from './live-access'
 import { OWNER_WINDOW_MS, ownerWindowMessage } from './owner-window'
-import { AdminResultSchema, ChallengeSchema } from './protocol'
+import { AdminWaitedSchema, AdmittedSchema, ChallengeSchema } from './protocol'
 import { PromptRequests } from './requests'
 
 // Unix socket paths are limited to ~104 bytes (108 on Windows), too short under the default temp dir on macOS and
@@ -593,6 +593,15 @@ describe('unlocked session', () => {
       return { session: new LiveAccess(layout.agentSocket, readFileSync(layout.sessionFile, 'utf8')), key }
     }
 
+    // An owner change as the CLI makes it: admitted, then polled until the daemon reports its outcome.
+    async function change(access: LiveAccess, body: Record<string, unknown>) {
+      const { change: id } = await access.call('/v1/admin', body, AdmittedSchema)
+      for (;;) {
+        const waited = await access.call('/v1/admin/wait', { change: id }, AdminWaitedSchema)
+        if (waited.done) return waited.result
+      }
+    }
+
     // The proof an owner command makes: the session's challenge, signed with `key`.
     async function proofBy(session: LiveAccess, key: SecretKey) {
       const { nonce } = await session.call('/v1/admin/challenge', {}, ChallengeSchema)
@@ -605,23 +614,19 @@ describe('unlocked session', () => {
       try {
         // then its token alone can't make an owner change
         expect((await session.call('/v1/admin/challenge', {}, ChallengeSchema)).open).toBe(false)
-        await expect(
-          session.call('/v1/admin', { request: tierAdd('unproven') }, AdminResultSchema),
-        ).rejects.toMatchObject({ code: 'locked' })
+        await expect(change(session, { request: tierAdd('unproven') })).rejects.toMatchObject({ code: 'locked' })
 
         // when the member signs a challenge, that change and the next ones go through
         const proof = await proofBy(session, key)
-        await session.call('/v1/admin', { request: tierAdd('first'), proof }, AdminResultSchema)
-        await session.call('/v1/admin', { request: tierAdd('second') }, AdminResultSchema)
+        await change(session, { request: tierAdd('first'), proof })
+        await change(session, { request: tierAdd('second') })
 
         // and once the window has closed, they are refused again, and the used proof can't reopen it
         setSystemTime(Date.now() + OWNER_WINDOW_MS + 1_000)
-        await expect(session.call('/v1/admin', { request: tierAdd('late') }, AdminResultSchema)).rejects.toMatchObject({
+        await expect(change(session, { request: tierAdd('late') })).rejects.toMatchObject({
           code: 'locked',
         })
-        await expect(
-          session.call('/v1/admin', { request: tierAdd('replayed'), proof }, AdminResultSchema),
-        ).rejects.toMatchObject({ code: 'denied' })
+        await expect(change(session, { request: tierAdd('replayed'), proof })).rejects.toMatchObject({ code: 'denied' })
       } finally {
         setSystemTime()
       }
@@ -636,20 +641,14 @@ describe('unlocked session', () => {
       const proof = await proofBy(session, owner)
 
       // then it is refused
-      await expect(
-        session.call('/v1/admin', { request: tierAdd('forged'), proof }, AdminResultSchema),
-      ).rejects.toMatchObject({ code: 'denied' })
+      await expect(change(session, { request: tierAdd('forged'), proof })).rejects.toMatchObject({ code: 'denied' })
       expect(await tiers()).toEqual(['member', 'trusted'])
     })
 
     it('are refused to grants derived from the session and to admin-socket grants', async () => {
       // given an owner's session in its window, a grant derived from it (an agent's), and one an admin socket issued
       const { session, key } = await ownerSession()
-      await session.call(
-        '/v1/admin',
-        { request: tierAdd('opened'), proof: await proofBy(session, key) },
-        AdminResultSchema,
-      )
+      await change(session, { request: tierAdd('opened'), proof: await proofBy(session, key) })
       const derived = await session.call('/v1/derive', { tiers: ['member'] }, Token)
       const issued = await grant('bot', { tiers: ['member'] })
 
@@ -657,7 +656,7 @@ describe('unlocked session', () => {
       for (const { token } of [derived, issued]) {
         const access = new LiveAccess(layout.agentSocket, token)
         await expect(access.call('/v1/admin/challenge', {}, ChallengeSchema)).rejects.toMatchObject({ code: 'denied' })
-        await expect(access.call('/v1/admin', { request: tierAdd('agent') }, AdminResultSchema)).rejects.toMatchObject({
+        await expect(change(access, { request: tierAdd('agent') })).rejects.toMatchObject({
           code: 'denied',
         })
       }
@@ -667,16 +666,10 @@ describe('unlocked session', () => {
     it('widen the session to every tier they add, even when they overlap', async () => {
       // given an owner's session in its window
       const { session, key } = await ownerSession()
-      await session.call(
-        '/v1/admin',
-        { request: tierAdd('first'), proof: await proofBy(session, key) },
-        AdminResultSchema,
-      )
+      await change(session, { request: tierAdd('first'), proof: await proofBy(session, key) })
 
       // when two tier additions overlap
-      await Promise.all(
-        ['one', 'two'].map((name) => session.call('/v1/admin', { request: tierAdd(name) }, AdminResultSchema)),
-      )
+      await Promise.all(['one', 'two'].map((name) => change(session, { request: tierAdd(name) })))
 
       // then the session writes to both
       await session.set({ name: n('in-one'), tier: 'one', fields: secret('sk-one') })
@@ -690,11 +683,7 @@ describe('unlocked session', () => {
       await session.get(n('openai'))
 
       // when it makes an owner change, then reads another secret
-      await session.call(
-        '/v1/admin',
-        { request: tierAdd('fresh'), proof: await proofBy(session, key) },
-        AdminResultSchema,
-      )
+      await change(session, { request: tierAdd('fresh'), proof: await proofBy(session, key) })
       await session.get(n('stripe'))
 
       // then both values are still redacted
@@ -707,7 +696,7 @@ describe('unlocked session', () => {
 
       // when it sets a new ceiling
       const request = { op: 'ceiling.set', name: 'ops', tier: 'member' }
-      await session.call('/v1/admin', { request, proof: await proofBy(session, key) }, AdminResultSchema)
+      await change(session, { request, proof: await proofBy(session, key) })
 
       // then that ceiling's socket issues grants without a restart
       const { token } = await grant('ops', { tiers: ['member'] })
@@ -721,14 +710,75 @@ describe('unlocked session', () => {
 
       // when it sets that ceiling, the change commits and the socket is reported as not open
       const request = { op: 'ceiling.set', name: 'ops', tier: 'member' }
-      const set = await session.call('/v1/admin', { request, proof: await proofBy(session, key) }, AdminResultSchema)
+      const set = await change(session, { request, proof: await proofBy(session, key) })
       expect(set.unserved).toEqual(['ops'])
       expect((await Vault.open(layout, [], {})).state.ceilings['ops']).toBe('member')
 
       // then once the way is clear, the next owner change opens it
       rmSync(layout.adminSocket('ops'), { recursive: true })
-      expect((await session.call('/v1/admin', { request: tierAdd('next') }, AdminResultSchema)).unserved).toEqual([])
+      expect((await change(session, { request: tierAdd('next') })).unserved).toEqual([])
       expect((await grant('ops', { tiers: ['member'] })).token).toStartWith('tvl1.')
+    })
+
+    // Another process reading the vault: a shared lock that lets requests in but holds every commit back.
+    async function holdShared(): Promise<() => Promise<void>> {
+      const script = join(base, 'hold-shared.ts')
+      const lock = JSON.stringify(join(import.meta.dir, '..', 'core', 'lock.ts'))
+      writeFileSync(
+        script,
+        `import { withLock } from ${lock}\nawait withLock(process.argv[2], 'shared', async () => {\n  console.log('held')\n  await Bun.stdin.text()\n})\n`,
+      )
+      const holder = Bun.spawn([process.execPath, script, layout.lockFile], { stdin: 'pipe', stdout: 'pipe' })
+      const { value } = await holder.stdout.getReader().read()
+      expect(new TextDecoder().decode(value)).toContain('held')
+      return async () => {
+        holder.stdin.end()
+        await holder.exited
+      }
+    }
+
+    it('report the outcome of a change that outlasts one request', async () => {
+      // given an owner's session, and a reader holding the vault so no change can commit yet
+      const { session, key } = await ownerSession()
+      const release = await holdShared()
+
+      // when a change is admitted, polling reports it as still running
+      const body = { request: tierAdd('slow'), proof: await proofBy(session, key) }
+      const { change: id } = await session.call('/v1/admin', body, AdmittedSchema)
+      expect(await session.call('/v1/admin/wait', { change: id, waitMs: 50 }, AdminWaitedSchema)).toEqual({
+        done: false,
+      })
+
+      // then once the reader lets go, the next polls collect its outcome
+      await release()
+      let waited = await session.call('/v1/admin/wait', { change: id }, AdminWaitedSchema)
+      while (!waited.done) waited = await session.call('/v1/admin/wait', { change: id }, AdminWaitedSchema)
+      expect(waited.result.affected).toEqual([])
+      expect(await tiers()).toContain('slow')
+    })
+
+    it('finish the running change before the daemon stops', async () => {
+      // given an owner's session with a change running, held back by a reader
+      const { session, key } = await ownerSession()
+      const release = await holdShared()
+      const body = { request: tierAdd('running'), proof: await proofBy(session, key) }
+      const { change: running } = await session.call('/v1/admin', body, AdmittedSchema)
+
+      // when the daemon starts stopping, it waits for that change
+      let stopped = false
+      const stopping = daemon.stop().then(() => {
+        stopped = true
+      })
+      expect(await session.call('/v1/admin/wait', { change: running, waitMs: 50 }, AdminWaitedSchema)).toEqual({
+        done: false,
+      })
+      expect(stopped).toBe(false)
+
+      // then once the reader lets go, the change commits before the daemon stops
+      await release()
+      await stopping
+      expect(await tiers()).toEqual(['member', 'running', 'trusted'])
+      daemon = await startDaemon({ layout, env, keys: [owner] })
     })
 
     it('uncap the default socket once they remove its signed ceiling', async () => {
@@ -739,7 +789,7 @@ describe('unlocked session', () => {
 
       // when the session removes that ceiling
       const request = { op: 'ceiling.rm', name: 'default' }
-      await session.call('/v1/admin', { request, proof: await proofBy(session, key) }, AdminResultSchema)
+      await change(session, { request, proof: await proofBy(session, key) })
 
       // then the default socket grants above it without a restart
       expect((await grant('default', { tiers: ['trusted'] })).token).toStartWith('tvl1.')

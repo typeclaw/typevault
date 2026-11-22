@@ -73,3 +73,12 @@ export const AdminResultSchema = z.object({
   unserved: z.array(z.string()),
 })
 export const ChallengeSchema = z.object({ open: z.boolean(), nonce: z.string() })
+export const AdmittedSchema = z.object({ change: z.string() })
+export const AdminWaitBody = z.object({
+  change: z.string().max(64),
+  waitMs: z.number().int().min(0).max(5_000).optional(),
+})
+export const AdminWaitedSchema = z.union([
+  z.object({ done: z.literal(false) }),
+  z.object({ done: z.literal(true), result: AdminResultSchema }),
+])

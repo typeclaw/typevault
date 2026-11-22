@@ -158,8 +158,12 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
   const bound =
     (fetch: (request: Request) => Promise<Response>) =>
     async (request: Request): Promise<Response> => {
-      if (new URL(request.url).pathname === '/v1/ping') return fetch(request)
+      const path = new URL(request.url).pathname
+      if (path === '/v1/ping') return fetch(request)
       if (!sourceAlive()) return errorResponse(new TypeVaultError('locked', LOCKED_MESSAGE))
+      // Collecting an owner change's outcome reads only this daemon's memory, and must not queue behind the vault lock
+      // that change itself holds.
+      if (path === '/v1/admin/wait') return fetch(request)
       try {
         // Includes cached redaction values and worktree attachment: neither necessarily scans the vault. The snapshot
         // finishes an interrupted rotation and keeps a running one's half-written files out of view; it's released
