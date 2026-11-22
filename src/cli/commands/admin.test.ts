@@ -29,6 +29,25 @@ it('keeps a human-owned vault locked until its owner unlocks it, and locks it ag
   expect((await cli(['ls'], owner)).stderr).toContain('the vault is locked')
 })
 
+it('asks once for a chain of owner commands, unlocking a session on the first, and never from an agent', async () => {
+  // given an agent (no terminal, no password) can't make owner changes
+  const agent = await cli(['tier', 'add', 'early'], owner)
+  expect({ code: agent.code, stderr: agent.stderr }).toEqual({
+    code: 1,
+    stderr: 'typevault: the vault is locked: ask a human to run `typevault unlock`\n',
+  })
+
+  // when the owner's first command takes the password and the rest of the chain takes none
+  succeeds(await cli(['tier', 'add', 'ops', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
+  succeeds(await cli(['tier', 'include', 'ops', 'default'], owner))
+  succeeds(await cli(['ceiling', 'set', 'bot', 'ops'], owner))
+
+  // then every change landed, and the first unlocked the session reads go through too
+  expect(succeeds(await cli(['tier', 'ls'], owner)).stdout).toMatch(/ops\s+1\s+default/)
+  expect(succeeds(await cli(['ceiling', 'ls'], owner)).stdout).toMatch(/bot\s+ops/)
+  succeeds(await cli(['ls'], owner))
+})
+
 it('keeps identity and checkout state directories private', () => {
   if (process.platform === 'win32') return
   const config = join(base, 'alice', 'typevault')

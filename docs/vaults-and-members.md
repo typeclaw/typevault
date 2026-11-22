@@ -98,7 +98,10 @@ password.
 
 While a person's vault is locked, an agent's command fails with `the vault is locked: ask a human to run typevault
 unlock`; in a terminal, the command asks for the password and unlocks on the spot. Owner commands (`tier`, `member`,
-`key rotate`, ...) ask for the password every time, because only they open the owner key. Scripts pass passwords on
+`key rotate`, `ceiling`, `signer`) go through the unlocked session too, but only within 5 minutes of the last time you
+proved you were there: the unlock itself, or the password or touch an owner command asks for once that window has
+closed. So `typevault tier add ops && typevault member add ...` asks once. Agents run as you and can read the session,
+but they can't reopen the window, and a worktree's shared session starts with it closed. Scripts pass passwords on
 stdin with `--vault-password-stdin`, one per line. Removing an owner requires another owner to remain. It rotates the
 owner key and every tier key. Commit and pull the change, lock and unlock existing sessions, and issue fresh grants.
 Previously distributed plaintext, offline sealed snapshots, and old ciphertext in Git history cannot be recalled;

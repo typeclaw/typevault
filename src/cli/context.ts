@@ -8,7 +8,7 @@ import { readSealedGrant } from '../access/sealed'
 import { SealedAccess } from '../access/sealed-access'
 import type { Access, EntryValue } from '../access/types'
 import { type AdminOp, type AdminResult, runAdminOp } from '../core/admin'
-import type { SecretKey } from '../core/crypto'
+import { type SecretKey, sign } from '../core/crypto'
 import { TypeVaultError } from '../core/errors'
 import { atomicWrite } from '../core/fsx'
 import {
@@ -26,6 +26,8 @@ import { readSnapshot, Vault } from '../core/vault'
 import { worktreeVaults } from '../core/worktrees'
 import { callDaemon, isDaemonAlive } from '../daemon/client'
 import { LiveAccess } from '../daemon/live-access'
+import { ownerWindowMessage } from '../daemon/owner-window'
+import { AdminResultSchema, ChallengeSchema } from '../daemon/protocol'
 import { ensureDaemon, LOCKED_MESSAGE, startSession, stopDaemon } from '../daemon/spawn'
 import { note } from './output'
 import { type Passwords, passwords, passwordsFromStdin } from './password'
@@ -169,8 +171,25 @@ function refreshSealedCopy(vault: Vault, identity: Identity & { readonly kind: '
 /** The vault's public, owner-signed state, readable without any key. */
 export const openPublic = (env: Env): Promise<Vault> => Vault.open(layoutFrom(env), [], env)
 
-export const runAdmin = async (env: Env, request: AdminOp): Promise<AdminResult> =>
-  runAdminOp(await openDirect(env), request)
+/**
+ * An owner change. A machine member makes it with its own key; a person's goes through their unlocked session (unlocking
+ * it first, as a read does), asking again only once the session's owner window has closed.
+ */
+export async function runAdmin(env: Env, request: AdminOp): Promise<AdminResult> {
+  if (machineKeys(env).length > 0) return runAdminOp(await openDirect(env), request)
+  const access = await sessionAccess(env)
+  const { open, nonce } = await access.call('/v1/admin/challenge', {}, ChallengeSchema)
+  const proof = open ? undefined : await ownerProof(env, nonce)
+  return access.call('/v1/admin', { request, ...(proof === undefined ? {} : { proof }) }, AdminResultSchema)
+}
+
+async function ownerProof(env: Env, nonce: string): Promise<{ nonce: string; signature: string }> {
+  if (!process.stdin.isTTY && !passwordsFromStdin()) {
+    throw new TypeVaultError('locked', 'owner changes need your password or Touch ID: run this at a terminal')
+  }
+  const key = await unlockHuman(env, readIdentity(env), passwords())
+  return { nonce, signature: sign(key.signSecret, ownerWindowMessage(nonce)) }
+}
 
 export type ResolvedAccess =
   | { readonly kind: 'live'; readonly access: LiveAccess }
