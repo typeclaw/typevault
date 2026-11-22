@@ -26,11 +26,11 @@ import { readSnapshot, Vault } from '../core/vault'
 import { worktreeVaults } from '../core/worktrees'
 import { callDaemon, isDaemonAlive } from '../daemon/client'
 import { LiveAccess } from '../daemon/live-access'
-import { readOutcome } from '../daemon/owner-changes'
 import { ownerWindowMessage } from '../daemon/owner-window'
-import { AdminResultSchema, AdmittedSchema, AdminWaitedSchema, ChallengeSchema } from '../daemon/protocol'
+import { ChallengeSchema } from '../daemon/protocol'
 import { ensureDaemon, LOCKED_MESSAGE, startSession, stopDaemon } from '../daemon/spawn'
 import { note } from './output'
+import { ownerChange } from './owner-change'
 import { type Passwords, passwords, passwordsFromStdin } from './password'
 
 export type Env = Readonly<Record<string, string | undefined>>
@@ -192,41 +192,6 @@ export async function runAdmin(env: Env, request: AdminOp): Promise<AdminResult>
     note(`ceiling "${name}" is set, but its admin socket didn't open: run typevault lock, then typevault unlock`)
   }
   return result
-}
-
-const TRANSPORT_RETRIES = 5
-
-/**
- * Admits an owner change under the caller's own id and polls until its outcome arrives. A dropped request is sent again
- * under the same id, which never runs the change twice; once the daemon is gone, the outcome it kept in the run
- * directory answers. Without either, the outcome is unknown, never reported as a failure.
- */
-async function ownerChange(
-  access: LiveAccess,
-  layout: Layout,
-  body: { readonly change: string },
-): Promise<z.infer<typeof AdminResultSchema>> {
-  const { change } = body
-  let admitted = false
-  for (let failures = 0; ;) {
-    try {
-      if (!admitted) admitted = (await access.call('/v1/admin', body, AdmittedSchema)).change === change
-      const waited = await access.call('/v1/admin/wait', { change }, AdminWaitedSchema)
-      if (waited.done) return waited.result
-      failures = 0
-    } catch (error) {
-      if (!(error instanceof TypeVaultError && error.cause instanceof Error)) throw error
-      const kept = readOutcome(layout.run, change, AdminResultSchema)
-      if (kept !== undefined) return kept
-      if (++failures >= TRANSPORT_RETRIES || !(await isDaemonAlive(layout.agentSocket))) {
-        throw new TypeVaultError(
-          'unavailable',
-          "the session stopped answering, so this owner change's outcome is unknown: check the vault before running it again",
-          { cause: error },
-        )
-      }
-    }
-  }
 }
 
 async function ownerKey(env: Env): Promise<SecretKey> {

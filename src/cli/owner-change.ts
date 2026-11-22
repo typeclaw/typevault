@@ -1,0 +1,69 @@
+import type { z } from 'zod'
+
+import { TypeVaultError } from '../core/errors'
+import type { Layout } from '../core/layout'
+import { isDaemonAlive } from '../daemon/client'
+import type { LiveAccess } from '../daemon/live-access'
+import { OWNER_CHANGE_KEEP_MS, readOutcome } from '../daemon/owner-changes'
+import { AdminResultSchema, AdmittedSchema, AdminWaitedSchema } from '../daemon/protocol'
+
+const TRANSPORT_RETRIES = 5
+
+type Outcome = z.infer<typeof AdminResultSchema>
+
+const lostInTransport = (error: unknown): error is TypeVaultError =>
+  error instanceof TypeVaultError && error.cause instanceof Error
+
+/**
+ * Admits an owner change under the caller's own id and polls until its outcome arrives. After an answer lost in
+ * transport, the id's receipt decides what happened before anything is sent again: a change the daemon already took
+ * (which may have rotated the owner or outlived the session since) is collected, and only a definite miss within the
+ * daemon's retry window is sent again. Once the daemon is gone, the outcome it kept in the run directory answers.
+ * Without either, the outcome is unknown, never reported as a failure.
+ */
+export async function ownerChange(
+  access: Pick<LiveAccess, 'call'>,
+  layout: Pick<Layout, 'run' | 'agentSocket'>,
+  body: { readonly change: string },
+): Promise<Outcome> {
+  const { change } = body
+  const sentAt = Date.now()
+  let admission: 'unsent' | 'unsure' | 'admitted' = 'unsent'
+  const unknown = (cause: unknown) =>
+    new TypeVaultError(
+      'unavailable',
+      "the session stopped answering, so this owner change's outcome is unknown: check the vault before running it again",
+      { cause },
+    )
+  for (let failures = 0; ;) {
+    try {
+      if (admission === 'unsure') {
+        const waited = await access.call('/v1/admin/wait', { change }, AdminWaitedSchema).catch((error: unknown) => {
+          if (!(error instanceof TypeVaultError && error.code === 'not_found' && !lostInTransport(error))) throw error
+          if (Date.now() - sentAt >= OWNER_CHANGE_KEEP_MS) throw unknown(error)
+          return undefined
+        })
+        if (waited === undefined) admission = 'unsent'
+        else {
+          admission = 'admitted'
+          if (waited.done) return waited.result
+          failures = 0
+          continue
+        }
+      }
+      if (admission === 'unsent') {
+        admission = 'unsure'
+        await access.call('/v1/admin', body, AdmittedSchema)
+        admission = 'admitted'
+      }
+      const waited = await access.call('/v1/admin/wait', { change }, AdminWaitedSchema)
+      if (waited.done) return waited.result
+      failures = 0
+    } catch (error) {
+      if (!lostInTransport(error)) throw error
+      const kept = readOutcome(layout.run, change, AdminResultSchema)
+      if (kept !== undefined) return kept
+      if (++failures >= TRANSPORT_RETRIES || !(await isDaemonAlive(layout.agentSocket))) throw unknown(error)
+    }
+  }
+}
