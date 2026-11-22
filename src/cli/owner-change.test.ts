@@ -152,6 +152,20 @@ it('collects an outcome the daemon saved while it was being probed', async () =>
   expect(await ownerChange(access, { run, agentSocket }, { change })).toEqual(outcome)
 })
 
+it('keeps polling a change that outlasts the 30-second request deadline', async () => {
+  // given a change still running for twelve polls, each bounded by the daemon to 5 seconds: a minute in all
+  const change = randomToken(16)
+  const pending = Array.from({ length: 12 }, () => () => ({ done: false }))
+  const { access, asked } = daemon({
+    '/v1/admin': [() => ({ change })],
+    '/v1/admin/wait': [...pending, () => ({ done: true, result: outcome })],
+  })
+
+  // then the CLI waits it out with no deadline of its own, and none of those polls counts as a failure
+  expect(await ownerChange(access, alive(), { change })).toEqual(outcome)
+  expect(asked.filter((path) => path === '/v1/admin/wait')).toHaveLength(13)
+})
+
 it('reports the outcome as unknown once the daemon is gone and kept none', async () => {
   const change = randomToken(16)
   const { access } = daemon({

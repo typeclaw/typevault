@@ -17,6 +17,7 @@ import { z } from 'zod'
 import { envFor } from '../access/env'
 import { ScopedVault } from '../access/scoped'
 import { readAudit } from '../audit/log'
+import { ownerChange } from '../cli/owner-change'
 import { Admin } from '../core/admin'
 import { decodeSecretKey, randomToken, seal, type SecretKey, sign } from '../core/crypto'
 import { utf8 } from '../core/encoding'
@@ -790,6 +791,25 @@ describe('unlocked session', () => {
       await stopping
       expect(await tiers()).toEqual(['member', 'running', 'trusted'])
       daemon = await startDaemon({ layout, env, keys: [owner] })
+    })
+
+    it("report a held-back change to the CLI's own loop once it commits", async () => {
+      // given an owner's session, and a reader holding the vault so the change can't commit yet
+      const { session, key } = await ownerSession()
+      const release = await holdShared()
+
+      // when the change is admitted, and the CLI's loop takes it over (its own admission a retry of the same id)
+      const body = { change: randomToken(16), request: tierAdd('cli'), proof: await proofBy(session, key) }
+      await session.call('/v1/admin', body, AdmittedSchema)
+      const collected = ownerChange(session, layout, body)
+      expect(await session.call('/v1/admin/wait', { change: body.change, waitMs: 50 }, AdminWaitedSchema)).toEqual({
+        done: false,
+      })
+      await release()
+
+      // then the loop returns the committed outcome
+      expect(await collected).toMatchObject({ affected: [], scopeRefreshed: true })
+      expect(await tiers()).toContain('cli')
     })
 
     it('report the outcome of a change that outlasts its session, even once its daemon stopped', async () => {
