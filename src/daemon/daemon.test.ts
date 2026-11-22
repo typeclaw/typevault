@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, setSystemTime } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  mkdirSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, parse } from 'node:path'
 
@@ -14,6 +23,7 @@ import { utf8 } from '../core/encoding'
 import { signerOf } from '../core/entries'
 import { createIdentity, memberPublicOfIdentity } from '../core/identity'
 import { type Founder, founderOf, initGlobalVault } from '../core/init'
+import { wrapPath } from '../core/keyring'
 import { globalLayout, type Layout } from '../core/layout'
 import { holdLock, isLockHeld } from '../core/lock'
 import { parseEntryName } from '../core/naming'
@@ -881,6 +891,32 @@ describe('unlocked session', () => {
         writeFileSync(layout.grantsFile, saved, { mode: 0o600 })
       }
     })
+
+    it.skipIf(process.platform === 'win32')(
+      'keep a committed change when the tiers the session reaches cannot be found after it',
+      async () => {
+        // given an owner's session, and the owner's wrap of a tier replaced by a symlink, which reading refuses
+        const { session, key } = await ownerSession()
+        const gen = (await Vault.open(layout, [], {})).state.tiers['member']?.gen ?? 0
+        const wrap = join(layout.vault, wrapPath('member', gen, { kind: 'owner' }))
+        const copy = `${wrap}.copy`
+        renameSync(wrap, copy)
+        symlinkSync(copy, wrap)
+        try {
+          // when it sets a ceiling
+          const request = { op: 'ceiling.set', name: 'ops', tier: 'member' }
+          const set = await change(session, { request, proof: await proofBy(session, key) })
+
+          // then the change is reported as committed, its socket opens anyway, and the session keeps its scope
+          expect(set).toMatchObject({ scopeRefreshed: false, unserved: [] })
+          expect((await Vault.open(layout, [], {})).state.ceilings['ops']).toBe('member')
+        } finally {
+          rmSync(wrap)
+          renameSync(copy, wrap)
+        }
+        expect((await grant('ops', { tiers: ['member'] })).token).toStartWith('tvl1.')
+      },
+    )
 
     it('uncap the default socket once they remove its signed ceiling', async () => {
       // given a signed default ceiling, and an owner's session started under it

@@ -87,11 +87,12 @@ const OWNER_ONLY = 'owner changes go through an unlocked session only'
 /**
  * A session reaches every tier its key does, as when it opened: a tier an owner change added or included among them. Its
  * cached scope is updated in place, keeping the values it handed out for redaction, and only once the grant is saved,
- * so the two never disagree. False when saving failed.
+ * so the two never disagree. False when finding those tiers or saving the grant failed.
  */
 async function refreshScope(context: DaemonContext, grant: ResolvedGrant): Promise<boolean> {
-  const tiers = [...(await context.vault.keyring.reachableTiers())].sort()
+  let tiers: string[]
   try {
+    tiers = [...(await context.vault.keyring.reachableTiers())].sort()
     context.grants.retier(grant.record.id, tiers)
   } catch (error) {
     console.error('typevault daemon: widening the session grant after an owner change failed', error)
