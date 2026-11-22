@@ -11,8 +11,9 @@ const TRANSPORT_RETRIES = 5
 
 type Outcome = z.infer<typeof AdminResultSchema>
 
+// The client wraps what the transport threw (fetch, a timeout, a cut-off body); an error of our own wrapping another is not.
 const lostInTransport = (error: unknown): error is TypeVaultError =>
-  error instanceof TypeVaultError && error.cause instanceof Error
+  error instanceof TypeVaultError && error.cause instanceof Error && !(error.cause instanceof TypeVaultError)
 
 /**
  * Admits an owner change under the caller's own id and polls until its outcome arrives. After an answer lost in
@@ -29,6 +30,8 @@ export async function ownerChange(
   const { change } = body
   const sentAt = Date.now()
   let admission: 'unsent' | 'unsure' | 'admitted' = 'unsent'
+  let resent = false
+  let sentOnce = false
   const unknown = (cause: unknown) =>
     new TypeVaultError(
       'unavailable',
@@ -40,7 +43,7 @@ export async function ownerChange(
       if (admission === 'unsure') {
         const waited = await access.call('/v1/admin/wait', { change }, AdminWaitedSchema).catch((error: unknown) => {
           if (!(error instanceof TypeVaultError && error.code === 'not_found' && !lostInTransport(error))) throw error
-          if (Date.now() - sentAt >= OWNER_CHANGE_KEEP_MS) throw unknown(error)
+          if (resent || Date.now() - sentAt >= OWNER_CHANGE_KEEP_MS) throw unknown(error)
           return undefined
         })
         if (waited === undefined) admission = 'unsent'
@@ -52,8 +55,18 @@ export async function ownerChange(
         }
       }
       if (admission === 'unsent') {
+        const resending = admission !== 'unsent' || sentOnce
+        sentOnce = true
         admission = 'unsure'
-        await access.call('/v1/admin', body, AdmittedSchema)
+        try {
+          await access.call('/v1/admin', body, AdmittedSchema)
+        } catch (error) {
+          // A refused resend says nothing of the original request, which may have been admitted late and changed what the
+          // daemon accepts (an owner rotation): its receipt decides, and the resend is not tried again.
+          if (!resending || lostInTransport(error)) throw error
+          resent = true
+          continue
+        }
         admission = 'admitted'
       }
       const waited = await access.call('/v1/admin/wait', { change }, AdminWaitedSchema)
