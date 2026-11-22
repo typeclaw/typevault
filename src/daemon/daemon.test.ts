@@ -642,22 +642,6 @@ describe('unlocked session', () => {
       expect(await tiers()).toEqual(['member', 'trusted'])
     })
 
-    it('widen the session to a tier they just added', async () => {
-      // given an owner's session that adds a tier
-      const { session, key } = await ownerSession()
-      await session.call(
-        '/v1/admin',
-        { request: tierAdd('fresh'), proof: await proofBy(session, key) },
-        AdminResultSchema,
-      )
-
-      // when the session writes to it
-      await session.set({ name: n('new'), tier: 'fresh', fields: secret('sk-fresh') })
-
-      // then the entry landed there
-      expect((await session.get(n('new'))).fields['key']?.value).toBe('sk-fresh')
-    })
-
     it('are refused to grants derived from the session and to admin-socket grants', async () => {
       // given an owner's session in its window, a grant derived from it (an agent's), and one an admin socket issued
       const { session, key } = await ownerSession()
@@ -678,6 +662,43 @@ describe('unlocked session', () => {
         })
       }
       expect(await tiers()).toEqual(['member', 'opened', 'trusted'])
+    })
+
+    it('widen the session to every tier they add, even when they overlap', async () => {
+      // given an owner's session in its window
+      const { session, key } = await ownerSession()
+      await session.call(
+        '/v1/admin',
+        { request: tierAdd('first'), proof: await proofBy(session, key) },
+        AdminResultSchema,
+      )
+
+      // when two tier additions overlap
+      await Promise.all(
+        ['one', 'two'].map((name) => session.call('/v1/admin', { request: tierAdd(name) }, AdminResultSchema)),
+      )
+
+      // then the session writes to both
+      await session.set({ name: n('in-one'), tier: 'one', fields: secret('sk-one') })
+      await session.set({ name: n('in-two'), tier: 'two', fields: secret('sk-two') })
+      expect((await session.get(n('in-two'))).fields['key']?.value).toBe('sk-two')
+    })
+
+    it('keep the values the session handed out for redaction', async () => {
+      // given an owner's session that read a secret
+      const { session, key } = await ownerSession()
+      await session.get(n('openai'))
+
+      // when it makes an owner change, then reads another secret
+      await session.call(
+        '/v1/admin',
+        { request: tierAdd('fresh'), proof: await proofBy(session, key) },
+        AdminResultSchema,
+      )
+      await session.get(n('stripe'))
+
+      // then both values are still redacted
+      expect([...(await session.readValues())].sort()).toEqual(['sk-test-openai', 'sk_live_x'])
     })
   })
 

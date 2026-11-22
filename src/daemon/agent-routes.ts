@@ -92,6 +92,8 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
   // An import, or even one entry, can exceed a request body, so its serialized JSON arrives in chunks and is written
   // by one final call, all or nothing.
   const staged = new Map<string, StagedImport>()
+  // Owner changes run one at a time, so each publishes the session's scope in the order the changes were committed.
+  let ownerChanges: Promise<unknown> = Promise.resolve()
   const stagedBy = (upload: string, grant: string): StagedImport => {
     const found = staged.get(upload)
     if (found === undefined || found.grant !== grant || found.exp <= Date.now()) {
@@ -224,11 +226,17 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
         window.open(proof.nonce, proof.signature, member.signPublic)
       }
       if (!window.isOpen) throw new TypeVaultError('locked', 'owner changes need your password or Touch ID again')
-      const result = await runAdminOp(context.vault, op)
-      // A session reaches every tier its key does, as when it opened: a tier this change added or included among them.
-      context.grants.retier(grant.record.id, [...(await context.vault.keyring.reachableTiers())].sort())
-      context.sessions.delete(grant.record.id)
-      return json(result)
+      const change = ownerChanges.then(async () => {
+        const result = await runAdminOp(context.vault, op)
+        // A session reaches every tier its key does, as when it opened: a tier this change added or included among them.
+        // Its cached scope is updated in place, keeping the values it handed out for redaction.
+        const tiers = [...(await context.vault.keyring.reachableTiers())].sort()
+        context.grants.retier(grant.record.id, tiers)
+        context.sessions.get(grant.record.id)?.rescope([{ tiers, only: grant.record.only }])
+        return result
+      })
+      ownerChanges = change.catch(() => undefined)
+      return json(await change)
     },
     '/v1/attach': async (request) => {
       const { record } = ownSession(context, request, 'only an unlocked session can be shared with a worktree')
