@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it } from 'bun:test'
+import { afterEach, beforeEach, expect, it, setSystemTime } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -153,17 +153,27 @@ it('collects an outcome the daemon saved while it was being probed', async () =>
 })
 
 it('keeps polling a change that outlasts the 30-second request deadline', async () => {
-  // given a change still running for twelve polls, each bounded by the daemon to 5 seconds: a minute in all
+  // given a change still running for twelve polls, each one taking the daemon's full 5 seconds
   const change = randomToken(16)
-  const pending = Array.from({ length: 12 }, () => () => ({ done: false }))
+  const started = Date.now()
+  let now = started
+  const pending = Array.from({ length: 12 }, () => () => {
+    now += 5_000
+    setSystemTime(now)
+    return { done: false }
+  })
   const { access, asked } = daemon({
     '/v1/admin': [() => ({ change })],
     '/v1/admin/wait': [...pending, () => ({ done: true, result: outcome })],
   })
-
-  // then the CLI waits it out with no deadline of its own, and none of those polls counts as a failure
-  expect(await ownerChange(access, alive(), { change })).toEqual(outcome)
-  expect(asked.filter((path) => path === '/v1/admin/wait')).toHaveLength(13)
+  try {
+    // then the CLI waits out a minute with no deadline of its own, and none of those polls counts as a failure
+    expect(await ownerChange(access, alive(), { change })).toEqual(outcome)
+    expect(Date.now() - started).toBeGreaterThan(30_000)
+    expect(asked.filter((path) => path === '/v1/admin/wait')).toHaveLength(13)
+  } finally {
+    setSystemTime()
+  }
 })
 
 it('reports the outcome as unknown once the daemon is gone and kept none', async () => {
