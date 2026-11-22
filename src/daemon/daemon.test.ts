@@ -807,6 +807,43 @@ describe('unlocked session', () => {
       daemon = await startDaemon({ layout, env, keys: [owner] })
     })
 
+    it('report the outcome of a shared session whose source ended while its change was running', async () => {
+      // given a session shared from another worktree's, with a change held back by a reader
+      const { identity } = await createIdentity('carol', 'machine')
+      if (identity.kind !== 'machine') throw new Error('expected a machine identity')
+      await new Admin(await Vault.open(layout, [owner], {})).addMember('carol', {
+        ...memberPublicOfIdentity(identity),
+        owner: true,
+        tiers: [],
+      })
+      const key = decodeSecretKey(identity.key)
+      const sourceLock = join(base, 'source.lock')
+      const releaseSource = holdLock(sourceLock)
+      if (releaseSource === undefined) throw new Error('the source lock was taken')
+      await daemon.stop()
+      daemon = await startDaemon({ layout, env, keys: [key], session: { ttlMs: 3_600_000, sourceLock } })
+      const session = new LiveAccess(layout.agentSocket, readFileSync(layout.sessionFile, 'utf8'))
+      const release = await holdShared()
+      const change = randomToken(16)
+      await session.call(
+        '/v1/admin',
+        { change, request: tierAdd('shared'), proof: await proofBy(session, key) },
+        AdmittedSchema,
+      )
+
+      // when the source session ends
+      releaseSource()
+
+      // then reads and admissions are refused, but the change's outcome is still collected once it commits
+      await expect(session.list()).rejects.toMatchObject({ code: 'locked' })
+      expect(await session.call('/v1/admin/wait', { change, waitMs: 50 }, AdminWaitedSchema)).toEqual({ done: false })
+      await release()
+      let waited = await session.call('/v1/admin/wait', { change }, AdminWaitedSchema)
+      while (!waited.done) waited = await session.call('/v1/admin/wait', { change }, AdminWaitedSchema)
+      expect(waited.result.affected).toEqual([])
+      expect(await tiers()).toContain('shared')
+    })
+
     it('run a change once when its admission is sent again, used proof and all', async () => {
       // given an owner change admitted and finished
       const { session, key } = await ownerSession()
