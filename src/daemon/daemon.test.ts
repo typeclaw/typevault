@@ -841,7 +841,13 @@ describe('unlocked session', () => {
         result: { affected: [], scopeRefreshed: true },
       })
       expect(await tiers()).toContain('late')
+
+      // and a machine daemon that takes over the socket answers the poll from that receipt
       daemon = await startDaemon({ layout, env, keys: [owner] })
+      expect(await noGrant.call('/v1/admin/wait', { change }, AdminWaitedSchema)).toMatchObject({
+        state: 'done',
+        result: { affected: [], scopeRefreshed: true },
+      })
     })
 
     it('report the outcome of a shared session whose source ended while its change was running', async () => {

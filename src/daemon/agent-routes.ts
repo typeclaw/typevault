@@ -9,10 +9,11 @@ import type { Vault } from '../core/vault'
 import { PACKAGE_VERSION } from '../core/version'
 import { type GrantStore, type ResolvedGrant, SESSION_CEILING } from './grants'
 import { type Handler, json, parseBody } from './http'
-import { OWNER_CHANGE_POLL_MS, type OwnerChanges } from './owner-changes'
+import { OWNER_CHANGE_POLL_MS, type OwnerChanges, readOutcome } from './owner-changes'
 import type { OwnerWindow } from './owner-window'
 import {
   AdminBody,
+  AdminResultSchema,
   AdminWaitBody,
   AttachBody,
   DeriveBody,
@@ -264,8 +265,12 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
     // The change's own random id authorizes collecting its outcome, which names no secret value: the session that
     // admitted it may have expired meanwhile, and the caller must still learn what to rotate at the source.
     '/v1/admin/wait': async (request) => {
-      if (context.ownerChanges === undefined) throw new TypeVaultError('denied', OWNER_ONLY)
       const { change, waitMs } = await parseBody(request, AdminWaitBody)
+      // A daemon with no owner queue (say a machine member's, started after a session drained a change and stopped)
+      // answers from the receipts that session left in the run directory.
+      if (context.ownerChanges === undefined) {
+        return json(readOutcome(context.vault.layout.run, change, AdminResultSchema) ?? { state: 'unknown' })
+      }
       return json(await context.ownerChanges.wait(change, waitMs ?? OWNER_CHANGE_POLL_MS))
     },
     '/v1/attach': async (request) => {
