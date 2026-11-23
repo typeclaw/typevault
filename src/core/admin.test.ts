@@ -7,7 +7,7 @@ import { runAdminOp } from './admin'
 import { Admin } from './admin'
 import type { SecretKey } from './crypto'
 import { signerOf } from './entries'
-import { createIdentity } from './identity'
+import { createIdentity, memberPublicOfIdentity } from './identity'
 import { founderOf, initGlobalVault } from './init'
 import { globalLayout, type Layout } from './layout'
 import { parseEntryName } from './naming'
@@ -47,4 +47,21 @@ it('keeps the result of a committed rotation when the vault cannot be reloaded a
   // then the result still names what to rotate at the source, the rotation landed, and the reload failure is reported
   expect(result).toEqual({ affected: ['openai'], removed: [], ownerRotated: false, reloaded: false })
   expect((await Vault.open(layout, [], {})).state.tiers['member']?.gen).toBe((gen ?? 0) + 1)
+})
+
+it('reports the owner rotation of a removal its vault handle had not seen coming', async () => {
+  // given a vault handle opened before another writer adds Bob as an owner
+  const vault = await Vault.open(layout, [owner], {})
+  const { identity } = await createIdentity('bob', 'machine')
+  await new Admin(await Vault.open(layout, [owner], {})).addMember('bob', {
+    ...memberPublicOfIdentity(identity),
+    owner: true,
+    tiers: [],
+  })
+
+  // when that handle removes Bob
+  const result = await runAdminOp(vault, { op: 'member.rm', name: 'bob' })
+
+  // then its result names Bob and the owner rotation the removal made, as found under its own lock
+  expect(result).toMatchObject({ removed: ['bob'], ownerRotated: true, reloaded: true })
 })
