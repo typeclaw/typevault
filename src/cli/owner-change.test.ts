@@ -211,6 +211,25 @@ it('reports a change committed but not yet written with its own message, without
   expect(asked).toEqual(['/v1/admin', '/v1/admin/wait'])
 })
 
+it('collects the saved receipt when a daemon that cannot serve it refuses the poll', async () => {
+  // given a change whose session saved its receipt and stopped, and a daemon in its place that refuses the poll
+  const change = randomToken(16)
+  mkdirSync(join(run, 'owner-changes'), { recursive: true })
+  writeFileSync(join(run, 'owner-changes', `${change}.json`), JSON.stringify({ result: outcome }))
+  const { access, asked } = daemon({
+    '/v1/admin': [() => ({ change })],
+    '/v1/admin/wait': [
+      () => {
+        throw new TypeVaultError('denied', 'owner changes go through an unlocked session only')
+      },
+    ],
+  })
+
+  // then the CLI returns the saved outcome, without sending the change again
+  expect(await ownerChange(access, alive(), { change })).toEqual(outcome)
+  expect(asked).toEqual(['/v1/admin', '/v1/admin/wait'])
+})
+
 it('reports the outcome as unknown when an admitted change has no receipt', async () => {
   const change = randomToken(16)
   const { access } = daemon({ '/v1/admin': [() => ({ change })], '/v1/admin/wait': [() => ({ state: 'unknown' })] })

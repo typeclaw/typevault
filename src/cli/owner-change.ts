@@ -39,10 +39,22 @@ export async function ownerChange(
       "the session stopped answering, so this owner change's outcome is unknown: check the vault before running it again",
       { cause },
     )
+  // A change's own errors come back as receipt states, so a refused poll is the daemon's: one that can't serve this
+  // receipt (another release's, say) says nothing of the change, and the receipt saved on disk may.
+  const poll = async () => {
+    try {
+      return await access.call('/v1/admin/wait', { change }, AdminWaitedSchema)
+    } catch (error) {
+      if (lostInTransport(error)) throw error
+      const kept = readOutcome(layout.run, change, AdminResultSchema)
+      if (kept !== undefined) return kept
+      throw unknown(error)
+    }
+  }
   for (let failures = 0; ;) {
     try {
       if (admission === 'unsure') {
-        const waited = await access.call('/v1/admin/wait', { change }, AdminWaitedSchema)
+        const waited = await poll()
         if (waited.state === 'unknown') {
           if (resent || Date.now() - sentAt >= OWNER_CHANGE_KEEP_MS) throw unknown(undefined)
           admission = 'unsent'
@@ -68,7 +80,7 @@ export async function ownerChange(
         }
         admission = 'admitted'
       }
-      const waited = await access.call('/v1/admin/wait', { change }, AdminWaitedSchema)
+      const waited = await poll()
       // An admitted change has a receipt for as long as its window lasts: without one, nothing can say what happened.
       if (waited.state === 'unknown') throw unknown(undefined)
       if (waited.state !== 'running') return settledResult(waited)
