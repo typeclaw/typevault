@@ -58,10 +58,12 @@ export class GrantStore {
     this.#records = existsSync(path) ? readJsonFile(path, z.array(RecordSchema)) : []
   }
 
-  #save(): void {
+  /** Writes `records` first, so a failed write leaves the grants in memory as they are on disk. */
+  #save(records: readonly GrantRecord[] = this.#records): void {
     const now = Date.now()
-    this.#records = this.#records.filter((record) => Date.parse(record.exp) > now)
-    atomicWrite(this.#path, JSON.stringify(this.#records), 0o600)
+    const live = records.filter((record) => Date.parse(record.exp) > now)
+    atomicWrite(this.#path, JSON.stringify(live), 0o600)
+    this.#records = live
   }
 
   issue(request: GrantRequest): { readonly token: string; readonly record: GrantRecord } {
@@ -115,6 +117,10 @@ export class GrantStore {
       if (parentId !== undefined && link === undefined) throw new TypeVaultError('denied', 'parent grant is gone')
     }
     return { record, chain: chain.map(({ tiers, only }) => ({ tiers, only })) }
+  }
+
+  retier(id: string, tiers: readonly string[]): void {
+    this.#save(this.#records.map((record) => (record.id === id ? { ...record, tiers: [...tiers] } : record)))
   }
 
   /** Whether grant `id` and all its ancestors are still unrevoked and unexpired. */

@@ -3,12 +3,18 @@ import { randomBytes } from 'node:crypto'
 import { parseTtl } from '../access/scope'
 import { ScopedVault } from '../access/scoped'
 import { appendAudit } from '../audit/log'
+import { type AdminResult, runAdminOp } from '../core/admin'
 import { TypeVaultError } from '../core/errors'
 import type { Vault } from '../core/vault'
 import { PACKAGE_VERSION } from '../core/version'
 import { type GrantStore, type ResolvedGrant, SESSION_CEILING } from './grants'
 import { type Handler, json, parseBody } from './http'
+import { OWNER_CHANGE_POLL_MS, type OwnerChanges, readOutcome } from './owner-changes'
+import type { OwnerWindow } from './owner-window'
 import {
+  AdminBody,
+  AdminResultSchema,
+  AdminWaitBody,
   AttachBody,
   DeriveBody,
   ImportBody,
@@ -33,7 +39,15 @@ export type DaemonContext = {
   readonly sessionTiers?: readonly string[]
   /** An unlocked session's: starts the same session in another worktree of this vault's repository, until `exp`. */
   readonly attach?: (vault: string, exp: number) => Promise<void>
+  /** An unlocked session's: when its owner changes go through. */
+  readonly ownerWindow?: OwnerWindow
+  /** An unlocked session's: opens the admin socket of a ceiling an owner change just set; returns those that failed. */
+  readonly serveNewCeilings?: () => readonly string[]
+  /** An unlocked session's: the owner changes it admitted, run one at a time. */
+  readonly ownerChanges?: OwnerChanges<OwnerChangeResult>
 }
+
+export type OwnerChangeResult = AdminResult & { readonly unserved: readonly string[]; readonly scopeRefreshed: boolean }
 
 function bearer(request: Request): string {
   const header = request.headers.get('authorization') ?? ''
@@ -58,6 +72,35 @@ function session(context: DaemonContext, request: Request): { grant: ResolvedGra
   })
   context.sessions.set(record.id, access)
   return { grant, access }
+}
+
+/** The unlocked session's own grant: a grant derived from it (an agent's) can't share it or change the vault's owner state. */
+function ownSession(context: DaemonContext, request: Request, refusal: string): ResolvedGrant {
+  const { grant } = session(context, request)
+  if (grant.record.ceiling !== SESSION_CEILING || grant.record.parent !== undefined) {
+    throw new TypeVaultError('denied', refusal)
+  }
+  return grant
+}
+
+const OWNER_ONLY = 'owner changes go through an unlocked session only'
+
+/**
+ * A session reaches every tier its key does, as when it opened: a tier an owner change added or included among them. Its
+ * cached scope is updated in place, keeping the values it handed out for redaction, and only once the grant is saved,
+ * so the two never disagree. False when finding those tiers or saving the grant failed.
+ */
+async function refreshScope(context: DaemonContext, grant: ResolvedGrant): Promise<boolean> {
+  let tiers: string[]
+  try {
+    tiers = [...(await context.vault.keyring.reachableTiers())].sort()
+    context.grants.retier(grant.record.id, tiers)
+  } catch (error) {
+    console.error('typevault daemon: widening the session grant after an owner change failed', error)
+    return false
+  }
+  context.sessions.get(grant.record.id)?.rescope([{ tiers, only: grant.record.only }])
+  return true
 }
 
 type StagedImport = {
@@ -190,10 +233,49 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
         ),
       )
     },
-    // Only the session's own grant shares it: a grant derived from it (an agent's) can't widen itself to a worktree.
+    '/v1/admin/challenge': async (request) => {
+      ownSession(context, request, OWNER_ONLY)
+      const window = context.ownerWindow
+      if (window === undefined) throw new TypeVaultError('denied', OWNER_ONLY)
+      return json({ open: window.isOpen, nonce: window.challenge() })
+    },
+    '/v1/admin': async (request) => {
+      const grant = ownSession(context, request, OWNER_ONLY)
+      const { ownerWindow: window, ownerChanges } = context
+      if (window === undefined || ownerChanges === undefined) throw new TypeVaultError('denied', OWNER_ONLY)
+      const { request: op, proof, change } = await parseBody(request, AdminBody)
+      // A caller that lost the answer asks again under the same id: that change already has, or will have, its outcome.
+      if (ownerChanges.has(change)) return json({ change })
+      if (proof !== undefined) {
+        const { vault } = context
+        const member = vault.member === undefined ? undefined : vault.state.members[vault.member]
+        if (member === undefined) throw new TypeVaultError('denied', 'this session holds no member key to prove')
+        window.open(proof.nonce, proof.signature, member.signPublic)
+      }
+      if (!window.isOpen) throw new TypeVaultError('locked', 'owner changes need your password or Touch ID again')
+      ownerChanges.admit(change, async () => {
+        const result = await runAdminOp(context.vault, op)
+        // Committed: what follows can't undo it, so a failure there is reported beside the result, never instead of it.
+        // A vault left on its old state can't say what the session now reaches; its next refresh reloads it or fails closed.
+        const scopeRefreshed = result.reloaded && (await refreshScope(context, grant))
+        return { ...result, scopeRefreshed, unserved: context.serveNewCeilings?.() ?? [] }
+      })
+      return json({ change })
+    },
+    // The change's own random id authorizes collecting its outcome, which names no secret value: the session that
+    // admitted it may have expired meanwhile, and the caller must still learn what to rotate at the source.
+    '/v1/admin/wait': async (request) => {
+      const { change, waitMs } = await parseBody(request, AdminWaitBody)
+      // A daemon with no owner queue (say a machine member's, started after a session drained a change and stopped)
+      // answers from the receipts that session left in the run directory.
+      if (context.ownerChanges === undefined) {
+        return json(readOutcome(context.vault.layout.run, change, AdminResultSchema) ?? { state: 'unknown' })
+      }
+      return json(await context.ownerChanges.wait(change, waitMs ?? OWNER_CHANGE_POLL_MS))
+    },
     '/v1/attach': async (request) => {
-      const { record } = session(context, request).grant
-      if (context.attach === undefined || record.ceiling !== SESSION_CEILING || record.parent !== undefined) {
+      const { record } = ownSession(context, request, 'only an unlocked session can be shared with a worktree')
+      if (context.attach === undefined) {
         throw new TypeVaultError('denied', 'only an unlocked session can be shared with a worktree')
       }
       const { vault } = await parseBody(request, AttachBody)

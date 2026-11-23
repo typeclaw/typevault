@@ -13,10 +13,13 @@ import { loadState, readOwner } from '../core/state'
 import { readSnapshot, Vault } from '../core/vault'
 import { worktreeVaults } from '../core/worktrees'
 import { adminRoutes, type Ceiling } from './admin-routes'
-import { agentRoutes, type DaemonContext } from './agent-routes'
+import { agentRoutes, type DaemonContext, type OwnerChangeResult } from './agent-routes'
 import { isDaemonAlive } from './client'
 import { GrantStore, SESSION_CEILING } from './grants'
 import { errorResponse, json, router } from './http'
+import { OwnerChanges } from './owner-changes'
+import { OwnerWindow } from './owner-window'
+import { AdminResultSchema } from './protocol'
 import { type PromptOptions, PromptRequests } from './requests'
 import { LOCKED_MESSAGE, startSession, stopDaemon } from './spawn'
 
@@ -100,7 +103,7 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
   if (vault.keyring.owner === undefined && vault.member === undefined) {
     throw new TypeVaultError('denied', 'this key is not a member of the vault')
   }
-  const ceilings = ceilingsOf(vault)
+  const ceilings = [...ceilingsOf(vault)]
   if (ceilings.length === 0 && options.session === undefined)
     throw new TypeVaultError('invalid', 'no ceilings configured (typevault ceiling set <name> <tier>)')
 
@@ -144,13 +147,22 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
     requests: new PromptRequests(vault, options.prompt ?? {}),
     ...(options.session === undefined
       ? {}
-      : { sessionTiers: member?.tiers ?? [], ...(attach === undefined ? {} : { attach }) }),
+      : {
+          sessionTiers: member?.tiers ?? [],
+          ownerWindow: new OwnerWindow(),
+          ownerChanges: new OwnerChanges<OwnerChangeResult>(layout.run, AdminResultSchema),
+          serveNewCeilings: () => serveNewCeilings(),
+          ...(attach === undefined ? {} : { attach }),
+        }),
   }
   // A shared session whose source is gone answers nothing but ping (how `stopDaemon` finds it) until it stops.
   const bound =
     (fetch: (request: Request) => Promise<Response>) =>
     async (request: Request): Promise<Response> => {
-      if (new URL(request.url).pathname === '/v1/ping') return fetch(request)
+      const path = new URL(request.url).pathname
+      // Collecting an owner change's outcome reads only this daemon's memory: it must not queue behind the vault lock that
+      // change holds, and it keeps answering while a shared session whose source ended drains that change.
+      if (path === '/v1/ping' || path === '/v1/admin/wait') return fetch(request)
       if (!sourceAlive()) return errorResponse(new TypeVaultError('locked', LOCKED_MESSAGE))
       try {
         // Includes cached redaction values and worktree attachment: neither necessarily scans the vault. The snapshot
@@ -168,11 +180,11 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
     if (process.platform !== 'win32') chmodSync(path, 0o600)
     return server
   }
+  const serveCeiling = (ceiling: Ceiling) =>
+    listen(layout.adminSocket(ceiling.name), bound(router(adminRoutes(context, ceiling))))
   const servers = [
     listen(layout.agentSocket, bound(router(agentRoutes(context)))),
-    ...ceilings.map((ceiling) =>
-      listen(layout.adminSocket(ceiling.name), bound(router(adminRoutes(context, ceiling)))),
-    ),
+    ...ceilings.map(serveCeiling),
     listen(
       layout.controlSocket,
       router({
@@ -184,6 +196,23 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
       }),
     ),
   ]
+  // A ceiling set through this session gets its socket right away; stopping removes it with the others. One whose socket
+  // can't open stays untracked, so the next owner change tries again, and is returned: the change itself committed.
+  const serveNewCeilings = (): readonly string[] => {
+    const unserved: string[] = []
+    for (const ceiling of ceilingsOf(vault)) {
+      if (ceilings.some((served) => served.name === ceiling.name)) continue
+      try {
+        servers.push(serveCeiling(ceiling))
+      } catch (error) {
+        console.error(`typevault daemon: opening the admin socket of ceiling "${ceiling.name}" failed`, error)
+        unserved.push(ceiling.name)
+        continue
+      }
+      ceilings.push(ceiling)
+    }
+    return unserved
+  }
   atomicWrite(join(layout.run, 'daemon.pid'), String(process.pid), 0o600)
   const session = options.session === undefined ? undefined : await openSession(context, options.session.ttlMs)
   const adopt = (): void => {
@@ -205,8 +234,12 @@ async function serve(options: DaemonOptions, claim: DaemonClaim, releaseLock: ()
       clearInterval(watch)
       stopping = true
       try {
+        // Closed before the first wait, so nothing is admitted while attachments settle. A change still running would
+        // otherwise persist grants or open sockets after cleanup.
+        const ownerChanges = context.ownerChanges?.stop()
         // An attachment still starting would otherwise leave its worktree unlocked after this stop.
         await Promise.allSettled(attaching)
+        await ownerChanges
         // The claim was cleared and someone else's daemon now owns the grants, session and run files. Saving this
         // daemon's stale grant store or removing those files would undo its successor's, so only local resources go.
         if (!claim.owns()) {

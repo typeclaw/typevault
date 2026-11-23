@@ -108,7 +108,7 @@ it('locks a removed member out and lists what it could read for rotation', async
   const key = await addMachine('ci', ['member'])
 
   // when it is removed
-  const affected = await admin.removeMember('ci')
+  const { affected } = await admin.removeMember('ci')
 
   // then its key opens nothing, and only what it reached needs rotating at the source
   expect(affected).toEqual(['openai'])
@@ -151,7 +151,7 @@ it('revokes a co-owner even if they saved the shared owner key and a tier key', 
   if (oldTier === undefined) throw new Error('expected a tier key')
 
   // when Bob removes Alice, and writes another entry under the new owner
-  expect(await new Admin(await open([bob.key])).removeMember('alice')).toEqual(['openai', 'stripe'])
+  expect((await new Admin(await open([bob.key])).removeMember('alice')).affected).toEqual(['openai', 'stripe'])
   const remaining = await open([bob.key])
   const next = remaining.keyring.owner
   if (next === undefined) throw new Error('expected the new owner key')
@@ -253,7 +253,7 @@ it('keeps a removal all-or-nothing when its transaction fails before committing'
   expect((await (await open([key])).scan()).entries.map((entry): string => entry.payload.name)).toEqual(['openai'])
 
   // and retrying completes the removal
-  expect(await admin.removeMember('ci')).toEqual(['openai'])
+  expect((await admin.removeMember('ci')).affected).toEqual(['openai'])
   expect((await (await open([key])).scan()).entries).toEqual([])
 })
 
@@ -266,7 +266,7 @@ it('keeps other members reading after a removal rotates tiers they share', async
   await addMachine('bot', ['trusted'])
 
   // when one leaves
-  expect(await admin.removeMember('bot')).toEqual(['openai', 'stripe'])
+  expect((await admin.removeMember('bot')).affected).toEqual(['openai', 'stripe'])
 
   // then the other still reads both tiers at their new generations
   const vault = await open([staying])

@@ -16,7 +16,7 @@ const CODES: readonly ErrorCode[] = [
   'no_vault',
   'not_member',
 ]
-const toCode = (code: string): ErrorCode => CODES.find((known) => known === code) ?? 'unavailable'
+export const toCode = (code: string): ErrorCode => CODES.find((known) => known === code) ?? 'unavailable'
 
 export type CallOptions = { readonly token?: string; readonly timeoutMs?: number }
 
@@ -45,11 +45,20 @@ export async function callDaemon<T>(
       if (error.name === 'TimeoutError') {
         throw new TypeVaultError('unavailable', 'the typevault daemon request timed out', { cause: error })
       }
-      throw new TypeVaultError('unavailable', `the typevault daemon is not reachable at ${socket}`)
+      throw new TypeVaultError('unavailable', `the typevault daemon is not reachable at ${socket}`, { cause: error })
     }
     throw error
   }
-  const payload: unknown = await response.json()
+  let payload: unknown
+  try {
+    payload = await response.json()
+  } catch (error) {
+    // A reply cut off after its headers was lost in transport like a dropped connection: it is no answer from the daemon.
+    if (error instanceof Error) {
+      throw new TypeVaultError('unavailable', 'the typevault daemon reply was cut off', { cause: error })
+    }
+    throw error
+  }
   if (!response.ok) {
     const parsed = ErrorSchema.safeParse(payload)
     throw parsed.success

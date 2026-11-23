@@ -95,7 +95,9 @@ async function addMachineMember(): Promise<string> {
       `${PASSWORD}\n`,
     ),
   )
-  succeeds(await cli(['ceiling', 'set', 'bot', 'default', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
+  succeeds(await cli(['ceiling', 'set', 'bot', 'default'], owner))
+  // The owner's first command unlocked a session; the tests start from a checkout no daemon serves.
+  succeeds(await cli(['lock'], owner))
   return JSON.parse(readFileSync(join(base, 'ci', 'typevault', 'identity.json'), 'utf8')).key
 }
 

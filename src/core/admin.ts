@@ -2,6 +2,7 @@ import { encodeSecretKey, generateSecretKey, type PublicKey, publicKeyOf, seal, 
 import { fromBase64, utf8 } from './encoding'
 import { signerOf } from './entries'
 import { TypeVaultError } from './errors'
+import { decodeMemberPublic } from './identity'
 import { ownerWrapPath, wrapPath } from './keyring'
 import { withLock } from './lock'
 import { rotateOwner, rotateTiers } from './rotate'
@@ -18,7 +19,7 @@ import {
   signersDoc,
   type VaultState,
 } from './state'
-import { commitTxn, Txn } from './txn'
+import { commitTxn, MarkedCommitted, recoverTxns, Txn } from './txn'
 import type { Vault } from './vault'
 
 export type NewMember = PublicKey & {
@@ -30,6 +31,42 @@ export type NewMember = PublicKey & {
 /** Every tier `tiers` reach: rotating all of them keeps old generations out of a member's hands. */
 const reachOf = (state: VaultState, tiers: readonly string[]): readonly string[] =>
   [...new Set(tiers.flatMap((tier) => [...reach(state.tiers, tier)]))].sort()
+
+/**
+ * A change that committed, after which the vault couldn't be reloaded: its result stands, and the vault keeps the state
+ * it had until its next refresh tries again.
+ */
+/**
+ * A change committed by its marker whose files couldn't be applied yet: the vault completes it when next opened. It
+ * keeps the code of what stopped it (a symlink planted in the vault stays `tampered`), but never stands for a failure.
+ */
+export class UncertainChange extends TypeVaultError {
+  constructor(cause: unknown) {
+    const reason = cause instanceof TypeVaultError ? ` (${cause.message})` : ''
+    super(
+      cause instanceof TypeVaultError ? cause.code : 'unavailable',
+      `the change was committed but its files could not be written yet${reason}; the vault finishes it when next opened, so check it before running this again`,
+      { cause },
+    )
+    this.name = 'UncertainChange'
+  }
+}
+
+export type MemberRemoval = {
+  readonly affected: readonly string[]
+  readonly removed: readonly string[]
+  readonly ownerRotated: boolean
+}
+
+export class CommittedChange extends Error {
+  readonly result: unknown
+
+  constructor(result: unknown, cause: unknown) {
+    super('the change committed, but the vault could not be reloaded', { cause })
+    this.name = 'CommittedChange'
+    this.result = result
+  }
+}
 
 /** Owner-only changes to tiers, members, signers and ceilings. Each one lands as a single transaction. */
 export class Admin {
@@ -48,8 +85,22 @@ export class Admin {
       this.#vault.refresh()
       const txn = new Txn()
       const result = await build(this.#vault.state, txn)
-      commitTxn(this.#vault.layout, txn)
-      this.#vault.reload()
+      try {
+        commitTxn(this.#vault.layout, txn)
+      } catch (error) {
+        if (!(error instanceof MarkedCommitted)) throw error
+        // Committed by its marker: rolling it forward now confirms it; failing that, its outcome is uncertain, never a failure.
+        try {
+          recoverTxns(this.#vault.layout)
+        } catch (recovery) {
+          throw new UncertainChange(recovery)
+        }
+      }
+      try {
+        this.#vault.reload()
+      } catch (error) {
+        throw new CommittedChange(result, error)
+      }
       return result
     })
   }
@@ -112,9 +163,8 @@ export class Admin {
    * Drops an include and rotates the included tier in one transaction: a crash leaves both or neither, never a
    * dropped include whose old wrap still opens the included tier.
    */
-  async exclude(tier: string, included: string): Promise<readonly string[]> {
-    let affected: readonly string[] = []
-    await this.#mutate(async (state, txn) => {
+  exclude(tier: string, included: string): Promise<readonly string[]> {
+    return this.#mutate(async (state, txn) => {
       const holder = state.tiers[tier]
       if (holder === undefined || !holder.includes.includes(included)) {
         throw new TypeVaultError('not_found', `"${tier}" does not include "${included}"`)
@@ -122,23 +172,15 @@ export class Admin {
       const updated = { ...holder, includes: holder.includes.filter((name) => name !== included) }
       // Rotating removes the included tier's old generation, the dropped wrap with it, and rewrites tiers.json.
       const context = { vault: this.#vault, owner: this.#owner, txn, exposed: true }
-      affected = await rotateTiers({ ...context, state: { ...state, tiers: { ...state.tiers, [tier]: updated } } }, [
-        included,
-      ])
+      return rotateTiers({ ...context, state: { ...state, tiers: { ...state.tiers, [tier]: updated } } }, [included])
     })
-    return affected
   }
 
   /** Rotates every tier `name` reaches. Returns their entry names, now flagged for rotation at the source. */
-  async rotate(name: string): Promise<readonly string[]> {
-    let affected: readonly string[] = []
-    await this.#mutate(async (state, txn) => {
-      affected = await rotateTiers(
-        { vault: this.#vault, owner: this.#owner, state, txn, exposed: true },
-        reachOf(state, [name]),
-      )
-    })
-    return affected
+  rotate(name: string): Promise<readonly string[]> {
+    return this.#mutate(async (state, txn) =>
+      rotateTiers({ vault: this.#vault, owner: this.#owner, state, txn, exposed: true }, reachOf(state, [name])),
+    )
   }
 
   /**
@@ -168,9 +210,10 @@ export class Admin {
    * Drops a member and rotates every tier they reached, in one transaction: a crash leaves both or neither, never a
    * removed member whose keys still open new ciphertext. Returns the entries they could read, now flagged for
    * rotation: what they already decrypted can only be revoked at each secret's source. Any other name listing the same
-   * key goes too: it would otherwise keep that key's access.
+   * key goes too: it would otherwise keep that key's access. Also returns who was removed and whether the owner key
+   * rotated, as found under the transaction's own lock.
    */
-  removeMember(name: string): Promise<readonly string[]> {
+  removeMember(name: string): Promise<MemberRemoval> {
     return this.#mutate(async (state, txn) => {
       const member = state.members[name]
       if (member === undefined) throw new TypeVaultError('not_found', `no member "${name}"`)
@@ -179,22 +222,21 @@ export class Admin {
         Object.entries(state.members).filter(([, other]) => other.recipient !== member.recipient),
       )
       const context = { vault: this.#vault, owner: this.#owner, state: { ...state, members }, txn, exposed: true }
-      for (const [gone] of removed) txn.remove(`members/${gone}.key`)
+      const names = removed.map(([gone]) => gone)
+      for (const gone of names) txn.remove(`members/${gone}.key`)
       if (removed.some(([, gone]) => gone.owner)) {
         if (!Object.values(members).some((remaining) => remaining.owner)) {
           throw new TypeVaultError('invalid', `"${name}" is the last owner; add another owner first`)
         }
         for (const [gone, { owner }] of removed) if (owner) txn.remove(ownerWrapPath(gone))
-        return rotateOwner(context)
+        return { affected: await rotateOwner(context), removed: names, ownerRotated: true }
       }
       txn.put('members.json', membersDoc(members, this.#owner, state.seqs.members + 1))
-      return rotateTiers(
-        context,
-        reachOf(
-          state,
-          removed.flatMap(([, gone]) => gone.tiers),
-        ),
+      const tiers = reachOf(
+        state,
+        removed.flatMap(([, gone]) => gone.tiers),
       )
+      return { affected: await rotateTiers(context, tiers), removed: names, ownerRotated: false }
     })
   }
 
@@ -247,5 +289,85 @@ export class Admin {
 
   get signer(): ReturnType<typeof signerOf> {
     return signerOf(this.#owner)
+  }
+}
+
+/** One owner change, as the CLI asks it: run here in direct mode, or by an unlocked session's daemon. */
+export type AdminOp =
+  | {
+      readonly op: 'tier.add' | 'tier.rm' | 'key.rotate' | 'ceiling.rm' | 'signer.rm' | 'member.rm'
+      readonly name: string
+    }
+  | { readonly op: 'tier.include' | 'tier.exclude'; readonly tier: string; readonly included: string }
+  | { readonly op: 'ceiling.set'; readonly name: string; readonly tier: string }
+  | { readonly op: 'signer.add'; readonly id: string; readonly publicKey: string; readonly tiers: readonly string[] }
+  | {
+      readonly op: 'member.add'
+      readonly name: string
+      readonly publicKey: string
+      readonly owner: boolean
+      readonly tiers: readonly string[]
+    }
+
+export type AdminResult = {
+  /** Entries flagged for rotation at their source. */
+  readonly affected: readonly string[]
+  /** Members `member.rm` removed: every name sharing the removed key. */
+  readonly removed: readonly string[]
+  readonly ownerRotated: boolean
+  /** False when the change committed but the vault couldn't be reloaded after it. */
+  readonly reloaded: boolean
+}
+
+export const runAdminOp = (vault: Vault, request: AdminOp): Promise<AdminResult> => dispatch(new Admin(vault), request)
+
+/**
+ * A change's own result, also when it committed but the vault couldn't be reloaded after it. Every Admin method returns
+ * its transaction's result, so the result a CommittedChange carries is of that method's type.
+ */
+async function committed<T>(change: Promise<T>): Promise<{ readonly value: T; readonly reloaded: boolean }> {
+  try {
+    return { value: await change, reloaded: true }
+  } catch (error) {
+    if (error instanceof CommittedChange) return { value: error.result as T, reloaded: false }
+    throw error
+  }
+}
+
+const NONE = { affected: [], removed: [], ownerRotated: false } as const
+
+async function dispatch(admin: Admin, request: AdminOp): Promise<AdminResult> {
+  const plain = async (change: Promise<void>) => ({ ...NONE, reloaded: (await committed(change)).reloaded })
+  const rotation = async (change: Promise<readonly string[]>) => {
+    const { value, reloaded } = await committed(change)
+    return { ...NONE, affected: value, reloaded }
+  }
+  switch (request.op) {
+    case 'tier.add':
+      return plain(admin.addTier(request.name))
+    case 'tier.rm':
+      return plain(admin.removeTier(request.name))
+    case 'tier.include':
+      return plain(admin.include(request.tier, request.included))
+    case 'tier.exclude':
+      return rotation(admin.exclude(request.tier, request.included))
+    case 'key.rotate':
+      return rotation(admin.rotate(request.name))
+    case 'ceiling.set':
+      return plain(admin.setCeiling(request.name, request.tier))
+    case 'ceiling.rm':
+      return plain(admin.removeCeiling(request.name))
+    case 'signer.add':
+      return plain(admin.setSigner(request.id, request.publicKey, request.tiers))
+    case 'signer.rm':
+      return plain(admin.removeSigner(request.name))
+    case 'member.add': {
+      const pub = decodeMemberPublic(request.publicKey)
+      return plain(admin.addMember(request.name, { ...pub, owner: request.owner, tiers: request.tiers }))
+    }
+    case 'member.rm': {
+      const { value, reloaded } = await committed(admin.removeMember(request.name))
+      return { ...value, reloaded }
+    }
   }
 }

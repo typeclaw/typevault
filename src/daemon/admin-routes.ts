@@ -13,12 +13,14 @@ export type Ceiling = { readonly name: string; readonly tier: string | '*' }
 
 /**
  * The ceiling this socket holds right now, `undefined` once removed. Read per request: the owner may lower or remove
- * it while the daemon runs, and the socket must not keep granting what it was started with.
+ * it while the daemon runs, and the socket must not keep granting what it was started with. Without a signed ceiling,
+ * `default` is the owner's uncapped socket whenever this daemon holds the owner key, even if one was signed at startup.
  */
 async function currentTier(context: DaemonContext, ceiling: Ceiling): Promise<string | undefined> {
   const { vault } = context
   await withLock(vault.layout.lockFile, 'shared', async () => vault.refresh())
-  return vault.state.ceilings[ceiling.name] ?? (ceiling.tier === '*' ? '*' : undefined)
+  const uncapped = ceiling.name === 'default' && vault.keyring.owner !== undefined
+  return vault.state.ceilings[ceiling.name] ?? (uncapped ? '*' : undefined)
 }
 
 function checkCeiling(context: DaemonContext, ceiling: string | undefined, tiers: readonly string[]): void {

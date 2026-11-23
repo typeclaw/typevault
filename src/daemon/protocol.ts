@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import { isPreset, parseEntryName } from '../core/naming'
 import { FieldsSchema } from '../core/payload'
+import { OwnerChangeId } from './owner-changes'
 
 const name = z.string().transform((value) => parseEntryName(value))
 const preset = z.string().refine(isPreset, 'unknown preset').optional()
@@ -51,3 +52,46 @@ export const GrantBody = z.object({
 })
 export const RevokeBody = z.object({ id: z.string().optional(), label: z.string().optional() })
 export const AuditBody = z.object({ label: z.string().optional() })
+const named = z.object({
+  op: z.enum(['tier.add', 'tier.rm', 'key.rotate', 'ceiling.rm', 'signer.rm', 'member.rm']),
+  name: z.string(),
+})
+export const AdminBody = z.object({
+  request: z.union([
+    named,
+    z.object({ op: z.enum(['tier.include', 'tier.exclude']), tier: z.string(), included: z.string() }),
+    z.object({ op: z.literal('ceiling.set'), name: z.string(), tier: z.string() }),
+    z.object({ op: z.literal('signer.add'), id: z.string(), publicKey: z.string(), tiers }),
+    z.object({ op: z.literal('member.add'), name: z.string(), publicKey: z.string(), owner: z.boolean(), tiers }),
+  ]),
+  proof: z.object({ nonce: z.string().max(64), signature: z.string().max(200) }).optional(),
+  /** The caller's own id for this change: admitting it again changes nothing. */
+  change: OwnerChangeId,
+})
+export const AdminResultSchema = z.object({
+  affected: z.array(z.string()),
+  removed: z.array(z.string()),
+  ownerRotated: z.boolean(),
+  /** False when the change committed but the session's vault couldn't be reloaded after it. */
+  reloaded: z.boolean(),
+  /** Ceilings the change set whose admin sockets the session couldn't open. */
+  unserved: z.array(z.string()),
+  /** False when the change committed but the session's grant couldn't be widened to the tiers it now reaches. */
+  scopeRefreshed: z.boolean(),
+})
+export const ChallengeSchema = z.object({ open: z.boolean(), nonce: z.string() })
+export const AdmittedSchema = z.object({ change: OwnerChangeId })
+export const AdminWaitBody = z.object({
+  change: OwnerChangeId,
+  waitMs: z.number().int().min(0).max(5_000).optional(),
+})
+export const AdminWaitedSchema = z.discriminatedUnion('state', [
+  z.object({ state: z.literal('running') }),
+  /** No receipt for that id: never admitted, or past its window. */
+  z.object({ state: z.literal('unknown') }),
+  z.object({ state: z.literal('done'), result: AdminResultSchema }),
+  /** The change itself failed with this error. */
+  z.object({ state: z.literal('failed'), error: z.object({ code: z.string(), message: z.string() }) }),
+  /** Committed by its marker but not yet written: the vault finishes it when next opened. */
+  z.object({ state: z.literal('uncertain'), error: z.object({ code: z.string(), message: z.string() }) }),
+])

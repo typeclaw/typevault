@@ -39,7 +39,7 @@ const valueOf = (entry: StoredEntry): EntryValue =>
  */
 export class ScopedVault implements Access {
   readonly #vault: Vault
-  readonly #chain: ScopeChain
+  #chain: ScopeChain
   readonly #identity: ScopedIdentity
   readonly #handedOut = new Set<string>()
 
@@ -61,6 +61,11 @@ export class ScopedVault implements Access {
       },
       this.#vault.anchorsFile,
     )
+  }
+
+  /** A new scope for the same grant; the values handed out so far stay remembered for redaction. */
+  rescope(chain: ScopeChain): void {
+    this.#chain = chain
   }
 
   #allows(entry: StoredEntry): boolean {

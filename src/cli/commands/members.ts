@@ -4,7 +4,6 @@ import { userInfo } from 'node:os'
 import { defineCommand } from 'citty'
 
 import { parseTtl } from '../../access/scope'
-import { Admin } from '../../core/admin'
 import { publicKeyOf } from '../../core/crypto'
 import { TypeVaultError } from '../../core/errors'
 import { atomicWrite } from '../../core/fsx'
@@ -32,9 +31,8 @@ import {
   DEFAULT_SESSION_MS,
   findLayout,
   layoutFrom,
-  openAdmin,
-  openDirect,
   openPublic,
+  runAdmin,
   unlockSession,
   worktreeSessions,
   type Env,
@@ -130,7 +128,13 @@ export const member = defineCommand({
         if (tiers.length === 0 && args.owner !== true)
           throw new TypeVaultError('invalid', 'member add needs --tier or --owner')
         const pub = decodeMemberPublic(args.publicKey)
-        await (await openAdmin(process.env)).addMember(args.name, { ...pub, owner: args.owner === true, tiers })
+        await runAdmin(process.env, {
+          op: 'member.add',
+          name: args.name,
+          publicKey: args.publicKey,
+          owner: args.owner === true,
+          tiers,
+        })
         print(`added ${pub.kind} member ${args.name}${tiers.length === 0 ? '' : ` (rotated ${tiers.join(', ')})`}`)
         note('commit the vault so they can pull it')
       },
@@ -139,14 +143,10 @@ export const member = defineCommand({
       meta: { name: 'rm', description: 'Remove a member and rotate every tier they reached' },
       args: { name: { type: 'positional', required: true } },
       async run({ args }) {
-        const vault = await openDirect(process.env)
-        const previous = vault.state.owner.signPublic
-        const before = Object.keys(vault.state.members)
-        const affected = await new Admin(vault).removeMember(args.name)
-        const removed = before.filter((name) => vault.state.members[name] === undefined)
+        const { affected, removed, ownerRotated } = await runAdmin(process.env, { op: 'member.rm', name: args.name })
         print(`removed ${removed.join(', ')}`)
         if (removed.length > 1) note(`${removed.join(', ')} shared one key, so all of them were removed.`)
-        if (vault.state.owner.signPublic !== previous) {
+        if (ownerRotated) {
           note(
             'Owner key rotated. Commit the vault; members must pull it. For an open session, run typevault lock then typevault unlock.',
           )
@@ -247,7 +247,7 @@ export const unlock = defineCommand({
     const env = process.env
     const ttlMs = args.for === undefined ? DEFAULT_SESSION_MS : parseTtl(args.for)
     if (ttlMs > MAX_TIMER_MS) throw new TypeVaultError('invalid', '--for is too long (at most 24 days)')
-    const started = await unlockSession(env, passwords(), ttlMs)
+    const started = (await unlockSession(env, passwords(), ttlMs)) !== undefined
     const id = vaultIdOf((await openPublic(env)).state.owner.signPublic)
     print(started ? `unlocked vault ${id} for ${args.for}` : `vault ${id} is already unlocked`)
   },

@@ -29,6 +29,46 @@ it('keeps a human-owned vault locked until its owner unlocks it, and locks it ag
   expect((await cli(['ls'], owner)).stderr).toContain('the vault is locked')
 })
 
+it('asks once for a chain of owner commands, unlocking a session on the first, and never from an agent', async () => {
+  // given an agent (no terminal, no password) can't make owner changes
+  const agent = await cli(['tier', 'add', 'early'], owner)
+  expect({ code: agent.code, stderr: agent.stderr }).toEqual({
+    code: 1,
+    stderr: 'typevault: the vault is locked: ask a human to run `typevault unlock`\n',
+  })
+
+  // when the owner's first command takes the password and the rest of the chain takes none
+  succeeds(await cli(['tier', 'add', 'ops', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
+  succeeds(await cli(['tier', 'include', 'ops', 'default'], owner))
+  succeeds(await cli(['ceiling', 'set', 'bot', 'ops'], owner))
+
+  // then every change landed, and the first unlocked the session reads go through too
+  expect(succeeds(await cli(['tier', 'ls'], owner)).stdout).toMatch(/ops\s+1\s+default/)
+  expect(succeeds(await cli(['ceiling', 'ls'], owner)).stdout).toMatch(/bot\s+ops/)
+  succeeds(await cli(['ls'], owner))
+})
+
+it('refuses an agent owner changes through a session unlocked for reading', async () => {
+  // given the owner unlocked the vault, as for reads
+  succeeds(await cli(['unlock', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
+
+  // when an agent (no terminal, no password) runs an owner command through it
+  const agent = await cli(['member', 'rm', 'alice'], owner)
+
+  // then it is refused and nothing changed
+  expect({ code: agent.code, stderr: agent.stderr }).toEqual({
+    code: 1,
+    stderr: 'typevault: owner changes need your password or Touch ID: run this at a terminal\n',
+  })
+  expect(succeeds(await cli(['member', 'ls'], owner)).stdout).toContain('alice')
+})
+
+it('issues grants through a ceiling set from a locked vault, without a restart', async () => {
+  succeeds(await cli(['ceiling', 'set', 'bot', 'default', '--vault-password-stdin'], owner, `${PASSWORD}\n`))
+  const issued = succeeds(await cli(['grant', '--tier', 'default'], { ...owner, TYPEVAULT_CEILING: 'bot' }))
+  expect(issued.stdout).toStartWith('tvl1.')
+})
+
 it('keeps identity and checkout state directories private', () => {
   if (process.platform === 'win32') return
   const config = join(base, 'alice', 'typevault')
