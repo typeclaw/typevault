@@ -69,7 +69,14 @@ export function commitTxn(layout: Layout, txn: Txn): void {
   const puts = [...txn.puts.keys()]
   puts.forEach((rel, index) => atomicWrite(join(dir, 'files', String(index)), txn.puts.get(rel) ?? new Uint8Array()))
   atomicWrite(join(dir, 'manifest.json'), JSON.stringify({ puts, removes: [...txn.removes] }))
-  atomicWrite(join(dir, COMMITTED), '')
+  const marker = join(dir, COMMITTED)
+  try {
+    atomicWrite(marker, '')
+  } catch (error) {
+    // The marker renames into place before its directory syncs: once it is there, recovery rolls the change forward.
+    if (existsSync(marker)) throw new MarkedCommitted(error)
+    throw error
+  }
   try {
     applyTxn(layout, dir)
   } catch (error) {
