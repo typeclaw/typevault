@@ -196,6 +196,21 @@ it('reports a change that failed with not_found as that failure, without sending
   expect(asked).toEqual(['/v1/admin', '/v1/admin/wait'])
 })
 
+it('reports a change committed but not yet written with its own message, without sending it again', async () => {
+  const change = randomToken(16)
+  const message = 'the change was committed but its files could not be written yet; check it before running this again'
+  const { access, asked } = daemon({
+    '/v1/admin': [
+      () => {
+        throw lost()
+      },
+    ],
+    '/v1/admin/wait': [() => ({ state: 'uncertain', error: { code: 'unavailable', message } })],
+  })
+  await expect(ownerChange(access, alive(), { change })).rejects.toMatchObject({ code: 'unavailable', message })
+  expect(asked).toEqual(['/v1/admin', '/v1/admin/wait'])
+})
+
 it('reports the outcome as unknown when an admitted change has no receipt', async () => {
   const change = randomToken(16)
   const { access } = daemon({ '/v1/admin': [() => ({ change })], '/v1/admin/wait': [() => ({ state: 'unknown' })] })

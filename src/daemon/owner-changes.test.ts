@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import { z } from 'zod'
 
+import { UncertainChange } from '../core/admin'
 import { randomToken } from '../core/crypto'
 import { OWNER_CHANGE_KEEP_MS, OwnerChanges, readOutcome } from './owner-changes'
 
@@ -175,4 +176,18 @@ it('stops by admitting nothing new, starting nothing queued, and waiting for the
   expect(await changes.wait(a, 0)).toEqual({ state: 'done', result: 'a done' })
   expect(await changes.wait(b, 0)).toMatchObject({ state: 'failed', error: { code: 'locked' } })
   expect(started).toEqual(['a'])
+})
+
+it('keeps a change committed but not yet written as uncertain, never as failed', async () => {
+  const changes = queue()
+  const change = id()
+  changes.admit(change, async () => {
+    throw new UncertainChange(new Error('disk full'))
+  })
+  const uncertain = {
+    state: 'uncertain',
+    error: { code: 'unavailable', message: expect.stringContaining('committed') },
+  }
+  expect(await changes.wait(change, 1_000)).toMatchObject(uncertain)
+  expect(readOutcome(run, change, z.string())).toMatchObject(uncertain)
 })

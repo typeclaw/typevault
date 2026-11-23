@@ -3,6 +3,7 @@ import { join } from 'node:path'
 
 import { z } from 'zod'
 
+import { UncertainChange } from '../core/admin'
 import { TypeVaultError } from '../core/errors'
 import { atomicWrite, ensureDir } from '../core/fsx'
 import { toCode } from './client'
@@ -13,16 +14,22 @@ export const OWNER_CHANGE_POLL_MS = 5_000
 export const OWNER_CHANGE_KEEP_MS = 10 * 60_000
 export const OwnerChangeId = z.string().regex(/^[A-Za-z0-9_-]{22}$/, 'not an owner change id')
 
+const ChangeErrorSchema = z.object({ code: z.string(), message: z.string() })
 const Outcome = z.union([
   z.object({ result: z.unknown() }),
-  z.object({ error: z.object({ code: z.string(), message: z.string() }) }),
+  z.object({ error: ChangeErrorSchema }),
+  z.object({ uncertain: ChangeErrorSchema }),
 ])
 type Outcome = z.infer<typeof Outcome>
 export type ChangeError = { readonly code: string; readonly message: string }
-/** A settled change: what it returned, or the error it failed with. Neither is the same as having no receipt. */
+/**
+ * A settled change: what it returned, the error it failed with, or, committed by its marker but not yet written, an
+ * uncertain outcome the vault finishes later. None is the same as having no receipt.
+ */
 export type Settled<T> =
   | { readonly state: 'done'; readonly result: T }
   | { readonly state: 'failed'; readonly error: ChangeError }
+  | { readonly state: 'uncertain'; readonly error: ChangeError }
 export type Waited<T> = Settled<T> | { readonly state: 'running' } | { readonly state: 'unknown' }
 
 const outcomesDir = (run: string): string => join(run, 'owner-changes')
@@ -58,6 +65,7 @@ export function readOutcome<T>(run: string, id: string, schema: z.ZodType<T>): S
   }
   const outcome = Outcome.parse(JSON.parse(readFileSync(path, 'utf8')))
   if ('error' in outcome) return { state: 'failed', error: outcome.error }
+  if ('uncertain' in outcome) return { state: 'uncertain', error: outcome.uncertain }
   return { state: 'done', result: schema.parse(outcome.result) }
 }
 
@@ -106,12 +114,13 @@ export class OwnerChanges<T> {
     })
     const settled = done.then(
       (result): Settled<T> => ({ state: 'done', result }),
-      (error: unknown): Settled<T> => ({ state: 'failed', error: outcomeError(error) }),
+      (error: unknown): Settled<T> =>
+        error instanceof UncertainChange
+          ? { state: 'uncertain', error: { code: error.code, message: error.message } }
+          : { state: 'failed', error: outcomeError(error) },
     )
     this.#changes.set(id, { settled })
-    this.#tail = settled.then((outcome) =>
-      this.#keep(id, outcome.state === 'done' ? { result: outcome.result } : { error: outcome.error }),
-    )
+    this.#tail = settled.then((outcome) => this.#keep(id, onDisk(outcome)))
   }
 
   async wait(id: string, waitMs: number): Promise<Waited<T>> {
@@ -172,6 +181,17 @@ export class OwnerChanges<T> {
         console.error('typevault daemon: checking an owner-change outcome failed', error)
       }
     }
+  }
+}
+
+function onDisk<T>(settled: Settled<T>): Outcome {
+  switch (settled.state) {
+    case 'done':
+      return { result: settled.result }
+    case 'failed':
+      return { error: settled.error }
+    case 'uncertain':
+      return { uncertain: settled.error }
   }
 }
 

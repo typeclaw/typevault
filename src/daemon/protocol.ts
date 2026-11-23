@@ -92,4 +92,6 @@ export const AdminWaitedSchema = z.discriminatedUnion('state', [
   z.object({ state: z.literal('done'), result: AdminResultSchema }),
   /** The change itself failed with this error. */
   z.object({ state: z.literal('failed'), error: z.object({ code: z.string(), message: z.string() }) }),
+  /** Committed by its marker but not yet written: the vault finishes it when next opened. */
+  z.object({ state: z.literal('uncertain'), error: z.object({ code: z.string(), message: z.string() }) }),
 ])
