@@ -19,7 +19,7 @@ import {
   signersDoc,
   type VaultState,
 } from './state'
-import { commitTxn, Txn } from './txn'
+import { commitTxn, MarkedCommitted, recoverTxns, Txn } from './txn'
 import type { Vault } from './vault'
 
 export type NewMember = PublicKey & {
@@ -36,6 +36,22 @@ const reachOf = (state: VaultState, tiers: readonly string[]): readonly string[]
  * A change that committed, after which the vault couldn't be reloaded: its result stands, and the vault keeps the state
  * it had until its next refresh tries again.
  */
+/**
+ * A change committed by its marker whose files couldn't be applied yet: the vault completes it when next opened. It
+ * keeps the code of what stopped it (a symlink planted in the vault stays `tampered`), but never stands for a failure.
+ */
+export class UncertainChange extends TypeVaultError {
+  constructor(cause: unknown) {
+    const reason = cause instanceof TypeVaultError ? ` (${cause.message})` : ''
+    super(
+      cause instanceof TypeVaultError ? cause.code : 'unavailable',
+      `the change was committed but its files could not be written yet${reason}; the vault finishes it when next opened, so check it before running this again`,
+      { cause },
+    )
+    this.name = 'UncertainChange'
+  }
+}
+
 export type MemberRemoval = {
   readonly affected: readonly string[]
   readonly removed: readonly string[]
@@ -69,7 +85,17 @@ export class Admin {
       this.#vault.refresh()
       const txn = new Txn()
       const result = await build(this.#vault.state, txn)
-      commitTxn(this.#vault.layout, txn)
+      try {
+        commitTxn(this.#vault.layout, txn)
+      } catch (error) {
+        if (!(error instanceof MarkedCommitted)) throw error
+        // Committed by its marker: rolling it forward now confirms it; failing that, its outcome is uncertain, never a failure.
+        try {
+          recoverTxns(this.#vault.layout)
+        } catch (recovery) {
+          throw new UncertainChange(recovery)
+        }
+      }
       try {
         this.#vault.reload()
       } catch (error) {

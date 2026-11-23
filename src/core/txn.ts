@@ -50,7 +50,18 @@ function checkRel(rel: string): string {
   return path
 }
 
-/** Stages every file, writes the commit marker, then applies. Caller must hold the exclusive vault lock. */
+/** Applying a transaction failed after its commit marker: it is committed, and recovery rolls it forward. */
+export class MarkedCommitted extends Error {
+  constructor(cause: unknown) {
+    super('the transaction is committed, but applying it failed', { cause })
+    this.name = 'MarkedCommitted'
+  }
+}
+
+/**
+ * Stages every file, writes the commit marker, then applies. Caller must hold the exclusive vault lock. A failure
+ * before the marker leaves nothing behind; one after it is a MarkedCommitted.
+ */
 export function commitTxn(layout: Layout, txn: Txn): void {
   if (txn.isEmpty) return
   const dir = join(layout.txnDir, randomHex(8))
@@ -59,7 +70,11 @@ export function commitTxn(layout: Layout, txn: Txn): void {
   puts.forEach((rel, index) => atomicWrite(join(dir, 'files', String(index)), txn.puts.get(rel) ?? new Uint8Array()))
   atomicWrite(join(dir, 'manifest.json'), JSON.stringify({ puts, removes: [...txn.removes] }))
   atomicWrite(join(dir, COMMITTED), '')
-  applyTxn(layout, dir)
+  try {
+    applyTxn(layout, dir)
+  } catch (error) {
+    throw new MarkedCommitted(error)
+  }
 }
 
 /** Idempotent: a crash halfway through is finished by running it again. */

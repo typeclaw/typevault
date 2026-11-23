@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { runAdminOp } from './admin'
+import { runAdminOp, UncertainChange } from './admin'
 import { Admin } from './admin'
 import type { SecretKey } from './crypto'
 import { signerOf } from './entries'
@@ -11,6 +11,7 @@ import { createIdentity, memberPublicOfIdentity } from './identity'
 import { founderOf, initGlobalVault } from './init'
 import { globalLayout, type Layout } from './layout'
 import { parseEntryName } from './naming'
+import { recoverTxns } from './txn'
 import { Vault } from './vault'
 
 let base: string
@@ -64,4 +65,21 @@ it('reports the owner rotation of a removal its vault handle had not seen coming
 
   // then its result names Bob and the owner rotation the removal made, as found under its own lock
   expect(result).toMatchObject({ removed: ['bob'], ownerRotated: true, reloaded: true })
+})
+
+it('reports a change committed by its marker but not yet written as uncertain, never as failed', async () => {
+  // given a file where the new tier's directory must go, so writing it fails after the commit marker
+  const vault = await Vault.open(layout, [owner], {})
+  mkdirSync(join(layout.vault, 'tiers'), { recursive: true })
+  writeFileSync(join(layout.vault, 'tiers', 'ops'), 'in the way')
+
+  // when the tier is added, the outcome is uncertain
+  const adding = runAdminOp(vault, { op: 'tier.add', name: 'ops' })
+  await expect(adding).rejects.toBeInstanceOf(UncertainChange)
+  await expect(adding).rejects.toMatchObject({ code: 'unavailable' })
+
+  // then once the way is clear, recovery finishes the committed change
+  rmSync(join(layout.vault, 'tiers', 'ops'))
+  recoverTxns(layout)
+  expect((await Vault.open(layout, [], {})).state.tiers['ops']).toBeDefined()
 })
