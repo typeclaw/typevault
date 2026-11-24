@@ -49,7 +49,7 @@ jobs:
           # Pinned (not `latest`): `latest` makes setup-bun call
           # api.github.com to resolve the version, which intermittently 401s
           # under GHA token contention; a pinned version skips that lookup.
-          bun-version: 1.4.0
+          bun-version: 1.4.5
 
       - name: Validate version
         # Reject anything that isn't a strict x.y.z before mutating npm/git.
@@ -173,7 +173,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         if: steps.state.outputs.mode != 'tagged'
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.5
 
       - uses: actions/setup-node@v4
         if: steps.state.outputs.mode != 'tagged'
