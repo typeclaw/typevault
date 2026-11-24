@@ -55,9 +55,14 @@ function bearer(request: Request): string {
   return header.slice('Bearer '.length)
 }
 
-function session(context: DaemonContext, request: Request): { grant: ResolvedGrant; access: ScopedVault } {
+function session(
+  context: DaemonContext,
+  request: Request,
+  use: 'read' | 'write' = 'write',
+): { grant: ResolvedGrant; access: ScopedVault } {
   const grant = context.grants.resolve(bearer(request))
   const { record } = grant
+  if (record.readOnly && use !== 'read') throw new TypeVaultError('denied', 'this grant is read-only')
   const existing = context.sessions.get(record.id)
   if (existing !== undefined) return { grant, access: existing }
   // A session reaches every tier its member does, but like direct mode it never picks a tier for `set` on its own.
@@ -131,20 +136,21 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
     // version lets a CLI from another release tell this daemon isn't its own.
     '/v1/ping': async () => json({ ok: true, pid: process.pid, version: PACKAGE_VERSION }),
     '/v1/whoami': async (request) => {
-      const { grant, access } = session(context, request)
+      const { grant, access } = session(context, request, 'read')
       const { hash: _hash, ...record } = grant.record
       // `tiers` is what the grant may reach; `ownTiers` is what `run` loads in bulk, narrower for a session.
       return json({ ...record, ownTiers: await access.ownTiers() })
     },
-    '/v1/list': async (request) => json(await session(context, request).access.list()),
-    '/v1/unreadable': async (request) => json({ count: await session(context, request).access.unreadableEntries() }),
+    '/v1/list': async (request) => json(await session(context, request, 'read').access.list()),
+    '/v1/unreadable': async (request) =>
+      json({ count: await session(context, request, 'read').access.unreadableEntries() }),
     '/v1/get': async (request) => {
       const { name, reason } = await parseBody(request, NameBody)
-      return json(await session(context, request).access.get(name, reason))
+      return json(await session(context, request, 'read').access.get(name, reason))
     },
     '/v1/values': async (request) => {
       const { only, reason } = await parseBody(request, ValuesBody)
-      return json(await session(context, request).access.values(only, reason))
+      return json(await session(context, request, 'read').access.values(only, reason))
     },
     '/v1/set': async (request) => json(await session(context, request).access.set(await parseBody(request, SetBody))),
     '/v1/import/stage': async (request) => {
@@ -195,7 +201,7 @@ export function agentRoutes(context: DaemonContext): Readonly<Record<string, Han
       await session(context, request).access.move(from, to)
       return json({ ok: true })
     },
-    '/v1/read-values': async (request) => json(await session(context, request).access.readValues()),
+    '/v1/read-values': async (request) => json(await session(context, request, 'read').access.readValues()),
     '/v1/derive': async (request) => {
       const { grant } = session(context, request)
       const body = await parseBody(request, DeriveBody)

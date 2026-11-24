@@ -30,6 +30,13 @@ Live grants survive a daemon restart, including `daemon stop` and a crash, but n
 grant, and each has to be issued again after the next unlock. A sealed grant can't be revoked, so it runs until it expires.
 An unlocked session's own token never outlives its daemon.
 
+Use `typevault grant --read-only --tier member --only 'typevault://github/bot'` (SDK: `grant({ tiers, only, readOnly: true })`)
+for a consumer that should only read. It cannot change entries, import, delegate, attach worktrees, or request a new
+secret from a human. The daemon may still refresh an OAuth entry when reading it. The grant returns values within
+its scope: read-only does not mean redacted. It cannot be combined with `--sealed`. Older daemons refuse these
+tokens rather than treat them as writers. Switching back to a supporting daemon restores unexpired, unrevoked
+grants even if the older daemon rewrote the grant store.
+
 `TYPEVAULT_GRANT` takes a live grant (`tvl1.…`), a sealed one (`tvg1:…`) or `@path` to a file holding a sealed one.
 Without it, a person's CLI reads through their unlocked session, and a machine member reads with its own key (direct
 mode).

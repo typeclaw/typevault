@@ -3,12 +3,14 @@ import { z } from 'zod'
 import { adminCall, type Env } from './cli/context'
 
 export const IssuedSchema = z.object({ token: z.string() })
+export const grantRoute = (readOnly: boolean): string => (readOnly ? '/v1/grant/read-only' : '/v1/grant')
 export const GrantInfoSchema = z.object({
   id: z.string(),
   label: z.string(),
   tiers: z.array(z.string()),
   only: z.array(z.string()),
   exp: z.string(),
+  readOnly: z.literal(true).optional(),
 })
 const RevokedSchema = z.object({ revoked: z.array(z.string()) })
 
@@ -24,6 +26,8 @@ export type GrantRequest = {
   readonly label?: string
   /** An offline bundle: no daemon needed to read, no revocation. */
   readonly sealed?: boolean
+  /** A live grant that may read within its scope, but may not write or delegate. */
+  readonly readOnly?: boolean
 }
 
 export type AdminOptions = {
@@ -61,7 +65,8 @@ export function createAdmin(options: AdminOptions = {}): AdminClient {
     ...(options.runDir === undefined ? {} : { TYPEVAULT_RUN_DIR: options.runDir }),
   }
   return {
-    grant: async (request) => (await adminCall(env, '/v1/grant', request, IssuedSchema)).token,
+    grant: async ({ readOnly, ...request }) =>
+      (await adminCall(env, grantRoute(readOnly === true), request, IssuedSchema)).token,
     list: () => adminCall(env, '/v1/grants', {}, z.array(GrantInfoSchema)),
     revoke: async (target) => (await adminCall(env, '/v1/revoke', target, RevokedSchema)).revoked,
   }

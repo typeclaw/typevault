@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 
-import { randomHex, type SecretKey } from './crypto'
+import type { SecretKey } from './crypto'
 import { fromUtf8 } from './encoding'
 import {
   type Envelope,
@@ -10,11 +10,10 @@ import {
   openEntry,
   sealEntry,
   signCiphertext,
-  certEntryId,
   type SignerContext,
-  type SignerRef,
   verifyEnvelope,
 } from './entries'
+import { draftEntry, entryIdIn } from './entry-draft'
 import { TypeVaultError } from './errors'
 import { assertNoSymlinks, atomicWrite, fsyncDir } from './fsx'
 import { refuseForeignDaemon } from './holder'
@@ -62,9 +61,6 @@ function parseJson(bytes: Uint8Array): unknown {
     throw error
   }
 }
-
-const sameFields = (a: Readonly<Record<string, Field>>, b: Readonly<Record<string, Field>>): boolean =>
-  JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort())
 
 /**
  * The entry a name means when several files carry it. A copy in a tier that reaches the other's tier wins, so a
@@ -241,40 +237,6 @@ export class Vault {
     )
   }
 
-  /** The envelope that writing `input` over `found` (or a blind writer's `base`) produces. */
-  async #draft(
-    input: EntryInput,
-    found: StoredEntry | undefined,
-    options: PutOptions,
-    signer: SignerContext,
-  ): Promise<StoredEntry> {
-    const prior = found === undefined ? options.base : { ...found.envelope, ...found.payload }
-    const currentRev = prior?.rev ?? 0
-    if (options.ifRev !== undefined && currentRev !== options.ifRev) {
-      throw new TypeVaultError('conflict', `${input.name} is at revision ${currentRev}, not ${options.ifRev}`)
-    }
-    const now = new Date().toISOString()
-    const changed = found === undefined || !sameFields(found.payload.fields, input.fields)
-    const source = input.source ?? prior?.source
-    const payload: EntryPayload = {
-      v: 1,
-      name: input.name,
-      fields: input.fields,
-      tags: input.tags ?? found?.payload.tags ?? [],
-      created: prior?.created ?? now,
-      rotated: changed ? now : (prior?.rotated ?? now),
-      ...(input.env === undefined ? {} : { env: input.env }),
-      ...(input.origin === undefined ? {} : { origin: input.origin }),
-      ...(source === undefined ? {} : { source }),
-      ...(changed || found?.payload.needsRotation !== true ? {} : { needsRotation: true }),
-    }
-    // A renamed entry gets a fresh id, as in `move`: a grant issued for the old name must not follow it.
-    const renamed = found !== undefined && found.payload.name !== input.name
-    const id = entryIdIn(signer.ref, input.tier, input.name, renamed ? undefined : prior?.id)
-    const draft = { id, tier: input.tier, rev: currentRev + 1, at: now, payload }
-    return { envelope: await sealEntry(draft, this.#state, signer), payload }
-  }
-
   /**
    * Creates or replaces an entry. `ifRev` makes it a compare-and-swap against the current revision;
    * `base` stands in for the current entry when this process can't read it.
@@ -282,7 +244,7 @@ export class Vault {
   put(input: EntryInput, signer: SignerContext, options: PutOptions = {}): Promise<StoredEntry> {
     return withLock(this.layout.lockFile, 'exclusive', async () => {
       const found = await this.find(input.name)
-      const stored = await this.#draft(input, found, options, signer)
+      const stored = await draftEntry(this.#state, input, found, options, signer)
       atomicWrite(
         join(this.layout.entries, `${stored.envelope.id}.json`),
         `${JSON.stringify(stored.envelope, null, 2)}\n`,
@@ -345,7 +307,7 @@ export class Vault {
       })
       for (const { input, found } of targets) {
         const signer = await signerFor(input.tier)
-        const entry = await this.#draft(input, found, {}, signer)
+        const entry = await draftEntry(this.#state, input, found, {}, signer)
         txn.put(`entries/${entry.envelope.id}.json`, `${JSON.stringify(entry.envelope, null, 2)}\n`)
         if (found !== undefined && found.envelope.id !== entry.envelope.id && signer.ref.kind !== 'cert') {
           txn.remove(`entries/${found.envelope.id}.json`)
@@ -429,14 +391,4 @@ export class Vault {
       return { envelope, payload }
     })
   }
-}
-
-/**
- * An entry keeps its id only within its tier: the id names the tier (see `verifyEnvelope`), so a retier mints a new one.
- * A certificate keeps only an id it was issued with; a blind writer's `current` comes from a holder-editable bundle.
- */
-const entryIdIn = (signer: SignerRef, tier: string, name: string, current: string | undefined): string => {
-  const kept = current?.startsWith(`${tier}.`) === true ? current : undefined
-  if (signer.kind !== 'cert') return kept ?? `${tier}.${randomHex(16)}`
-  return kept !== undefined && signer.cert.ids.includes(kept) ? kept : certEntryId(signer.cert, tier, name)
 }

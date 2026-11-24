@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { machineKeys } from '../../access/keys'
 import { parseTtl } from '../../access/scope'
 import { issueSealedGrant } from '../../access/sealed'
-import { GrantInfoSchema, IssuedSchema } from '../../admin'
+import { GrantInfoSchema, grantRoute, IssuedSchema } from '../../admin'
 import { readAudit, verifyAudit } from '../../audit/log'
 import { TypeVaultError } from '../../core/errors'
 import { loadState } from '../../core/state'
@@ -29,6 +29,7 @@ export const grant = defineCommand({
     ttl: { type: 'string', default: '1h' },
     label: { type: 'string', description: 'Who this is for, e.g. session:abc or ci:deploy' },
     sealed: { type: 'boolean', description: 'Offline bundle: no daemon needed, no revocation' },
+    'read-only': { type: 'boolean', description: 'Live grant: allows reads but not writes or delegation' },
   },
   async run({ args }) {
     const env = process.env
@@ -37,8 +38,15 @@ export const grant = defineCommand({
         const grants = await adminCall(env, '/v1/grants', {}, GrantList)
         return print(
           table([
-            ['ID', 'LABEL', 'TIERS', 'ONLY', 'EXPIRES'],
-            ...grants.map((g) => [g.id, g.label, g.tiers.join(','), g.only.join(','), g.exp]),
+            ['ID', 'LABEL', 'TIERS', 'ONLY', 'EXPIRES', 'ACCESS'],
+            ...grants.map((g) => [
+              g.id,
+              g.label,
+              g.tiers.join(','),
+              g.only.join(','),
+              g.exp,
+              g.readOnly ? 'read-only' : 'read/write',
+            ]),
           ]),
         )
       }
@@ -58,13 +66,17 @@ export const grant = defineCommand({
     }
     const tiers = csv(args.tier)
     if (tiers.length === 0) throw new TypeVaultError('invalid', 'grant needs --tier')
+    const readOnly = args['read-only'] === true
+    if (readOnly && args.sealed) throw new TypeVaultError('invalid', 'read-only grants must be live')
     const request = { tiers, only: csv(args.only), ttl: args.ttl, label: args.label ?? 'unlabeled' }
     // An issuer holding a key (CI) seals locally; everything else asks the daemon within its ceiling.
     if (args.sealed && machineKeys(env).length > 0) {
       const vault = await openDirect(env)
       return print(await issueSealedGrant(vault, { ...request, ttlMs: parseTtl(args.ttl) }))
     }
-    print((await adminCall(env, '/v1/grant', { ...request, sealed: args.sealed === true }, IssuedSchema)).token)
+    print(
+      (await adminCall(env, grantRoute(readOnly), { ...request, sealed: args.sealed === true }, IssuedSchema)).token,
+    )
   },
 })
 

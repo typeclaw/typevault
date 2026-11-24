@@ -40,19 +40,14 @@ const ownedBy = (ceiling: Ceiling, tier: string | undefined) => (record: { reado
   tier === '*' || record.ceiling === ceiling.name
 
 export function adminRoutes(context: DaemonContext, ceiling: Ceiling): Readonly<Record<string, Handler>> {
-  return {
-    '/v1/ping': async () => json({ ok: true }),
-    '/v1/status': async () =>
-      json({
-        ceiling: (await currentTier(context, ceiling)) ?? null,
-        tiers: Object.keys(context.vault.state.tiers),
-        grants: context.grants.list().length,
-      }),
-    '/v1/grant': async (request) => {
+  const issue =
+    (readOnly: boolean): Handler =>
+    async (request) => {
       const body = await parseBody(request, GrantBody)
       checkCeiling(context, await currentTier(context, ceiling), body.tiers)
       const ttlMs = parseTtl(body.ttl)
       if (body.sealed) {
+        if (readOnly) throw new TypeVaultError('invalid', 'read-only grants must be live')
         const token = await issueSealedGrant(context.vault, {
           tiers: body.tiers,
           only: body.only,
@@ -67,6 +62,7 @@ export function adminRoutes(context: DaemonContext, ceiling: Ceiling): Readonly<
         ttlMs,
         label: body.label,
         ceiling: ceiling.name,
+        ...(readOnly ? { readOnly: true as const } : {}),
       })
       await appendAudit(
         context.vault.layout,
@@ -80,7 +76,18 @@ export function adminRoutes(context: DaemonContext, ceiling: Ceiling): Readonly<
         context.vault.anchorsFile,
       )
       return json({ token, id: record.id, exp: record.exp })
-    },
+    }
+  return {
+    '/v1/ping': async () => json({ ok: true }),
+    '/v1/status': async () =>
+      json({
+        ceiling: (await currentTier(context, ceiling)) ?? null,
+        tiers: Object.keys(context.vault.state.tiers),
+        grants: context.grants.list().length,
+      }),
+    '/v1/grant': issue(false),
+    // Older daemons must reject this request rather than ignore a new flag and issue a writer.
+    '/v1/grant/read-only': issue(true),
     '/v1/grants': async () => json(context.grants.list().filter(ownedBy(ceiling, await currentTier(context, ceiling)))),
     '/v1/revoke': async (request) => {
       const { id, label } = await parseBody(request, RevokeBody)
