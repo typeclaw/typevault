@@ -34,13 +34,15 @@ it.each([
   const result = await setViaPrompt([...args, '--prompt'], PROMPT_KEY)
 
   // then
-  expect(result.code).toBe(0)
+  expect(result).toMatchObject({ code: 0 })
   expect(result.output).toContain('Secret for ')
   expect(result.output).not.toContain(PROMPT_KEY)
   expect(await cli(['get', ref, '--reveal'])).toMatchObject({ code: 0, stdout: `${PROMPT_KEY}\n` })
 })
 it('keeps the other fields of an entry updated with --prompt', async () => {
-  expect((await setViaPrompt(['typevault://svc', '--preset', 'password', '--prompt'], PROMPT_KEY)).code).toBe(0)
+  expect(await setViaPrompt(['typevault://svc', '--preset', 'password', '--prompt'], PROMPT_KEY)).toMatchObject({
+    code: 0,
+  })
   expect(await cli(['get', 'typevault://svc#username'])).toMatchObject({ code: 0, stdout: 'alice\n' })
 })
 it('refuses --prompt for an existing SSH key without --preset and keeps the key', async () => {
