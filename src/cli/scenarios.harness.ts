@@ -82,7 +82,18 @@ beforeEach(() => {
 
 afterEach(async () => {
   for (const env of actors) await cli(env, ['lock'])
-  rmSync(base, { recursive: true, force: true })
+  // A stopped daemon releases its lock (and removes its PID file) before its process exits, and Windows won't remove a
+  // directory that a live process runs in, so removal is retried until the stopping daemons are gone.
+  const deadline = Date.now() + 10_000
+  for (;;) {
+    try {
+      rmSync(base, { recursive: true, force: true })
+      return
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'EBUSY') || Date.now() > deadline) throw error
+      await Bun.sleep(50)
+    }
+  }
 })
 
 export async function unlockedVault(): Promise<Actor> {
