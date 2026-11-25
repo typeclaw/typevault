@@ -8,10 +8,10 @@ import {
   isFieldName,
   resolveField,
   type Field,
-  matchesOnly,
   parseEntryName,
   parseEntryRef,
 } from './naming'
+import { matchesOnly } from './only'
 
 describe('parseEntryName', () => {
   it.each([

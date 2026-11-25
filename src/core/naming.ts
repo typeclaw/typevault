@@ -185,11 +185,6 @@ export function deriveEnvName(name: EntryName, field: string): string | undefine
 
 const foldUpper = (text: string): string => text.normalize('NFKD').replace(/\p{M}/gu, '').toUpperCase()
 
-/** True when `name` matches any `--only` pattern (exact names or globs such as `github/*`). */
-export function matchesOnly(name: EntryName, patterns: readonly string[]): boolean {
-  return patterns.some((pattern) => new Bun.Glob(entryPattern(pattern)).match(name))
-}
-
 /**
  * Variables that change how the child or its interpreter loads code. A lower tier can write entries a higher
  * tier's `run` loads, so an entry must never set these, whether by --env override or by a derived name.

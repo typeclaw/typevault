@@ -3,10 +3,9 @@ import { z } from 'zod'
 import { seal, type SecretKey, sha256Hex, sign, unseal, verifySignature } from './crypto'
 import { canonicalJson, fromBase64, type Json, toBase64, utf8 } from './encoding'
 import { TypeVaultError } from './errors'
-import type { Keyring } from './keyring'
-import { matchesOnly } from './naming'
+import { reach, reachesTier, type VaultState } from './model'
+import type { EntryName } from './naming'
 import { decodePayload, encodePayload, type EntryPayload } from './payload'
-import { reach, reachesTier, type VaultState } from './state'
 
 const IssuerSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('owner') }),
@@ -66,7 +65,8 @@ function authorityOf(ref: IssuerRef, state: VaultState): Authority | undefined {
       return tier === undefined || tier.gen !== ref.gen ? undefined : { signPublic: tier.signPublic, tiers: [ref.tier] }
     }
     case 'signer':
-      return state.signers[ref.id]
+      // An id is data from the envelope: only the vault's own signers count, never an inherited property.
+      return Object.hasOwn(state.signers, ref.id) ? state.signers[ref.id] : undefined
     default:
       return assertNever(ref)
   }
@@ -159,6 +159,10 @@ export function signCiphertext(
 ): Envelope {
   const tier = state.tiers[draft.tier]
   if (tier === undefined) throw new TypeVaultError('not_found', `no tier "${draft.tier}"`)
+  // Sign only what a receiving vault will accept: the same schema it parses with, and an id that names this tier.
+  const shape = EnvelopeSchema.pick({ id: true, rev: true, at: true }).safeParse(draft)
+  if (!shape.success || !draft.id.startsWith(`${draft.tier}.`))
+    throw new TypeVaultError('invalid', `malformed entry metadata for tier "${draft.tier}"`)
   const authority = signerAuthority(signer.ref, draft.tier, state, draft.at)
   if (authority === undefined) {
     throw new TypeVaultError('denied', `this key cannot sign entries in tier "${draft.tier}"`)
@@ -175,7 +179,14 @@ export function signCiphertext(
 const CLOCK_SKEW_MS = 5 * 60_000
 
 /** Why an envelope can't be trusted, or undefined when it can. */
-export type VerifyOptions = { readonly acceptExpiredCerts?: boolean }
+export type VerifyOptions = {
+  readonly acceptExpiredCerts?: boolean
+  /**
+   * Skip the future-timestamp check, for a transport that only decides which copies to keep: it must not drop a
+   * genuine envelope because its writer's clock runs ahead of this one. A reader opening the entry keeps the check.
+   */
+  readonly ignoreClock?: boolean
+}
 
 export function verifyEnvelope(envelope: Envelope, state: VaultState, options: VerifyOptions = {}): string | undefined {
   const tier = state.tiers[envelope.tier]
@@ -183,7 +194,8 @@ export function verifyEnvelope(envelope: Envelope, state: VaultState, options: V
   // The id names its tier, so a file can only ever be replaced by a write its tier's signers could make.
   if (!envelope.id.startsWith(`${envelope.tier}.`)) return `entry id does not belong to tier "${envelope.tier}"`
   if (tier.gen !== envelope.gen) return `stale generation ${envelope.gen} (current ${tier.gen})`
-  if (Date.parse(envelope.at) > Date.now() + CLOCK_SKEW_MS) return 'timestamp is in the future'
+  if (options.ignoreClock !== true && Date.parse(envelope.at) > Date.now() + CLOCK_SKEW_MS)
+    return 'timestamp is in the future'
   const signPublic = signerAuthority(
     envelope.signer,
     envelope.tier,
@@ -195,7 +207,23 @@ export function verifyEnvelope(envelope: Envelope, state: VaultState, options: V
   return verifySignature(signPublic, envelopeBytes(envelope), envelope.sig) ? undefined : 'bad signature'
 }
 
-export async function openEntry(envelope: Envelope, keyring: Keyring): Promise<EntryPayload | undefined> {
+/** Whatever resolves the current key of a tier: the file-backed `Keyring`, or a store's own unwrapped keys. */
+export type TierKeys = { unlock(tier: string): Promise<SecretKey | undefined> }
+
+/** Whether an entry name falls under a grant's `--only` patterns (the CLI's glob matcher, in `only.ts`). */
+export type OnlyMatcher = (name: EntryName, patterns: readonly string[]) => boolean
+
+/**
+ * Decrypts an entry and enforces its writing grant's `--only`. It does NOT authenticate the entry. Before calling it, a
+ * receiver must: establish a `VaultState` it trusts (owner-signed, rollback-checked), parse the envelope with
+ * `EnvelopeSchema`, check it with `verifyEnvelope` against that state (keeping the clock check), and refuse a revision
+ * older than one already seen (`RevisionLedger`). The file vault (`Vault.scan`) does all of this.
+ */
+export async function openEntry(
+  envelope: Envelope,
+  keyring: TierKeys,
+  matchesOnly: OnlyMatcher,
+): Promise<EntryPayload | undefined> {
   const key = await keyring.unlock(envelope.tier)
   if (key === undefined) return undefined
   const payload = decodePayload(await unseal([key.identity], fromBase64(envelope.payload)))

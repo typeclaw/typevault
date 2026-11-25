@@ -12,6 +12,9 @@ export type KeyRole =
   | { readonly kind: 'tier'; readonly tier: string; readonly gen: number }
   | { readonly kind: 'member'; readonly name: string }
 
+/** An age identity string, or a non-extractable WebCrypto X25519 private key that never leaves its store. */
+export type Identity = Parameters<typeof identityToRecipient>[0]
+
 /** An age identity for decryption plus an Ed25519 key for signing. */
 export type SecretKey = { readonly role: KeyRole; readonly identity: string; readonly signSecret: Uint8Array }
 export type PublicKey = { readonly recipient: string; readonly signPublic: string }
@@ -58,6 +61,9 @@ export function decodeSecretKey(text: string): SecretKey {
   return { role: parsed.data.role, identity: parsed.data.age, signSecret }
 }
 
+/** The age recipient (`age1…`) of an identity string or a WebCrypto X25519 key. */
+export const recipientOf = (identity: Identity): Promise<string> => identityToRecipient(identity)
+
 export async function seal(recipients: readonly string[], plaintext: Uint8Array): Promise<Uint8Array> {
   const encrypter = new Encrypter()
   for (const recipient of recipients) encrypter.addRecipient(recipient)
@@ -65,7 +71,7 @@ export async function seal(recipients: readonly string[], plaintext: Uint8Array)
 }
 
 /** Decrypts with the first matching identity; a ciphertext none of them can open is `denied`. */
-export async function unseal(identities: readonly string[], ciphertext: Uint8Array): Promise<Uint8Array> {
+export async function unseal(identities: readonly Identity[], ciphertext: Uint8Array): Promise<Uint8Array> {
   const decrypter = new Decrypter()
   for (const identity of identities) decrypter.addIdentity(identity)
   try {

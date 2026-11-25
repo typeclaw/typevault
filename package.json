@@ -16,12 +16,14 @@
   },
   "files": [
     "src",
+    "LICENSE",
     "!**/*.test.ts",
     "!**/*.harness.ts"
   ],
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./core": "./src/core/portable.ts",
     "./admin": "./src/admin.ts",
     "./owner": "./src/owner.ts",
     "./redact": "./src/redact/index.ts"

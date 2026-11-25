@@ -5,7 +5,6 @@ import { randomHex, type SecretKey } from './crypto'
 import { fromUtf8 } from './encoding'
 import {
   type Envelope,
-  type VerifyOptions,
   EnvelopeSchema,
   openEntry,
   sealEntry,
@@ -22,6 +21,7 @@ import { heldMembers, Keyring, unwrapOwner } from './keyring'
 import type { Layout } from './layout'
 import { withLock } from './lock'
 import type { EntryName, Field } from './naming'
+import { matchesOnly } from './only'
 import type { EntryPayload } from './payload'
 import { RevisionMarks } from './revisions'
 import { type Tiers, loadState, reach, type VaultState } from './state'
@@ -176,7 +176,8 @@ export class Vault {
   }
 
   /** Every entry this process can open. Untrustworthy files are reported, never returned. */
-  scan(options: VerifyOptions = {}): Promise<Scan> {
+  /** `acceptExpiredCerts` is for explicit owner adoption; a file reader never skips the clock check. */
+  scan(options: { readonly acceptExpiredCerts?: boolean } = {}): Promise<Scan> {
     return withLock(this.layout.lockFile, 'shared', async () => {
       this.refresh()
       const entries: StoredEntry[] = []
@@ -194,7 +195,7 @@ export class Vault {
         }
         const reason =
           file === `${parsed.data.id}.json`
-            ? verifyEnvelope(parsed.data, this.#state, options)
+            ? verifyEnvelope(parsed.data, this.#state, { acceptExpiredCerts: options.acceptExpiredCerts === true })
             : 'file name does not match its entry id'
         if (reason !== undefined) {
           problems.push({ file, reason })
@@ -211,7 +212,7 @@ export class Vault {
           continue
         }
         // One unreadable file must never take the whole vault down with it.
-        const opened = await openEntry(parsed.data, this.#keyring).then(
+        const opened = await openEntry(parsed.data, this.#keyring, matchesOnly).then(
           (payload) => ({ payload }),
           (error: unknown) => {
             if (error instanceof TypeVaultError) return { problem: error.message }

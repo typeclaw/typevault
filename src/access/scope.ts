@@ -1,5 +1,6 @@
 import { TypeVaultError } from '../core/errors'
-import { type EntryName, matchesOnly } from '../core/naming'
+import type { EntryName } from '../core/naming'
+import { matchesOnly } from '../core/only'
 import { reachesTier, type VaultState } from '../core/state'
 
 /** What one grant allows: entries in tiers it reaches, optionally narrowed by name patterns. */

@@ -1,31 +1,26 @@
 import { existsSync, lstatSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { decodeSecretKey, type PublicKey, publicKeyOf, type SecretKey, unseal } from './crypto'
+import { type PublicKey, publicKeyOf, type SecretKey } from './crypto'
 import { TypeVaultError } from './errors'
 import { assertNoSymlinks } from './fsx'
 import type { Layout } from './layout'
-import { includersOf, type VaultState } from './state'
+import { includersOf, type VaultState } from './model'
+import {
+  openWrap,
+  ownerWrapPath as portableOwnerWrapPath,
+  samePublic,
+  type WrapHolder,
+  wrapPath as portableWrapPath,
+} from './wraps'
 
-export type WrapHolder =
-  | { readonly kind: 'owner' }
-  | { readonly kind: 'tier'; readonly tier: string; readonly gen: number }
-  | { readonly kind: 'member'; readonly name: string }
+export type { WrapHolder } from './wraps'
 
-/** Vault-relative path of a tier key sealed to a holder: the owner, an including tier's key, or a member. */
-export function wrapPath(tier: string, gen: number, holder: WrapHolder): string {
-  const dir = join('tiers', tier, String(gen))
-  switch (holder.kind) {
-    case 'owner':
-      return join(dir, 'owner.age')
-    case 'tier':
-      return join(dir, `${holder.tier}.${holder.gen}.age`)
-    case 'member':
-      return join(dir, 'members', `${holder.name}.age`)
-  }
-}
+/** {@link portableWrapPath} with this platform's separators, for paths joined onto the vault directory. */
+export const wrapPath = (tier: string, gen: number, holder: WrapHolder): string =>
+  join(...portableWrapPath(tier, gen, holder).split('/'))
 
-export const ownerWrapPath = (member: string): string => join('owner', `${member}.age`)
+export const ownerWrapPath = (member: string): string => join(...portableOwnerWrapPath(member).split('/'))
 
 /** The member keys among `keys` that match a member listed in the owner-signed state. */
 export async function heldMembers(
@@ -130,9 +125,7 @@ export class Keyring {
   }
 }
 
-const samePublic = (a: PublicKey, b: PublicKey): boolean => a.recipient === b.recipient && a.signPublic === b.signPublic
-
-/** Opens a key sealed at `rel`, keeping it only when it matches the owner-signed public key it should be. */
+/** Opens the key sealed at `rel` in the vault directory, if that file exists. */
 async function openSealedKey(
   layout: Layout,
   rel: string,
@@ -142,13 +135,5 @@ async function openSealedKey(
   assertNoSymlinks(layout.vault, rel)
   const path = join(layout.vault, rel)
   if (!existsSync(path) || !lstatSync(path).isFile()) return undefined
-  // Wraps aren't signed and recipients are public, so a planted wrap must fail quietly.
-  const key = await unseal([holderKey.identity], readFileSync(path))
-    .then((bytes) => decodeSecretKey(new TextDecoder().decode(bytes)))
-    .catch((error: unknown) => {
-      if (error instanceof TypeVaultError) return undefined
-      throw error
-    })
-  if (key === undefined) return undefined
-  return samePublic(await publicKeyOf(key), expected) ? key : undefined
+  return openWrap(readFileSync(path), [holderKey.identity], expected)
 }

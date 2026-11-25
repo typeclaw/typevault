@@ -697,12 +697,14 @@ describe('sealed grants', () => {
     const target = (await vault.find(n('stripe')))?.envelope.id ?? ''
     const payload = (await vault.find(n('github/bot')))?.payload
     if (payload === undefined) throw new Error('missing github/bot')
-    const forged = await sealEntry(
-      { id: target, tier: 'member', rev: 2, at: new Date().toISOString(), payload },
+    // The writer refuses to sign an id outside its tier, so the planted file swaps the id in after signing: the reader
+    // must still report it by its id, before it ever reaches the signature.
+    const sealed = await sealEntry(
+      { id: `member.${'0'.repeat(32)}`, tier: 'member', rev: 2, at: new Date().toISOString(), payload },
       vault.state,
       await certSigner(60_000),
     )
-    writeFileSync(join(root, 'vault', 'entries', `${target}.json`), JSON.stringify(forged))
+    writeFileSync(join(root, 'vault', 'entries', `${target}.json`), JSON.stringify({ ...sealed, id: target }))
 
     expect((await vault.scan()).problems).toContainEqual({
       file: `${target}.json`,
