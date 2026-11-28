@@ -42,13 +42,19 @@ export type SetInput = {
    * A sealed grant refuses it, since it can't read what the name holds now.
    */
   readonly ifId?: string | undefined
+  /**
+   * False when the new fields don't rotate the entry's credentials, such as a passkey's sign count: its rotation time
+   * and any `needsRotation` warning stay as they were. A sealed grant refuses `false`, since it can't read the warning.
+   */
+  readonly rotates?: boolean | undefined
 }
 
-/** The compare-and-swap options of a write, without the ones a parsed request leaves undefined. */
+/** The compare-and-swap and rotation options of a write, without the ones a parsed request leaves undefined. */
 export function putOptionsOf(input: SetInput): PutOptions {
   return {
     ...(input.ifRev === undefined ? {} : { ifRev: input.ifRev }),
     ...(input.ifId === undefined ? {} : { ifId: input.ifId }),
+    ...(input.rotates === undefined ? {} : { rotates: input.rotates }),
   }
 }
 

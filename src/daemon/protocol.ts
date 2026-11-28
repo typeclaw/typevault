@@ -26,10 +26,11 @@ export const SetBody = z.object({
   tags: z.array(z.string()).optional(),
   ifRev: z.number().int().nonnegative().optional(),
   ifId: z.string().optional(),
+  rotates: z.boolean().optional(),
 })
 /** The entries an import writes, sent as staged chunks of their serialized JSON. */
 export const ImportEntries = z.array(
-  SetBody.omit({ tier: true, ifRev: true, ifId: true }).extend({ source: z.string().optional() }),
+  SetBody.omit({ tier: true, ifRev: true, ifId: true, rotates: true }).extend({ source: z.string().optional() }),
 )
 /** One base64 chunk of an import, staged until `ImportBody` commits it; the first chunk starts a new upload. */
 export const ImportStageBody = z.object({ upload: z.string().max(64).optional(), chunk: z.base64() })

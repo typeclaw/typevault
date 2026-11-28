@@ -571,7 +571,7 @@ describe('sealed grants', () => {
     expect(stored?.envelope.signer.kind).toBe('cert')
   })
 
-  it('refuses ifId, which a blind writer cannot honor, and writes nothing', async () => {
+  it('refuses ifId and rotates: false, which a blind writer cannot honor, and writes nothing', async () => {
     const access = new SealedAccess(await readSealedGrant(await issue()), globalLayout(envIn(root)), {})
     const before = await (await Vault.open(globalLayout(envIn(root)), [owner], {})).find(n('github/bot'))
     const write = { name: n('github/bot'), fields: { password: { type: 'secret' as const, value: 'rotated' } } }
@@ -579,6 +579,7 @@ describe('sealed grants', () => {
     await expect(access.set({ ...write, ifId: before?.envelope.id ?? 'missing' })).rejects.toMatchObject({
       code: 'unavailable',
     })
+    await expect(access.set({ ...write, rotates: false })).rejects.toMatchObject({ code: 'unavailable' })
     const after = await (await Vault.open(globalLayout(envIn(root)), [owner], {})).find(n('github/bot'))
     expect(after?.envelope.rev).toBe(before?.envelope.rev ?? -1)
   })
