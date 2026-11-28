@@ -13,6 +13,7 @@ import {
   type EntryValue,
   entryInputOf,
   type SetInput,
+  putOptionsOf,
   toSummary,
   toValue,
   writtenFromAbove,
@@ -154,7 +155,8 @@ export class ScopedVault implements Access {
           : undefined
     const key = original ?? (await this.#vault.keyring.unlock(tier))
     if (key === undefined) throw new TypeVaultError('denied', `no key here can refresh tier "${tier}"`)
-    const refreshed = await this.#vault.put(input, signerOf(key))
+    // A refresh replaces short-lived tokens, not the credentials a rotation warning is about.
+    const refreshed = await this.#vault.put(input, signerOf(key), { rotates: false })
     await this.#audit({ action: 'refresh', entries: [name] })
     return refreshed
   }
@@ -240,12 +242,7 @@ export class ScopedVault implements Access {
     if (existing !== undefined && !this.#allows(existing)) {
       throw new TypeVaultError('denied', `the name ${input.name} is not available to this grant`)
     }
-    const { ifRev } = input
-    const stored = await this.#vault.put(
-      entryInputOf(input, tier),
-      await this.#signerFor(tier),
-      ifRev === undefined ? {} : { ifRev },
-    )
+    const stored = await this.#vault.put(entryInputOf(input, tier), await this.#signerFor(tier), putOptionsOf(input))
     await this.#audit({ action: 'write', entries: [input.name], tiers: [tier] })
     return toSummary(valueOf(stored))
   }

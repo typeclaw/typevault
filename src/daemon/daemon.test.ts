@@ -176,6 +176,34 @@ describe('live grants', () => {
     })
   })
 
+  it("carries a write's expected entry id through to the vault", async () => {
+    const { token } = await grant('default', { tiers: ['member'] })
+    const access = new LiveAccess(layout.agentSocket, token)
+    const { id, fields } = await access.get(n('openai'))
+    const write = { name: n('openai'), tier: 'member', fields }
+
+    await expect(access.set({ ...write, ifId: `${id}-replaced` })).rejects.toMatchObject({ code: 'conflict' })
+    expect((await access.set({ ...write, ifId: id })).rev).toBeGreaterThan(1)
+  })
+
+  it('carries rotates: false through, keeping a flagged entry flagged when its fields change', async () => {
+    // given an entry flagged by a tier rotation
+    await new Admin(await Vault.open(layout, [owner], {})).rotate('member')
+    const { token } = await grant('default', { tiers: ['member'] })
+    const access = new LiveAccess(layout.agentSocket, token)
+    const flagged = await access.get(n('openai'))
+
+    // when a non-secret field changes through the live grant
+    const note = { type: 'text' as const, value: 'counter 2' }
+    await access.set({ name: n('openai'), tier: 'member', fields: { ...flagged.fields, note }, rotates: false })
+
+    // then the warning and the rotation time stay
+    const after = await access.get(n('openai'))
+    expect(flagged.needsRotation).toBe(true)
+    expect(after.fields['note']).toEqual(note)
+    expect([after.needsRotation, after.rotated]).toEqual([true, flagged.rotated])
+  })
+
   it('refuses a grant above the socket ceiling', async () => {
     await expect(grant('bot', { tiers: ['trusted'] })).rejects.toMatchObject({ code: 'denied' })
   })

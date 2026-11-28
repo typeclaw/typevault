@@ -249,6 +249,26 @@ describe('integrity', () => {
     expect((await vault.put(stripe, signerOf(owner), { ifRev: 1 })).envelope.rev).toBe(2)
   })
 
+  it('refuses a write for an entry the name no longer holds, even at the same revision', async () => {
+    // given an entry deleted and recreated under the same name
+    const vault = await open([owner])
+    const first = await vault.put(stripe, signerOf(owner))
+    await vault.remove(stripe.name)
+    const second = await vault.put(stripe, signerOf(owner))
+
+    // then a write naming the first entry fails, at the revision the name holds now too
+    const ifRev = second.envelope.rev
+    await expect(vault.put(stripe, signerOf(owner), { ifRev, ifId: first.envelope.id })).rejects.toMatchObject({
+      code: 'conflict',
+    })
+    await expect(vault.put(stripe, signerOf(owner), { ifId: first.envelope.id })).rejects.toMatchObject({
+      code: 'conflict',
+    })
+    expect((await vault.put(stripe, signerOf(owner), { ifRev, ifId: second.envelope.id })).envelope.id).toBe(
+      second.envelope.id,
+    )
+  })
+
   it('moves an entry to another tier under a new id, leaving no copy behind', async () => {
     const vault = await open([owner])
     const before = await vault.put(stripe, signerOf(owner))
@@ -321,6 +341,28 @@ describe('rotation', () => {
       signerOf(owner),
     )
     expect(reset.payload.needsRotation).toBeUndefined()
+  })
+
+  it('keeps the rotation flag and time on a write that does not rotate the credentials', async () => {
+    // given a flagged entry
+    const vault = await open([owner])
+    await vault.put(stripe, signerOf(owner))
+    await admin.rotate('member')
+    const flagged = await (await open([owner])).find(stripe.name)
+
+    // when its fields change without a rotation
+    const counted = await (
+      await open([owner])
+    ).put(
+      { ...stripe, fields: { ...stripe.fields, note: { type: 'text' as const, value: 'sign count 2' } } },
+      signerOf(owner),
+      { rotates: false },
+    )
+
+    // then the warning and the rotation time stay
+    expect(flagged?.payload.needsRotation).toBe(true)
+    expect(counted.payload.needsRotation).toBe(true)
+    expect(counted.payload.rotated).toBe(flagged?.payload.rotated ?? 'missing')
   })
 
   it('stops an excluded tier from reaching the formerly included one', async () => {

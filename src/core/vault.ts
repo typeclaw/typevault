@@ -40,7 +40,13 @@ export type EntryBase = {
   readonly source?: string
 }
 
-export type PutOptions = { readonly ifRev?: number; readonly base?: EntryBase }
+export type PutOptions = {
+  readonly ifRev?: number
+  readonly ifId?: string
+  /** False for a write that changes fields without rotating the entry's credentials (an OAuth refresh, a counter). */
+  readonly rotates?: boolean
+  readonly base?: EntryBase
+}
 
 export type EntryInput = {
   readonly name: EntryName
@@ -253,8 +259,13 @@ export class Vault {
     if (options.ifRev !== undefined && currentRev !== options.ifRev) {
       throw new TypeVaultError('conflict', `${input.name} is at revision ${currentRev}, not ${options.ifRev}`)
     }
+    // A name deleted and recreated can be back at the same revision; the id tells the two entries apart.
+    if (options.ifId !== undefined && prior?.id !== options.ifId) {
+      throw new TypeVaultError('conflict', `${input.name} is not the entry ${options.ifId}`)
+    }
     const now = new Date().toISOString()
-    const changed = found === undefined || !sameFields(found.payload.fields, input.fields)
+    const changed =
+      (found === undefined || !sameFields(found.payload.fields, input.fields)) && options.rotates !== false
     const source = input.source ?? prior?.source
     const payload: EntryPayload = {
       v: 1,

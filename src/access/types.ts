@@ -3,6 +3,7 @@ import { TypeVaultError } from '../core/errors'
 import { type EntryName, type Field, isReservedEnvName } from '../core/naming'
 import type { EntryPayload } from '../core/payload'
 import { reachesTier, type VaultState } from '../core/state'
+import type { PutOptions } from '../core/vault'
 
 export type EntrySummary = {
   readonly name: EntryName
@@ -36,6 +37,25 @@ export type SetInput = {
   readonly source?: string | undefined
   readonly tags?: readonly string[] | undefined
   readonly ifRev?: number | undefined
+  /**
+   * Write only if the name still holds this entry (`EntryValue.id`): a same-name replacement can share its revision.
+   * A sealed grant refuses it, since it can't read what the name holds now.
+   */
+  readonly ifId?: string | undefined
+  /**
+   * False when the new fields don't rotate the entry's credentials, such as a passkey's sign count: its rotation time
+   * and any `needsRotation` warning stay as they were. A sealed grant refuses `false`, since it can't read the warning.
+   */
+  readonly rotates?: boolean | undefined
+}
+
+/** The compare-and-swap and rotation options of a write, without the ones a parsed request leaves undefined. */
+export function putOptionsOf(input: SetInput): PutOptions {
+  return {
+    ...(input.ifRev === undefined ? {} : { ifRev: input.ifRev }),
+    ...(input.ifId === undefined ? {} : { ifId: input.ifId }),
+    ...(input.rotates === undefined ? {} : { rotates: input.rotates }),
+  }
 }
 
 /** The vault-level input for a write, without the optional keys a parsed request leaves undefined. */

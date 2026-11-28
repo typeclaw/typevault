@@ -9,7 +9,15 @@ import { Vault } from '../core/vault'
 import { secretValues } from './env'
 import { allowsEntry } from './scope'
 import { type SealedBundle, sealedSigningSecret } from './sealed'
-import { type Access, type EntrySummary, type EntryValue, entryInputOf, type SetInput, toSummary } from './types'
+import {
+  type Access,
+  type EntrySummary,
+  type EntryValue,
+  entryInputOf,
+  putOptionsOf,
+  type SetInput,
+  toSummary,
+} from './types'
 
 type Env = Readonly<Record<string, string | undefined>>
 
@@ -84,6 +92,14 @@ export class SealedAccess implements Access {
   }
 
   async set(input: SetInput): Promise<EntrySummary> {
+    // A blind writer sees only the bundled snapshot, not what the name holds now, so it can neither check the entry's
+    // id nor carry its current rotation warning forward. Refuse rather than report a guarantee it didn't give.
+    if (input.ifId !== undefined || input.rotates === false) {
+      throw new TypeVaultError(
+        'unavailable',
+        `a sealed grant can't verify the entry it replaces, so it can't take ${input.ifId === undefined ? 'rotates: false' : 'ifId'}; use a live grant`,
+      )
+    }
     const bundle = this.#live()
     const vault = await this.#vault()
     const prior = bundle.entries.find((value) => value.name === input.name)
@@ -95,11 +111,10 @@ export class SealedAccess implements Access {
     if (prior !== undefined && prior.tier !== tier) {
       throw new TypeVaultError('denied', `${input.name} is in tier "${prior.tier}"; a sealed grant cannot move it`)
     }
-    const { ifRev } = input
     const stored = await vault.put(
       entryInputOf(input, tier),
       { ref: { kind: 'cert', cert: bundle.write.cert }, signSecret: sealedSigningSecret(bundle) },
-      { ...(ifRev === undefined ? {} : { ifRev }), ...(prior === undefined ? {} : { base: prior }) },
+      { ...putOptionsOf(input), ...(prior === undefined ? {} : { base: prior }) },
     )
     await this.#audit({ action: 'write', entries: [input.name], tiers: [tier] }, vault.anchorsFile)
     const { envelope, payload } = stored
