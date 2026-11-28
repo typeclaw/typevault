@@ -37,12 +37,18 @@ export type SetInput = {
   readonly source?: string | undefined
   readonly tags?: readonly string[] | undefined
   readonly ifRev?: number | undefined
+  /**
+   * Write only if the name still holds this entry (`EntryValue.id`): a same-name replacement can share its revision.
+   * A sealed grant refuses it, since it can't read what the name holds now.
+   */
+  readonly ifId?: string | undefined
 }
 
 /** The compare-and-swap options of a write, without the ones a parsed request leaves undefined. */
 export function putOptionsOf(input: SetInput): PutOptions {
   return {
     ...(input.ifRev === undefined ? {} : { ifRev: input.ifRev }),
+    ...(input.ifId === undefined ? {} : { ifId: input.ifId }),
   }
 }
 

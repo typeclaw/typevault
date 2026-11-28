@@ -526,6 +526,18 @@ describe('sealed grants', () => {
     expect(stored?.envelope.signer.kind).toBe('cert')
   })
 
+  it('refuses ifId, which a blind writer cannot honor, and writes nothing', async () => {
+    const access = new SealedAccess(await readSealedGrant(await issue()), globalLayout(envIn(root)), {})
+    const before = await (await Vault.open(globalLayout(envIn(root)), [owner], {})).find(n('github/bot'))
+    const write = { name: n('github/bot'), fields: { password: { type: 'secret' as const, value: 'rotated' } } }
+
+    await expect(access.set({ ...write, ifId: before?.envelope.id ?? 'missing' })).rejects.toMatchObject({
+      code: 'unavailable',
+    })
+    const after = await (await Vault.open(globalLayout(envIn(root)), [owner], {})).find(n('github/bot'))
+    expect(after?.envelope.rev).toBe(before?.envelope.rev ?? -1)
+  })
+
   it('checkpoints a write in the state-directory chain of the vault it opened', async () => {
     // given a state directory whose log holds a full interval of reads with no trusted checkpoint destination
     const layout = globalLayout({ ...envIn(root), TYPEVAULT_STATE_DIR: join(root, 'state') })

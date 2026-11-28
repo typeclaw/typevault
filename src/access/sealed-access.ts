@@ -92,6 +92,14 @@ export class SealedAccess implements Access {
   }
 
   async set(input: SetInput): Promise<EntrySummary> {
+    // A blind writer sees only the bundled snapshot, not what the name holds now, so it can't check the entry's id.
+    // Refuse rather than report a guarantee it didn't give.
+    if (input.ifId !== undefined) {
+      throw new TypeVaultError(
+        'unavailable',
+        "a sealed grant can't verify the entry it replaces, so it can't take ifId; use a live grant",
+      )
+    }
     const bundle = this.#live()
     const vault = await this.#vault()
     const prior = bundle.entries.find((value) => value.name === input.name)

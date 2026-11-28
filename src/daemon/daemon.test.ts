@@ -176,6 +176,16 @@ describe('live grants', () => {
     })
   })
 
+  it("carries a write's expected entry id through to the vault", async () => {
+    const { token } = await grant('default', { tiers: ['member'] })
+    const access = new LiveAccess(layout.agentSocket, token)
+    const { id, fields } = await access.get(n('openai'))
+    const write = { name: n('openai'), tier: 'member', fields }
+
+    await expect(access.set({ ...write, ifId: `${id}-replaced` })).rejects.toMatchObject({ code: 'conflict' })
+    expect((await access.set({ ...write, ifId: id })).rev).toBeGreaterThan(1)
+  })
+
   it('refuses a grant above the socket ceiling', async () => {
     await expect(grant('bot', { tiers: ['trusted'] })).rejects.toMatchObject({ code: 'denied' })
   })

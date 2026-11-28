@@ -249,6 +249,26 @@ describe('integrity', () => {
     expect((await vault.put(stripe, signerOf(owner), { ifRev: 1 })).envelope.rev).toBe(2)
   })
 
+  it('refuses a write for an entry the name no longer holds, even at the same revision', async () => {
+    // given an entry deleted and recreated under the same name
+    const vault = await open([owner])
+    const first = await vault.put(stripe, signerOf(owner))
+    await vault.remove(stripe.name)
+    const second = await vault.put(stripe, signerOf(owner))
+
+    // then a write naming the first entry fails, at the revision the name holds now too
+    const ifRev = second.envelope.rev
+    await expect(vault.put(stripe, signerOf(owner), { ifRev, ifId: first.envelope.id })).rejects.toMatchObject({
+      code: 'conflict',
+    })
+    await expect(vault.put(stripe, signerOf(owner), { ifId: first.envelope.id })).rejects.toMatchObject({
+      code: 'conflict',
+    })
+    expect((await vault.put(stripe, signerOf(owner), { ifRev, ifId: second.envelope.id })).envelope.id).toBe(
+      second.envelope.id,
+    )
+  })
+
   it('moves an entry to another tier under a new id, leaving no copy behind', async () => {
     const vault = await open([owner])
     const before = await vault.put(stripe, signerOf(owner))
