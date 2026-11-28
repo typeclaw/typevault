@@ -101,6 +101,7 @@ function readField(field: Field, now: Date): string {
     case 'secret':
     case 'text':
     case 'oauth':
+    case 'passkey':
       return fieldValue(field)
     default:
       return assertNever(field)

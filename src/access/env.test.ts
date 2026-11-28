@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'bun:test'
 
+import { fromBase64Url, toBase64 } from '../core/encoding'
 import { parseEntryName } from '../core/naming'
-import { envFor, resolveEnvRefs } from './env'
+import { generatePasskeyKey } from '../core/passkey.harness'
+import { createRedactor } from '../redact'
+import { envFor, resolveEnvRefs, secretValues } from './env'
 import type { EntryValue } from './types'
 
 const value: EntryValue = {
@@ -86,5 +89,40 @@ describe('run environment safety (#59)', () => {
   it.each(ordinary)('resolves an ordinary explicit reference in %s', async (variable) => {
     const resolved = await resolveEnvRefs({ [variable]: 'typevault://service' }, async () => value, now)
     expect(resolved.env).toEqual({ [variable]: 'dummy-secret' })
+  })
+})
+
+const key = await generatePasskeyKey()
+
+describe('passkey fields', () => {
+  const passkey = {
+    rp_id: 'example.com',
+    credential_id: 'Y3JlZA',
+    private_key: key,
+    discoverable: false,
+    sign_count: 3,
+  }
+  const entry: EntryValue = { ...value, fields: { passkey: { type: 'passkey', value: passkey } } }
+
+  it('loads the whole credential as JSON for a program to sign with', () => {
+    expect(envFor([entry], now, policy)).toEqual({ SERVICE_PASSKEY: JSON.stringify(passkey) })
+  })
+
+  it('resolves a reference to one part', async () => {
+    const resolved = await resolveEnvRefs({ KEY: 'typevault://service#passkey.private_key' }, async () => entry, now)
+    expect(resolved.env).toEqual({ KEY: key })
+  })
+
+  it('redacts the private key as stored and in the standard base64 Chrome DevTools carries it in', () => {
+    // given
+    const standard = toBase64(fromBase64Url(key))
+    const redactor = createRedactor(secretValues([entry]))
+
+    // when
+    const output = redactor.redact(`stored ${key}\ndevtools {"privateKey":"${standard}"}`)
+
+    // then
+    expect(output).not.toContain(key)
+    expect(output).not.toContain(standard)
   })
 })

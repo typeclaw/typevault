@@ -1,8 +1,12 @@
 import { expect, test } from 'bun:test'
 
-import { utf8 } from './encoding'
+import { toBase64Url, utf8 } from './encoding'
 import { parseEntryName, type Field } from './naming'
+import { generatePasskeyKey, malformedPasskeyKey } from './passkey.harness'
 import { encodePayload, decodePayload, type EntryPayload } from './payload'
+
+const KEY = await generatePasskeyKey()
+const passkey = { rp_id: 'example.com', credential_id: 'Y3JlZA', private_key: KEY, discoverable: false }
 
 const payload: EntryPayload = {
   v: 1,
@@ -17,6 +21,13 @@ test.each([
   { type: 'text', value: 'public' },
   { type: 'totp', value: 'SEED' },
   { type: 'oauth', value: { access_token: 'token', refresh_token: 'refresh' } },
+  { type: 'passkey', value: passkey },
+  {
+    type: 'passkey',
+    value: { ...passkey, discoverable: true, user_handle: 'dXNlcg', user_name: 'bot@example.com', sign_count: 3 },
+  },
+  { type: 'passkey', value: { ...passkey, sign_count: 4_294_967_295 } },
+  { type: 'passkey', value: { ...passkey, user_handle: toBase64Url(new Uint8Array(64)) } },
 ] satisfies readonly Field[])('round trips a typed field %p', (field) => {
   const input = { ...payload, fields: { custom: field } }
   expect(decodePayload(encodePayload(input))).toEqual(input)
@@ -28,6 +39,17 @@ test.each([
   { type: 'oauth', value: 'token' },
   { type: 'oauth', value: { refresh_token: 'refresh' } },
   { type: 'oauth', value: { access_token: 42 } },
+  { type: 'passkey', value: { ...passkey, rp_id: undefined } },
+  { type: 'passkey', value: { ...passkey, credential_id: 'Y3JlZA==' } },
+  { type: 'passkey', value: { ...passkey, sign_count: -1 } },
+  { type: 'passkey', value: { ...passkey, sign_count: 4_294_967_296 } },
+  { type: 'passkey', value: { ...passkey, user_handle: toBase64Url(new Uint8Array(65)) } },
+  { type: 'passkey', value: { ...passkey, extra: 'x' } },
+  { type: 'passkey', value: { ...passkey, discoverable: undefined } },
+  { type: 'passkey', value: { ...passkey, discoverable: true } },
+  { type: 'passkey', value: { ...passkey, private_key: 'cHJpdmF0ZS1rZXk' } },
+  { type: 'passkey', value: { ...passkey, private_key: await generatePasskeyKey('P-384') } },
+  { type: 'passkey', value: { ...passkey, private_key: malformedPasskeyKey() } },
   { type: 'other', value: 'secret' },
   'old field',
 ])('rejects malformed field values as tampered: %p', (field) => {
@@ -51,5 +73,11 @@ test.each(['PATH', 'CURL_HOME', 'SERVICE_PROXY'])('refuses the reserved override
 test.each(['lowercase', '1START', 'HAS-DASH', 'HAS=EQUALS'])('rejects malformed stored env syntax %s', (env) => {
   expect(() => decodePayload(utf8(JSON.stringify({ ...payload, env })))).toThrow(
     expect.objectContaining({ code: 'tampered' }),
+  )
+})
+test('refuses to write a passkey whose key has a valid scalar but a field Chromium cannot read', () => {
+  const field = { type: 'passkey', value: { ...passkey, private_key: malformedPasskeyKey() } } as const
+  expect(() => encodePayload({ ...payload, fields: { passkey: field } })).toThrow(
+    expect.objectContaining({ code: 'invalid' }),
   )
 })

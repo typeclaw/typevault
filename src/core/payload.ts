@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { fromUtf8, utf8 } from './encoding'
 import { TypeVaultError } from './errors'
 import { type EntryName, type Field, isFieldName, isUsableEnvName, parseEntryName } from './naming'
+import { decodeBase64Url, isP256PrivateKey, isUserHandle, MAX_SIGN_COUNT } from './passkey'
 
 /** The plaintext sealed inside an entry file: everything except the tier is secret. */
 export type EntryPayload = {
@@ -19,6 +20,10 @@ export type EntryPayload = {
   readonly needsRotation?: boolean
 }
 
+const Base64UrlSchema = z
+  .string()
+  .refine((text) => decodeBase64Url(text) !== undefined, 'expected canonical base64url without padding')
+
 export const FieldSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('secret'), value: z.string() }).strict(),
   z.object({ type: z.literal('text'), value: z.string() }).strict(),
@@ -29,6 +34,32 @@ export const FieldSchema = z.discriminatedUnion('type', [
       value: z
         .record(z.string(), z.string())
         .refine((value) => typeof value['access_token'] === 'string', 'OAuth requires access_token'),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('passkey'),
+      value: z
+        .object({
+          rp_id: z.string().min(1),
+          credential_id: Base64UrlSchema,
+          private_key: z.string().refine((key) => {
+            const bytes = decodeBase64Url(key)
+            return bytes !== undefined && isP256PrivateKey(bytes)
+          }, 'expected a PKCS#8 P-256 private key in base64url'),
+          discoverable: z.boolean(),
+          user_handle: z
+            .string()
+            .refine(isUserHandle, 'expected a user handle of at most 64 bytes in canonical base64url')
+            .exactOptional(),
+          user_name: z.string().exactOptional(),
+          sign_count: z.number().int().nonnegative().max(MAX_SIGN_COUNT).exactOptional(),
+        })
+        .strict()
+        .refine(
+          (value) => !value.discoverable || value.user_handle !== undefined,
+          'a discoverable passkey needs its user_handle',
+        ),
     })
     .strict(),
 ])

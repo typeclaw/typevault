@@ -161,11 +161,28 @@ describe('compound fields', () => {
     session: { type: 'oauth', value: { access_token: 'token', refresh_token: 'refresh' } },
     'session.access_token': { type: 'text', value: 'literal' },
     plain: { type: 'secret', value: 'secret' },
+    key: {
+      type: 'passkey',
+      value: {
+        rp_id: 'example.com',
+        credential_id: 'Y3JlZA',
+        private_key: 'a2V5',
+        discoverable: false,
+        user_name: 'bot',
+        sign_count: 3,
+      },
+    },
   }
   it.each([
     ['session.refresh_token', { type: 'secret' as const, value: 'refresh' }],
     ['session.access_token', { type: 'text' as const, value: 'literal' }],
     ['session.missing', undefined],
+    ['key.private_key', { type: 'secret' as const, value: 'a2V5' }],
+    ['key.user_name', { type: 'text' as const, value: 'bot' }],
+    ['key.sign_count', { type: 'text' as const, value: '3' }],
+    ['key.discoverable', { type: 'text' as const, value: 'false' }],
+    ['key.user_handle', undefined],
+    ['key.constructor', undefined],
     ['plain.part', undefined],
   ])('resolves %p', (wanted, expected) => {
     expect(resolveField(fields, wanted)).toEqual(expected)

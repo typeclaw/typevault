@@ -66,6 +66,35 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Validate release notes
+        # A committed .github/release-notes/<version>.md goes above the
+        # generated notes when the GitHub release is created. It exists to
+        # carry warnings users must read, so it is checked here, before
+        # anything publishes: it can't be empty, and until its version has a
+        # published GitHub release carrying it, no other version may release.
+        # A tag alone is not enough: it is pushed before the GitHub release is
+        # created, so a failed run leaves the tag without the warning, and only
+        # a re-run of that same version may finish it.
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes=".github/release-notes/$VERSION.md"
+          if [ -f "$notes" ] && ! grep -q '[^[:space:]]' "$notes"; then
+            echo "::error::$notes is empty"
+            exit 1
+          fi
+          for pending in .github/release-notes/*.md; do
+            [ -e "$pending" ] || continue
+            version=$(basename "$pending" .md)
+            [ "$version" = "$VERSION" ] && continue
+            published=$(gh release view "$version" --json isDraft,body --jq 'select(.isDraft | not) | .body' 2>/dev/null || true)
+            if [ -z "$published" ] || ! bun scripts/carries-release-notes.ts "$pending" <<<"$published"; then
+              echo "::error::$pending has no published GitHub release $version carrying it yet; release $version first"
+              exit 1
+            fi
+          done
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
@@ -171,7 +200,7 @@ jobs:
           fi
 
       - uses: oven-sh/setup-bun@v2
-        if: steps.state.outputs.mode != 'tagged'
+        # Every mode needs Bun: a tagged retry still checks its GitHub release for the committed note.
         with:
           bun-version: 1.4.5
 
@@ -260,15 +289,8 @@ jobs:
           git push origin "refs/tags/$VERSION"
 
       - name: Create GitHub Release
-        # Idempotency guard: skip if the release for this tag already exists.
-        # `--verify-tag` refuses to create a missing tag from the default
-        # branch, so the release always points at the published commit.
+        # Creates the release, or finishes one a failed run left as a draft or without its note.
         env:
           VERSION: ${{ needs.checks.outputs.version }}
           GH_TOKEN: ${{ github.token }}
-        run: |
-          if gh release view "$VERSION" >/dev/null 2>&1; then
-            echo "Release $VERSION already exists, skipping"
-          else
-            gh release create "$VERSION" --verify-tag --generate-notes
-          fi
+        run: bash scripts/publish-github-release.sh "$VERSION"

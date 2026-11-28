@@ -1,9 +1,24 @@
+import { fromBase64Url, toBase64 } from './encoding'
 import { TypeVaultError } from './errors'
 
-export type FieldType = 'secret' | 'text' | 'totp' | 'oauth'
+export type FieldType = 'secret' | 'text' | 'totp' | 'oauth' | 'passkey'
+/**
+ * A WebAuthn credential. The ids and the PKCS#8 P-256 private key are base64url without padding. A discoverable
+ * credential (a site can find it with no allow-list, for username-less sign-in) always has its user handle.
+ */
+export type Passkey = {
+  readonly rp_id: string
+  readonly credential_id: string
+  readonly private_key: string
+  readonly discoverable: boolean
+  readonly user_handle?: string
+  readonly user_name?: string
+  readonly sign_count?: number
+}
 export type Field =
   | { readonly type: 'secret' | 'text' | 'totp'; readonly value: string }
   | { readonly type: 'oauth'; readonly value: Readonly<Record<string, string>> }
+  | { readonly type: 'passkey'; readonly value: Passkey }
 export const PRESETS = {
   password: { fields: { username: 'text', password: 'secret', totp: 'totp', url: 'text' }, input: 'password' },
   api_key: { fields: { $default: 'secret' }, input: '$default' },
@@ -131,6 +146,12 @@ export function resolveField(fields: Readonly<Record<string, Field>>, wanted: st
       const part = field.value[wanted.slice(dot + 1)]
       return part === undefined ? undefined : { type: 'secret', value: part }
     }
+    case 'passkey': {
+      const name = wanted.slice(dot + 1)
+      const part = Object.hasOwn(field.value, name) ? field.value[name as keyof Passkey] : undefined
+      if (part === undefined) return undefined
+      return { type: name === 'private_key' ? 'secret' : 'text', value: String(part) }
+    }
     case 'secret':
     case 'text':
     case 'totp':
@@ -143,6 +164,8 @@ export function fieldValue(field: Field): string {
   switch (field.type) {
     case 'oauth':
       return field.value['access_token'] ?? ''
+    case 'passkey':
+      return JSON.stringify(field.value)
     case 'secret':
     case 'text':
     case 'totp':
@@ -155,6 +178,12 @@ export function fieldStrings(field: Field): readonly string[] {
   switch (field.type) {
     case 'oauth':
       return Object.values(field.value)
+    case 'passkey':
+      // Chrome's DevTools protocol carries the same key in standard base64.
+      return [
+        ...Object.values(field.value).filter((part) => typeof part === 'string'),
+        toBase64(fromBase64Url(field.value.private_key)),
+      ]
     case 'secret':
     case 'text':
     case 'totp':

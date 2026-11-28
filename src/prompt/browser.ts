@@ -110,6 +110,7 @@ function initialize(): void {
               const type = types[input.name] ?? 'secret'
               switch (type) {
                 case 'oauth':
+                case 'passkey':
                   return [input.name, FieldSchema.parse({ type, value: JSON.parse(input.value) })]
                 case 'secret':
                 case 'text':

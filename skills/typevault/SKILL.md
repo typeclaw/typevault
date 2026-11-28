@@ -38,7 +38,7 @@ typevault ls --json
 Entries are named `typevault://<service>[/<account>][#<field>]`: `typevault://openai`, `typevault://github/bot#password` (`github/bot`
 works too). Field names keep their case; a ref matches exactly, else the one field equal ignoring case.
 
-Each field stores its own type: `secret` (sensitive string), `text` (public string), `totp` (seed or otpauth URI), or `oauth` (an object with `access_token` and optional `refresh_token`, `expires_at`, `token_url`, `client_id`, `client_secret`). OAuth reads yield the access token and refresh expired credentials when possible.
+Each field stores its own type: `secret` (sensitive string), `text` (public string), `totp` (seed or otpauth URI), `oauth` (an object with `access_token` and optional `refresh_token`, `expires_at`, `token_url`, `client_id`, `client_secret`), or `passkey` (a WebAuthn credential: `rp_id`, `credential_id`, `private_key`, `discoverable`, optional `user_handle`, `user_name`, `sign_count`). OAuth reads yield the access token and refresh expired credentials when possible. A passkey reads as its JSON object.
 
 Presets only pre-fill fields at write time; no preset is stored:
 
@@ -51,7 +51,7 @@ Presets only pre-fill fields at write time; no preset is stored:
 | `totp`     | $default(totp)                                          | $default           |
 | `note`     | $default(secret)                                        | $default           |
 
-Without a preset, `set --stdin` stores `$default` (or overwrites the existing default field). Bare references choose `$default`, else the only field, else fail and list the fields. A login with several fields needs `#password` or another selector. `#$default` is rejected; use the bare name. OAuth parts use `#field.refresh_token`, or `#refresh_token` for the default field; an actual field with that name wins.
+Without a preset, `set --stdin` stores `$default` (or overwrites the existing default field). Bare references choose `$default`, else the only field, else fail and list the fields. A login with several fields needs `#password` or another selector. `#$default` is rejected; use the bare name. OAuth parts use `#field.refresh_token`, or `#refresh_token` for the default field; an actual field with that name wins. Passkey parts work the same way (`#passkey.user_name`); only `private_key` is secret.
 
 ## Use secrets
 
