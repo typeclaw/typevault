@@ -21,7 +21,9 @@ Install: `bun add -g typevault`
   public values and writes them as `text` fields.
 - **Need a secret you don't have? Ask the human through `typevault request`**, not in chat. The value never reaches
   the model.
-- **Always give a `--reason`.** It is written to the audit trail.
+- **Always give a `--reason`.** It is written to the audit trail, and when the vault asks the human for their
+  password or Touch ID, it completes the prompt "typevault is trying to …" so they know which agent wants what.
+  Write it as a short verb phrase: `--reason "run migrations"`, not `--reason "for migrations"`.
 - Don't guess the vault: commands use the nearest `.typevault/` and fail outside a project. Add `-g` (before `--`)
   when the user means the global vault, or when a miss says the global vault has the entry.
 
