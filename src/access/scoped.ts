@@ -155,7 +155,8 @@ export class ScopedVault implements Access {
           : undefined
     const key = original ?? (await this.#vault.keyring.unlock(tier))
     if (key === undefined) throw new TypeVaultError('denied', `no key here can refresh tier "${tier}"`)
-    const refreshed = await this.#vault.put(input, signerOf(key))
+    // A refresh replaces short-lived tokens, not the credentials a rotation warning is about.
+    const refreshed = await this.#vault.put(input, signerOf(key), { rotates: false })
     await this.#audit({ action: 'refresh', entries: [name] })
     return refreshed
   }

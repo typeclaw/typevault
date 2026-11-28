@@ -43,6 +43,8 @@ export type EntryBase = {
 export type PutOptions = {
   readonly ifRev?: number
   readonly ifId?: string
+  /** False for a write that changes fields without rotating the entry's credentials (an OAuth refresh, a counter). */
+  readonly rotates?: boolean
   readonly base?: EntryBase
 }
 
@@ -262,7 +264,8 @@ export class Vault {
       throw new TypeVaultError('conflict', `${input.name} is not the entry ${options.ifId}`)
     }
     const now = new Date().toISOString()
-    const changed = found === undefined || !sameFields(found.payload.fields, input.fields)
+    const changed =
+      (found === undefined || !sameFields(found.payload.fields, input.fields)) && options.rotates !== false
     const source = input.source ?? prior?.source
     const payload: EntryPayload = {
       v: 1,

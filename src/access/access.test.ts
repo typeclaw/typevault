@@ -439,6 +439,51 @@ describe('OAuth refresh', () => {
   })
 })
 
+describe('OAuth refresh of a flagged entry', () => {
+  it('keeps the rotation warning, since a refresh rotates none of its credentials', async () => {
+    const server = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: () => Response.json({ access_token: 'fresh-token', expires_in: 3600 }),
+    })
+    try {
+      // given an entry flagged by a tier rotation, with an expired token beside another credential
+      const session = {
+        access_token: 'stale-token',
+        refresh_token: 'rt',
+        expires_at: '2000-01-01T00:00:00.000Z',
+        token_url: `http://127.0.0.1:${server.port}/token`,
+      }
+      await vault.put(
+        {
+          name: n('google'),
+          fields: {
+            session: { type: 'oauth', value: session },
+            password: { type: 'secret', value: 'exposed-password' },
+          },
+          tier: 'member',
+        },
+        signerOf(owner),
+      )
+      await new Admin(vault).rotate('member')
+      const flagged = await vault.find(n('google'))
+
+      // when a read refreshes the token
+      const access = new ScopedVault(vault, [{ tiers: ['member'], only: [] }], { mode: 'live', label: 's' })
+      const read = await access.get(n('google'))
+
+      // then the entry is still flagged, with its rotation time unchanged
+      const stored = await vault.find(n('google'))
+      expect(read.fields['session']?.value).toMatchObject({ access_token: 'fresh-token' })
+      expect(read.needsRotation).toBe(true)
+      expect(stored?.payload.needsRotation).toBe(true)
+      expect(stored?.payload.rotated).toBe(flagged?.payload.rotated ?? 'missing')
+    } finally {
+      await server.stop(true)
+    }
+  })
+})
+
 describe('OAuth refresh failures', () => {
   it('keeps a rotated token when a later field fails to refresh', async () => {
     const server = Bun.serve({

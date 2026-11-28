@@ -343,6 +343,28 @@ describe('rotation', () => {
     expect(reset.payload.needsRotation).toBeUndefined()
   })
 
+  it('keeps the rotation flag and time on a write that does not rotate the credentials', async () => {
+    // given a flagged entry
+    const vault = await open([owner])
+    await vault.put(stripe, signerOf(owner))
+    await admin.rotate('member')
+    const flagged = await (await open([owner])).find(stripe.name)
+
+    // when its fields change without a rotation
+    const counted = await (
+      await open([owner])
+    ).put(
+      { ...stripe, fields: { ...stripe.fields, note: { type: 'text' as const, value: 'sign count 2' } } },
+      signerOf(owner),
+      { rotates: false },
+    )
+
+    // then the warning and the rotation time stay
+    expect(flagged?.payload.needsRotation).toBe(true)
+    expect(counted.payload.needsRotation).toBe(true)
+    expect(counted.payload.rotated).toBe(flagged?.payload.rotated ?? 'missing')
+  })
+
   it('stops an excluded tier from reaching the formerly included one', async () => {
     await (await open([owner])).put(stripe, signerOf(owner))
     const trustedKey = await keyOf('trusted')
