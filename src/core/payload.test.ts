@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import { generateKeyPairSync, type KeyObject } from 'node:crypto'
 
 import { toBase64Url, utf8 } from './encoding'
 import { parseEntryName, type Field } from './naming'
@@ -6,6 +7,9 @@ import { generatePasskeyKey, malformedPasskeyKey } from './passkey.harness'
 import { encodePayload, decodePayload, type EntryPayload } from './payload'
 
 const KEY = await generatePasskeyKey()
+const pkcs8Of = (key: KeyObject): string => toBase64Url(key.export({ format: 'der', type: 'pkcs8' }))
+const ED25519_KEY = pkcs8Of(generateKeyPairSync('ed25519').privateKey)
+const RSA_KEY = pkcs8Of(generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey)
 const passkey = { rp_id: 'example.com', credential_id: 'Y3JlZA', private_key: KEY, discoverable: false }
 
 const payload: EntryPayload = {
@@ -28,6 +32,8 @@ test.each([
   },
   { type: 'passkey', value: { ...passkey, sign_count: 4_294_967_295 } },
   { type: 'passkey', value: { ...passkey, user_handle: toBase64Url(new Uint8Array(64)) } },
+  { type: 'passkey', value: { ...passkey, private_key: ED25519_KEY } },
+  { type: 'passkey', value: { ...passkey, private_key: RSA_KEY } },
 ] satisfies readonly Field[])('round trips a typed field %p', (field) => {
   const input = { ...payload, fields: { custom: field } }
   expect(decodePayload(encodePayload(input))).toEqual(input)
