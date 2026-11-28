@@ -9,6 +9,7 @@ export {
   type EntryRef,
   type FieldType,
   type Field,
+  type Passkey,
   type Preset,
   PRESETS,
   defaultField,
