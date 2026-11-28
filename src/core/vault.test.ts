@@ -269,6 +269,17 @@ describe('integrity', () => {
     )
   })
 
+  it('refuses to replace a named copy that is no longer stored, writing nothing', async () => {
+    const vault = await open([owner])
+    const first = await vault.put(stripe, signerOf(owner))
+    await vault.remove(stripe.name)
+
+    await expect(vault.put(stripe, signerOf(owner), { copy: first.envelope.id })).rejects.toMatchObject({
+      code: 'conflict',
+    })
+    expect(await vault.find(stripe.name)).toBeUndefined()
+  })
+
   it('moves an entry to another tier under a new id, leaving no copy behind', async () => {
     const vault = await open([owner])
     const before = await vault.put(stripe, signerOf(owner))

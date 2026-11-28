@@ -484,6 +484,391 @@ describe('OAuth refresh of a flagged entry', () => {
   })
 })
 
+describe('OAuth refresh racing a write', () => {
+  // A provider that answers only once the test lets it, after telling the test it was asked.
+  const heldProvider = (answer: Record<string, unknown> = { access_token: 'fresh-token', expires_in: 3600 }) => {
+    const asked = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const server = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: async () => {
+        asked.resolve()
+        await release.promise
+        return Response.json(answer)
+      },
+    })
+    return { server, asked: asked.promise, release: release.resolve }
+  }
+  const session = (server: { readonly url: URL }) => ({
+    type: 'oauth' as const,
+    value: {
+      access_token: 'stale-token',
+      refresh_token: 'rt',
+      expires_at: '2000-01-01T00:00:00.000Z',
+      token_url: new URL('/token', server.url).href,
+    },
+  })
+
+  it('keeps a field written while the token was refreshing, and the rotation warning', async () => {
+    const provider = heldProvider()
+    try {
+      // given a flagged entry whose token is expired
+      const fields = { session: session(provider.server) }
+      await vault.put({ name: n('google'), fields, tier: 'member' }, signerOf(owner))
+      await new Admin(vault).rotate('member')
+      const access = new ScopedVault(vault, [{ tiers: ['member'], only: [] }], { mode: 'live', label: 's' })
+
+      // when a field is written while a read is refreshing the token
+      const read = access.get(n('google'))
+      await provider.asked
+      const passkey = { type: 'text' as const, value: 'added during the refresh' }
+      const flagged = await vault.find(n('google'))
+      await vault.put(
+        { name: n('google'), fields: { ...flagged?.payload.fields, passkey }, tier: 'member' },
+        signerOf(owner),
+        { rotates: false },
+      )
+      provider.release()
+      await read
+
+      // then the refresh lands on top of that write, not instead of it
+      const stored = await vault.find(n('google'))
+      expect(stored?.payload.fields['passkey']).toEqual(passkey)
+      expect(stored?.payload.fields['session']?.value).toMatchObject({ access_token: 'fresh-token' })
+      expect(stored?.payload.needsRotation).toBe(true)
+    } finally {
+      await provider.server.stop(true)
+    }
+  })
+
+  it('neither writes nor returns an entry the grant lost while the token was refreshing', async () => {
+    const provider = heldProvider()
+    try {
+      // given a member entry a trusted grant reaches through trusted's include of member
+      await vault.put(
+        { name: n('google'), fields: { session: session(provider.server) }, tier: 'member' },
+        signerOf(owner),
+      )
+      const access = new ScopedVault(vault, [{ tiers: ['trusted'], only: [] }], { mode: 'live', label: 's' })
+
+      // when trusted stops including member while a read is refreshing the token
+      const read = access.get(n('google'))
+      await provider.asked
+      await new Admin(vault).exclude('trusted', 'member')
+      provider.release()
+
+      // then the read returns nothing, and the stored token is the one from before the refresh
+      await expect(read).rejects.toMatchObject({ code: 'not_found' })
+      expect((await vault.find(n('google')))?.payload.fields['session']?.value).toMatchObject({
+        access_token: 'stale-token',
+      })
+    } finally {
+      await provider.server.stop(true)
+    }
+  })
+
+  it('neither writes nor returns an entry whose access went away without the entry changing', async () => {
+    const provider = heldProvider()
+    try {
+      // given a member entry a grant reaches only through a relay tier that includes member
+      const admin = new Admin(vault)
+      await admin.addTier('relay')
+      await admin.include('relay', 'member')
+      await vault.put(
+        { name: n('google'), fields: { session: session(provider.server) }, tier: 'member' },
+        signerOf(owner),
+      )
+      const before = await vault.find(n('google'))
+      const access = new ScopedVault(vault, [{ tiers: ['relay'], only: [] }], { mode: 'live', label: 's' })
+
+      // when the relay tier is removed, which leaves the member entry as it is, while a read is refreshing its token
+      const read = access.get(n('google'))
+      await provider.asked
+      await new Admin(vault).removeTier('relay')
+      provider.release()
+
+      // then the read returns nothing, and the entry is exactly as it was
+      await expect(read).rejects.toMatchObject({ code: 'not_found' })
+      const after = await vault.find(n('google'))
+      expect(after?.envelope.rev).toBe(before?.envelope.rev ?? -1)
+      expect(after?.payload.fields['session']?.value).toMatchObject({ access_token: 'stale-token' })
+    } finally {
+      await provider.server.stop(true)
+    }
+  })
+
+  it('stores the refresh after a retry even when another name sits in two unrelated tiers', async () => {
+    const provider = heldProvider()
+    try {
+      // given another name held by member and by an unrelated tier, both of which the grant reaches
+      await new Admin(vault).addTier('other')
+      await vault.put(
+        { name: n('dup'), fields: { a: { type: 'text' as const, value: 'other' } }, tier: 'other' },
+        signerOf(owner),
+      )
+      const memberKey = await vault.keyring.unlock('member')
+      if (memberKey === undefined) throw new Error('no member key')
+      await (
+        await Vault.open(vault.layout, [memberKey], {})
+      ).put(
+        { name: n('dup'), fields: { a: { type: 'text' as const, value: 'member' } }, tier: 'member' },
+        signerOf(memberKey),
+      )
+      await vault.put(
+        { name: n('google'), fields: { session: session(provider.server) }, tier: 'member' },
+        signerOf(owner),
+      )
+      const access = new ScopedVault(vault, [{ tiers: ['member', 'other'], only: [] }], { mode: 'live', label: 's' })
+
+      // when a write to the refreshed entry lands while its token is refreshing, forcing a retry
+      const read = access.get(n('google'))
+      await provider.asked
+      const note = { type: 'text' as const, value: 'written during the refresh' }
+      const current = await vault.find(n('google'))
+      await vault.put(
+        { name: n('google'), fields: { ...current?.payload.fields, note }, tier: 'member' },
+        signerOf(owner),
+      )
+      provider.release()
+      await read
+
+      // then the retry stores the fresh token beside that write
+      const stored = await vault.find(n('google'))
+      expect(stored?.payload.fields['session']?.value).toMatchObject({ access_token: 'fresh-token' })
+      expect(stored?.payload.fields['note']).toEqual(note)
+    } finally {
+      await provider.server.stop(true)
+    }
+  })
+
+  it("writes nothing when another copy comes to win the name in the grant's scope meanwhile", async () => {
+    const provider = heldProvider()
+    try {
+      // given a blind trusted-tier writer whose snapshot predates the name, so its write adds a copy rather than
+      // replacing one, and a member entry that a trusted grant reaches through trusted's include of member
+      const blind = await issueSealedGrant(vault, { tiers: ['trusted'], only: [], ttlMs: 60_000, label: 'ci' })
+      await vault.put(
+        { name: n('google'), fields: { session: session(provider.server) }, tier: 'member' },
+        signerOf(owner),
+      )
+      const before = await vault.find(n('google'))
+      const access = new ScopedVault(vault, [{ tiers: ['trusted'], only: [] }], { mode: 'live', label: 's' })
+
+      // when that writer adds a trusted copy of the name, leaving the member copy as it is, while a read refreshes it
+      const read = access.get(n('google'))
+      await provider.asked
+      const trustedFields = { password: { type: 'secret' as const, value: 'trusted-copy' } }
+      const sealed = new SealedAccess(await readSealedGrant(blind), globalLayout(envIn(root)), {})
+      await sealed.set({ name: n('google'), fields: trustedFields })
+      provider.release()
+
+      // then the refresh fails, and neither copy takes the refreshed token
+      await expect(read).rejects.toMatchObject({ code: 'conflict' })
+      const copies = (await vault.scan()).entries.filter((entry) => entry.payload.name === 'google')
+      const byTier = Object.fromEntries(copies.map((entry) => [entry.envelope.tier, entry]))
+      expect(byTier['member']?.envelope.rev).toBe(before?.envelope.rev ?? -1)
+      expect(byTier['trusted']?.payload.fields).toEqual(trustedFields)
+    } finally {
+      await provider.server.stop(true)
+    }
+  })
+
+  it("keeps a second write from the same sealed bundle, which shares the first one's id and revision", async () => {
+    const provider = heldProvider({ access_token: 'fresh-token', refresh_token: 'rt-rotated', expires_in: 3600 })
+    try {
+      // given an entry with an expired token, a sealed member grant over it, and one write already made through it
+      const stale = session(provider.server)
+      await vault.put({ name: n('google'), fields: { session: stale }, tier: 'member' }, signerOf(owner))
+      const bundle = await readSealedGrant(
+        await issueSealedGrant(vault, { tiers: ['member'], only: [], ttlMs: 60_000, label: 'ci' }),
+      )
+      const first = { type: 'text' as const, value: 'first sealed write' }
+      await new SealedAccess(bundle, globalLayout(envIn(root)), {}).set({
+        name: n('google'),
+        fields: { session: stale, first },
+      })
+      const access = new ScopedVault(vault, [{ tiers: ['member'], only: [] }], { mode: 'live', label: 's' })
+
+      // when a second write from the same bundle lands while a read is refreshing the token
+      const read = access.get(n('google'))
+      await provider.asked
+      const second = { type: 'text' as const, value: 'second sealed write' }
+      await new SealedAccess(bundle, globalLayout(envIn(root)), {}).set({
+        name: n('google'),
+        fields: { session: stale, first, second },
+      })
+      provider.release()
+      await read
+
+      // then the second write survives beside the rotated tokens
+      const stored = await vault.find(n('google'))
+      expect(stored?.payload.fields['second']).toEqual(second)
+      expect(stored?.payload.fields['session']?.value).toMatchObject({
+        access_token: 'fresh-token',
+        refresh_token: 'rt-rotated',
+      })
+    } finally {
+      await provider.server.stop(true)
+    }
+  })
+
+  it('writes nothing when every refreshed field was rewritten by someone else meanwhile', async () => {
+    const provider = heldProvider()
+    try {
+      // given an entry whose token is expired
+      await vault.put(
+        { name: n('google'), fields: { session: session(provider.server) }, tier: 'member' },
+        signerOf(owner),
+      )
+      const access = new ScopedVault(vault, [{ tiers: ['member'], only: [] }], { mode: 'live', label: 's' })
+
+      // when another writer replaces the token while a read is refreshing it
+      const read = access.get(n('google'))
+      await provider.asked
+      const theirs = {
+        ...session(provider.server),
+        value: {
+          ...session(provider.server).value,
+          access_token: 'their-token',
+          expires_at: '2999-01-01T00:00:00.000Z',
+        },
+      }
+      const written = await vault.put(
+        { name: n('google'), fields: { session: theirs }, tier: 'member' },
+        signerOf(owner),
+      )
+      provider.release()
+      await read
+
+      // then their write stands, at the revision it got
+      const stored = await vault.find(n('google'))
+      expect(stored?.payload.fields['session']).toEqual(theirs)
+      expect(stored?.envelope.rev).toBe(written.envelope.rev)
+    } finally {
+      await provider.server.stop(true)
+    }
+  })
+
+  it('keeps a rotated refresh token when the OAuth field was only re-serialized meanwhile', async () => {
+    const provider = heldProvider({ access_token: 'fresh-token', refresh_token: 'rt-rotated', expires_in: 3600 })
+    try {
+      // given an entry whose token is expired
+      const original = session(provider.server)
+      await vault.put({ name: n('google'), fields: { session: original }, tier: 'member' }, signerOf(owner))
+      const access = new ScopedVault(vault, [{ tiers: ['member'], only: [] }], { mode: 'live', label: 's' })
+
+      // when another write stores the same OAuth values in another key order, beside a new field
+      const read = access.get(n('google'))
+      await provider.asked
+      const reordered = {
+        type: 'oauth' as const,
+        value: Object.fromEntries(Object.entries(original.value).reverse()) as typeof original.value,
+      }
+      const note = { type: 'text' as const, value: 'written during the refresh' }
+      await vault.put({ name: n('google'), fields: { session: reordered, note }, tier: 'member' }, signerOf(owner))
+      provider.release()
+      await read
+
+      // then the refresh still lands, rotated refresh token and all, beside the new field
+      const stored = await vault.find(n('google'))
+      expect(stored?.payload.fields['session']?.value).toMatchObject({
+        access_token: 'fresh-token',
+        refresh_token: 'rt-rotated',
+      })
+      expect(stored?.payload.fields['note']).toEqual(note)
+    } finally {
+      await provider.server.stop(true)
+    }
+  })
+
+  it('stores nothing into an entry recreated under the same name while the token was refreshing', async () => {
+    const provider = heldProvider()
+    try {
+      // given an entry whose token is expired
+      await vault.put(
+        { name: n('google'), fields: { session: session(provider.server) }, tier: 'member' },
+        signerOf(owner),
+      )
+      const access = new ScopedVault(vault, [{ tiers: ['member'], only: [] }], { mode: 'live', label: 's' })
+
+      // when it is deleted and recreated while a read is refreshing the token
+      const read = access.get(n('google'))
+      await provider.asked
+      await vault.remove(n('google'))
+      const replacement = { password: { type: 'secret' as const, value: 'replacement' } }
+      await vault.put({ name: n('google'), fields: replacement, tier: 'member' }, signerOf(owner))
+      provider.release()
+
+      // then the read fails and the replacement is untouched
+      await expect(read).rejects.toMatchObject({ code: 'conflict' })
+      expect((await vault.find(n('google')))?.payload.fields).toEqual(replacement)
+    } finally {
+      await provider.server.stop(true)
+    }
+  })
+})
+
+describe('OAuth refresh of a name two tiers hold', () => {
+  it("refreshes the copy the grant reads, after a retry, leaving the other tier's copy alone", async () => {
+    const asked = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const server = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: async () => {
+        asked.resolve()
+        await release.promise
+        return Response.json({ access_token: 'fresh-token', refresh_token: 'rt-rotated', expires_in: 3600 })
+      },
+    })
+    try {
+      // given a member copy with an expired token, and a trusted copy of the same name the daemon can also open
+      const session = {
+        type: 'oauth' as const,
+        value: {
+          access_token: 'stale-token',
+          refresh_token: 'rt',
+          expires_at: '2000-01-01T00:00:00.000Z',
+          token_url: new URL('/token', server.url).href,
+        },
+      }
+      const trustedFields = { password: { type: 'secret' as const, value: 'trusted-copy' } }
+      await vault.put({ name: n('google'), fields: trustedFields, tier: 'trusted' }, signerOf(owner))
+      // A handle holding only the member key can't see the trusted copy, so its write adds a copy beside it.
+      const memberKey = await vault.keyring.unlock('member')
+      if (memberKey === undefined) throw new Error('no member key')
+      const memberOnly = await Vault.open(vault.layout, [memberKey], {})
+      await memberOnly.put({ name: n('google'), fields: { session }, tier: 'member' }, signerOf(memberKey))
+      const access = new ScopedVault(vault, [{ tiers: ['member'], only: [] }], { mode: 'live', label: 's' })
+
+      // when the member grant reads it in bulk while the member copy is edited, which forces the refresh to retry
+      const reading = access.values(['google'])
+      await asked.promise
+      const note = { type: 'text' as const, value: 'written during the refresh' }
+      await memberOnly.put({ name: n('google'), fields: { session, note }, tier: 'member' }, signerOf(memberKey))
+      release.resolve()
+      const values = await reading
+
+      // then the member copy holds the rotated tokens and the trusted copy is untouched
+      const copies = (await vault.scan()).entries.filter((entry) => entry.payload.name === 'google')
+      const byTier = Object.fromEntries(copies.map((entry) => [entry.envelope.tier, entry.payload.fields]))
+      expect(values[0]?.fields['session']?.value).toMatchObject({
+        access_token: 'fresh-token',
+        refresh_token: 'rt-rotated',
+      })
+      expect(byTier['member']?.['session']?.value).toMatchObject({
+        access_token: 'fresh-token',
+        refresh_token: 'rt-rotated',
+      })
+      expect(byTier['member']?.['note']).toEqual(note)
+      expect(byTier['trusted']).toEqual(trustedFields)
+    } finally {
+      await server.stop(true)
+    }
+  })
+})
+
 describe('OAuth refresh failures', () => {
   it('keeps a rotated token when a later field fails to refresh', async () => {
     const server = Bun.serve({
