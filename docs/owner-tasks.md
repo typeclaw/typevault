@@ -76,6 +76,13 @@ typevault import keepass vault.kdbx --password-stdin --tier member < kdbx-passwo
 typevault import csv secrets.csv --tier member
 ```
 
+A Bitwarden login's passkeys come along as `passkey` fields (P-256 keys only). 1Password doesn't export passkeys, so
+they stay behind in a 1Password import.
+
+Upgrade first: TypeVault before passkey support can't read an entry holding one, and a sealed grant or a live bulk
+read that includes such an entry fails as a whole. Before a passkey lands in a vault that others share, upgrade every
+teammate's `typevault`, and every program that reads grants (TypeClaw and other SDK consumers), first.
+
 Re-running an import updates what it imported before. 1Password, Bitwarden and KeePass items are recognized by
 their id, so an item renamed there renames its entry rather than adding a second one; the other formats match by
 name. An import never overwrites an entry another item was imported as: it stops with a conflict, and nothing is
