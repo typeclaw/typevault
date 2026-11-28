@@ -91,7 +91,7 @@ export async function unlockHuman(env: Env, identity: Identity | undefined, pass
     if (tip) note('tip: skip the password next time with `typevault touch-id enable`')
   } else if (atThisMac) {
     try {
-      return await unlockIdentityWithTouchId(env, identity, identity.touchId)
+      return await unlockIdentityWithTouchId(env, identity, identity.touchId, 'unlock your vault')
     } catch (error) {
       if (!(error instanceof TypeVaultError)) throw error
       note(`${error.message}; asking for your password instead`)
