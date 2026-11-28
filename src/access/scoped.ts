@@ -119,6 +119,7 @@ export class ScopedVault implements Access {
           case 'secret':
           case 'text':
           case 'totp':
+          case 'passkey':
             break
           default:
             throw new TypeVaultError('invalid', `unexpected field ${JSON.stringify(field satisfies never)}`)

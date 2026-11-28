@@ -1,5 +1,6 @@
 import { expect, it } from 'bun:test'
 
+import { generatePasskeyKey } from '../../core/passkey.harness'
 import { cli, PASSWORD, PIN, setViaPage, expectNothingDerivedFrom } from './entries.harness'
 
 it.each([
@@ -36,6 +37,33 @@ it('redacts secret fields in --json without --reveal and leaks nothing about the
     PIN: { type: 'secret', value: '<redacted>' },
   })
   for (const secret of [PASSWORD, PIN]) expectNothingDerivedFrom(result.stdout + result.stderr, secret)
+})
+
+it('stores a passkey from --stdin-json, reads its public parts, and updates it from --stdin', async () => {
+  // given
+  const passkey = {
+    rp_id: 'example.com',
+    credential_id: 'Y3JlZA',
+    private_key: await generatePasskeyKey(),
+    discoverable: false,
+    user_name: 'bot',
+  }
+  const typed = JSON.stringify({ passkey: { type: 'passkey', value: passkey } })
+  expect(await cli(['set', 'typevault://site', '--stdin-json'], typed)).toMatchObject({ code: 0 })
+
+  // when
+  const updated = await cli(['set', 'typevault://site', '--stdin'], JSON.stringify({ ...passkey, sign_count: 4 }))
+  const malformed = await cli(['set', 'typevault://site', '--stdin'], JSON.stringify({ rp_id: 'example.com' }))
+
+  // then
+  expect(updated.code).toBe(0)
+  expect(malformed.code).not.toBe(0)
+  expect(await cli(['get', 'typevault://site#passkey.user_name'])).toMatchObject({ code: 0, stdout: 'bot\n' })
+  expect(await cli(['get', 'typevault://site#passkey.sign_count'])).toMatchObject({ code: 0, stdout: '4\n' })
+  const whole = await cli(['get', 'typevault://site'])
+  expect(whole.code).not.toBe(0)
+  expect(whole.stdout).toBe('')
+  expect(whole.stderr).toContain('--reveal')
 })
 
 const WEB_KEY = 'sk-web-test-1'

@@ -81,7 +81,11 @@ export function collectEntries(items: readonly ImportItem[], warnings: readonly 
               fields[field] = { type, value }
               break
             case 'oauth':
-              throw new TypeVaultError('invalid', 'OAuth import requires typed fields')
+            case 'passkey':
+              throw new TypeVaultError(
+                'invalid',
+                `${type === 'oauth' ? 'OAuth' : 'Passkey'} import requires typed fields`,
+              )
             default:
               throw new TypeVaultError('invalid', `unexpected field type ${type satisfies never}`)
           }

@@ -188,14 +188,21 @@ export const set = defineCommand({
       }
       const type = suggested[field] ?? previous[field]?.type ?? 'secret'
       switch (type) {
-        case 'oauth': {
+        case 'oauth':
+        case 'passkey': {
+          const label = type === 'oauth' ? 'OAuth' : 'Passkey'
           if (!args.stdin || args['stdin-json'])
-            throw new TypeVaultError('invalid', 'OAuth values need --stdin-json with a typed oauth field object')
+            throw new TypeVaultError('invalid', `${label} values need --stdin-json with a typed ${type} field object`)
           try {
             typed[field] = FieldSchema.parse({ type, value: JSON.parse(value) })
           } catch (error) {
             if (error instanceof SyntaxError || error instanceof z.ZodError)
-              throw new TypeVaultError('invalid', 'OAuth stdin needs a JSON object with an access_token')
+              throw new TypeVaultError(
+                'invalid',
+                type === 'oauth'
+                  ? 'OAuth stdin needs a JSON object with an access_token'
+                  : 'Passkey stdin needs a JSON object with rp_id, credential_id, private_key (base64url) and discoverable, plus user_handle when discoverable is true',
+              )
             throw error
           }
           break
@@ -258,10 +265,10 @@ function checkPrompt(
   if (args.stdin || args['stdin-json'] || args.web)
     throw new TypeVaultError('invalid', '--prompt cannot be combined with --stdin, --stdin-json or --web')
   // Enter ends the prompt, so a pasted multi-line key would be cut at its first line.
-  if (type === 'oauth' || target === PRESETS.ssh.input)
+  if (type === 'oauth' || type === 'passkey' || target === PRESETS.ssh.input)
     throw new TypeVaultError(
       'invalid',
-      `pass ${type === 'oauth' ? 'OAuth JSON' : 'an SSH key'} with --stdin, not --prompt`,
+      `pass ${type === 'oauth' ? 'OAuth JSON' : type === 'passkey' ? 'passkey JSON' : 'an SSH key'} with --stdin, not --prompt`,
     )
   if (!process.stdin.isTTY)
     throw new TypeVaultError('invalid', '--prompt needs a terminal; pipe the secret with --stdin')
