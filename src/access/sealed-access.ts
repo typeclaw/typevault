@@ -9,7 +9,15 @@ import { Vault } from '../core/vault'
 import { secretValues } from './env'
 import { allowsEntry } from './scope'
 import { type SealedBundle, sealedSigningSecret } from './sealed'
-import { type Access, type EntrySummary, type EntryValue, entryInputOf, type SetInput, toSummary } from './types'
+import {
+  type Access,
+  type EntrySummary,
+  type EntryValue,
+  entryInputOf,
+  putOptionsOf,
+  type SetInput,
+  toSummary,
+} from './types'
 
 type Env = Readonly<Record<string, string | undefined>>
 
@@ -95,11 +103,10 @@ export class SealedAccess implements Access {
     if (prior !== undefined && prior.tier !== tier) {
       throw new TypeVaultError('denied', `${input.name} is in tier "${prior.tier}"; a sealed grant cannot move it`)
     }
-    const { ifRev } = input
     const stored = await vault.put(
       entryInputOf(input, tier),
       { ref: { kind: 'cert', cert: bundle.write.cert }, signSecret: sealedSigningSecret(bundle) },
-      { ...(ifRev === undefined ? {} : { ifRev }), ...(prior === undefined ? {} : { base: prior }) },
+      { ...putOptionsOf(input), ...(prior === undefined ? {} : { base: prior }) },
     )
     await this.#audit({ action: 'write', entries: [input.name], tiers: [tier] }, vault.anchorsFile)
     const { envelope, payload } = stored

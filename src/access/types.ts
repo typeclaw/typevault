@@ -3,6 +3,7 @@ import { TypeVaultError } from '../core/errors'
 import { type EntryName, type Field, isReservedEnvName } from '../core/naming'
 import type { EntryPayload } from '../core/payload'
 import { reachesTier, type VaultState } from '../core/state'
+import type { PutOptions } from '../core/vault'
 
 export type EntrySummary = {
   readonly name: EntryName
@@ -36,6 +37,13 @@ export type SetInput = {
   readonly source?: string | undefined
   readonly tags?: readonly string[] | undefined
   readonly ifRev?: number | undefined
+}
+
+/** The compare-and-swap options of a write, without the ones a parsed request leaves undefined. */
+export function putOptionsOf(input: SetInput): PutOptions {
+  return {
+    ...(input.ifRev === undefined ? {} : { ifRev: input.ifRev }),
+  }
 }
 
 /** The vault-level input for a write, without the optional keys a parsed request leaves undefined. */

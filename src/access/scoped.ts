@@ -13,6 +13,7 @@ import {
   type EntryValue,
   entryInputOf,
   type SetInput,
+  putOptionsOf,
   toSummary,
   toValue,
   writtenFromAbove,
@@ -240,12 +241,7 @@ export class ScopedVault implements Access {
     if (existing !== undefined && !this.#allows(existing)) {
       throw new TypeVaultError('denied', `the name ${input.name} is not available to this grant`)
     }
-    const { ifRev } = input
-    const stored = await this.#vault.put(
-      entryInputOf(input, tier),
-      await this.#signerFor(tier),
-      ifRev === undefined ? {} : { ifRev },
-    )
+    const stored = await this.#vault.put(entryInputOf(input, tier), await this.#signerFor(tier), putOptionsOf(input))
     await this.#audit({ action: 'write', entries: [input.name], tiers: [tier] })
     return toSummary(valueOf(stored))
   }
