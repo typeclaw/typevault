@@ -32,6 +32,7 @@ import { ensureDaemon, LOCKED_MESSAGE, startSession, stopDaemon } from '../daemo
 import { note } from './output'
 import { ownerChange } from './owner-change'
 import { type Passwords, passwords, passwordsFromStdin } from './password'
+import { promptHeader, touchIdReason, UNLOCK, unlockRequest } from './requester'
 
 export type Env = Readonly<Record<string, string | undefined>>
 
@@ -65,33 +66,41 @@ export function layoutFrom(env: Env, cwd: string = process.cwd()): Layout {
  * The vault opened with this member's own key: direct mode, for owners and issuers. A machine member's key is at
  * hand; a human types their password, since only the daemon keeps an unlocked key around.
  */
-export async function openDirect(env: Env): Promise<Vault> {
+export async function openDirect(env: Env, purpose = UNLOCK): Promise<Vault> {
   const layout = layoutFrom(env)
   const machine = machineKeys(env)
   const identity = readIdentity(env)
   if (machine.length === 0 && identity === undefined) {
     throw new TypeVaultError('denied', 'no grant and no identity here (set TYPEVAULT_GRANT, or run typevault join)')
   }
-  const keys = machine.length > 0 ? machine : [await unlockHuman(env, identity, passwords())]
+  const keys = machine.length > 0 ? machine : [await unlockHuman(env, identity, passwords(), purpose)]
   return Vault.open(layout, keys, env)
 }
 
 /**
  * A person's member key: through Touch ID when they turned it on and are at this Mac's terminal, else (or when Touch
  * ID fails) their password. Without a terminal it stays the password's error, so an agent can't raise the dialog.
- * At a Mac with Touch ID that they haven't turned on, the password prompt suggests it.
+ * At a Mac with Touch ID that they haven't turned on, the password prompt suggests it. Both say who asks and why, so a
+ * person running several agents knows which one wants `purpose`.
  */
-export async function unlockHuman(env: Env, identity: Identity | undefined, passwords: Passwords): Promise<SecretKey> {
+export async function unlockHuman(
+  env: Env,
+  identity: Identity | undefined,
+  passwords: Passwords,
+  purpose = UNLOCK,
+): Promise<SecretKey> {
   if (identity === undefined) throw new TypeVaultError('not_found', 'no identity here (run typevault init or join)')
   if (identity.kind === 'machine') return unlockIdentity(identity)
-  const atThisMac = process.platform === 'darwin' && process.stdin.isTTY === true && !passwordsFromStdin()
+  const atTerminal = process.stdin.isTTY === true && !passwordsFromStdin()
+  const request = atTerminal ? await unlockRequest(purpose, findLayout(env)) : undefined
+  const atThisMac = process.platform === 'darwin' && request !== undefined
   if (identity.touchId === undefined) {
     // The tip is optional: a probe that fails must not stand between the person and their password prompt.
     const tip = atThisMac && (await touchIdAvailable().catch(() => false))
     if (tip) note('tip: skip the password next time with `typevault touch-id enable`')
   } else if (atThisMac) {
     try {
-      return await unlockIdentityWithTouchId(env, identity, identity.touchId)
+      return await unlockIdentityWithTouchId(env, identity, identity.touchId, touchIdReason(request))
     } catch (error) {
       if (!(error instanceof TypeVaultError)) throw error
       note(`${error.message}; asking for your password instead`)
@@ -100,6 +109,7 @@ export async function unlockHuman(env: Env, identity: Identity | undefined, pass
       }
     }
   }
+  if (request !== undefined) note(promptHeader(request))
   return unlockIdentity(identity, await passwords.ask(`Password for ${identity.name}: `))
 }
 
@@ -107,11 +117,16 @@ export async function unlockHuman(env: Env, identity: Identity | undefined, pass
  * Unlocks a human member's session: their key goes to a daemon that holds it for `ttlMs`, and this user's CLI
  * reads through the session grant it writes. Returns the key it unlocked with, or undefined when a session already runs.
  */
-export async function unlockSession(env: Env, passwords: Passwords, ttlMs: number): Promise<SecretKey | undefined> {
+export async function unlockSession(
+  env: Env,
+  passwords: Passwords,
+  ttlMs: number,
+  purpose = UNLOCK,
+): Promise<SecretKey | undefined> {
   const layout = layoutFrom(env)
   if (await hasSession(layout)) return undefined
   const identity = readIdentity(env)
-  const key = await unlockHuman(env, identity, passwords)
+  const key = await unlockHuman(env, identity, passwords, purpose)
   const vault = await Vault.open(layout, [key], env)
   if (vault.member === undefined) {
     throw new TypeVaultError(
@@ -179,7 +194,9 @@ export const openPublic = (env: Env): Promise<Vault> => Vault.open(layoutFrom(en
  */
 export async function runAdmin(env: Env, request: AdminOp): Promise<AdminResult> {
   const direct = machineKeys(env).length > 0 || isSet(env['TYPEVAULT_GRANT'])
-  const result = direct ? await runAdminOp(await openDirect(env), request) : await sessionAdmin(env, request)
+  const result = direct
+    ? await runAdminOp(await openDirect(env, OWNER_CHANGE), request)
+    : await sessionAdmin(env, request)
   if (!result.reloaded) {
     note(
       'the change committed, but the vault could not be reloaded after it: run typevault lock, then typevault unlock',
@@ -189,7 +206,8 @@ export async function runAdmin(env: Env, request: AdminOp): Promise<AdminResult>
 }
 
 async function sessionAdmin(env: Env, request: AdminOp): Promise<AdminResult> {
-  const { access, unlockedWith } = await sessionAccess(env)
+  // Unlocking a locked vault here also approves the change, so that prompt says so too.
+  const { access, unlockedWith } = await sessionAccess(env, OWNER_CHANGE)
   const { open, nonce } = await access.call('/v1/admin/challenge', {}, ChallengeSchema)
   const key = open ? undefined : (unlockedWith ?? (await ownerKey(env)))
   const proof = key === undefined ? undefined : { nonce, signature: sign(key.signSecret, ownerWindowMessage(nonce)) }
@@ -208,8 +226,10 @@ async function ownerKey(env: Env): Promise<SecretKey> {
   if (!process.stdin.isTTY && !passwordsFromStdin()) {
     throw new TypeVaultError('locked', 'owner changes need your password or Touch ID: run this at a terminal')
   }
-  return unlockHuman(env, readIdentity(env), passwords())
+  return unlockHuman(env, readIdentity(env), passwords(), OWNER_CHANGE)
 }
+
+const OWNER_CHANGE = 'approve an owner change'
 
 export type ResolvedAccess =
   | { readonly kind: 'live'; readonly access: LiveAccess }
@@ -245,7 +265,10 @@ export async function resolveAccess(env: Env): Promise<ResolvedAccess> {
  * password right away; anywhere else (an agent) it stays locked until a human unlocks it. `unlockedWith` is the key a
  * person just unlocked with here.
  */
-async function sessionAccess(env: Env): Promise<{ readonly access: LiveAccess; readonly unlockedWith?: SecretKey }> {
+async function sessionAccess(
+  env: Env,
+  purpose = UNLOCK,
+): Promise<{ readonly access: LiveAccess; readonly unlockedWith?: SecretKey }> {
   const layout = layoutFrom(env)
   await checkOwnerPin(layout, env)
   let unlockedWith: SecretKey | undefined
@@ -256,7 +279,7 @@ async function sessionAccess(env: Env): Promise<{ readonly access: LiveAccess; r
     }
     const canAsk = process.stdin.isTTY || passwordsFromStdin()
     if (identity.kind !== 'human' || !canAsk) throw new TypeVaultError('locked', LOCKED_MESSAGE)
-    unlockedWith = await unlockSession(env, passwords(), DEFAULT_SESSION_MS)
+    unlockedWith = await unlockSession(env, passwords(), DEFAULT_SESSION_MS, purpose)
   }
   // A session daemon from another release fails here instead of misreading this CLI's requests.
   await ensureDaemon(layout, env)

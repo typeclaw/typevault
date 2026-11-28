@@ -10,6 +10,7 @@ import { audit, grant } from './commands/grant'
 import { identity, joinCommand, lock, member, passwd, touchId, unlock } from './commands/members'
 import { importCommand, redact, request, run, scrub } from './commands/run'
 import { readPasswordsFromStdin } from './password'
+import { commandIs, commandPath } from './requester'
 
 const main = defineCommand({
   meta: { name: 'typevault', version: PACKAGE_VERSION, description: 'A CLI-first secrets vault for agents' },
@@ -62,6 +63,7 @@ if (argv.slice(0, split).some(isGlobalFlag)) process.env['TYPEVAULT_GLOBAL'] = '
 if (argv.slice(0, split).includes(PASSWORD_STDIN)) readPasswordsFromStdin()
 const ownArgs = argv.slice(0, split).filter((arg) => !isGlobalFlag(arg) && arg !== PASSWORD_STDIN)
 const rawArgs = [...ownArgs, ...argv.slice(split)]
+commandIs(commandPath(main, rawArgs))
 const wantsUsage = ownArgs.length === 0 || ownArgs.some((arg) => arg === '--help' || arg === '-h')
 const wantsVersion = ownArgs.length === 1 && (ownArgs[0] === '--version' || ownArgs[0] === '-v')
 
@@ -77,7 +79,8 @@ if (wantsUsage || wantsVersion) {
       process.exit(1)
     }
     // citty's usage errors (unknown command, missing argument): its own runner prints usage for them.
-    if (error instanceof Error && error.name === 'CLIError') await runMain(main)
+    // The same normalized arguments the prompts were built from: citty rejects them again before any command runs.
+    if (error instanceof Error && error.name === 'CLIError') await runMain(main, { rawArgs })
     else {
       const message = error instanceof Error ? error.message : 'unexpected error'
       process.stderr.write(`typevault: ${message.replaceAll(/[\r\n]+/g, ' ')}\n`)

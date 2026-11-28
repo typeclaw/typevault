@@ -81,7 +81,8 @@ export async function touchIdAvailable(): Promise<boolean> {
   return hasTouchId()
 }
 
-export async function openWithTouchId(env: Env, seal: TouchIdSeal, reason = 'unlock your vault'): Promise<Uint8Array> {
+/** `reason` completes the dialog's "typevault is trying to <reason>." */
+export async function openWithTouchId(env: Env, seal: TouchIdSeal, reason: string): Promise<Uint8Array> {
   const { exchangeWithEnclave } = await import('./secure-enclave')
   return openFromEnclave(seal, (handle, ephemeral) => exchangeWithEnclave(env, handle, ephemeral, reason))
 }

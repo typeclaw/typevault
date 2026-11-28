@@ -125,8 +125,13 @@ export const sealMemberKeyForTouchId = (env: Env, key: SecretKey): Promise<Touch
   enableTouchId(env, utf8(encodeSecretKey(key)))
 
 /** The member key through Touch ID; it must be this identity's own, whatever identity.json was given. */
-export async function unlockIdentityWithTouchId(env: Env, identity: Identity, seal: TouchIdSeal): Promise<SecretKey> {
-  const key = decodeSecretKey(fromUtf8(await openWithTouchId(env, seal)))
+export async function unlockIdentityWithTouchId(
+  env: Env,
+  identity: Identity,
+  seal: TouchIdSeal,
+  reason: string,
+): Promise<SecretKey> {
+  const key = decodeSecretKey(fromUtf8(await openWithTouchId(env, seal, reason)))
   const pub = await publicKeyOf(key)
   if (key.role.kind !== 'member' || pub.recipient !== identity.recipient || pub.signPublic !== identity.signPublic) {
     throw new TypeVaultError('tampered', "the Touch ID copy is not this identity's key")

@@ -55,7 +55,7 @@ it('turning Touch ID on takes one touch, and the next touch opens the member key
   const { identity, key } = await createIdentity('alice', 'human', 'pw')
 
   const seal = await sealMemberKeyForTouchId({}, key)
-  const opened = await unlockIdentityWithTouchId({}, identity, seal)
+  const opened = await unlockIdentityWithTouchId({}, identity, seal, 'unlock your vault')
 
   expect(await publicKeyOf(opened)).toEqual(await publicKeyOf(key))
   expect(touchReasons).toEqual(['turn on Touch ID unlock', 'unlock your vault'])
@@ -66,7 +66,9 @@ it("refuses a Touch ID copy of another member's key", async () => {
   const bob = await createIdentity('bob', 'human', 'pw')
   const bobSeal = await sealMemberKeyForTouchId({}, bob.key)
 
-  await expect(unlockIdentityWithTouchId({}, alice.identity, bobSeal)).rejects.toMatchObject({ code: 'tampered' })
+  await expect(unlockIdentityWithTouchId({}, alice.identity, bobSeal, 'unlock your vault')).rejects.toMatchObject({
+    code: 'tampered',
+  })
 })
 
 it('refuses another enclave key and a changed ciphertext', async () => {
