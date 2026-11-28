@@ -22,7 +22,7 @@ Each segment is letters and digits of any script with `@`, `+`, and `-` or `.` b
 Latin mixes only with Chinese, Japanese or Korean in one segment, so a lookalike such as a Cyrillic `а` in `github` is refused.
 No environments, no domains, no tier in the name.
 
-Each field stores its own type: `secret` (sensitive string), `text` (public string), `totp` (seed or otpauth URI), or `oauth` (an object with `access_token` and optional `refresh_token`, `expires_at`, `token_url`, `client_id`, `client_secret`). OAuth reads yield the access token and refresh expired credentials when possible.
+Each field stores its own type: `secret` (sensitive string), `text` (public string), `totp` (seed or otpauth URI), `oauth` (an object with `access_token` and optional `refresh_token`, `expires_at`, `token_url`, `client_id`, `client_secret`), or `passkey` (a WebAuthn credential: `rp_id`, `credential_id`, `private_key` as a PKCS#8 P-256 key, `discoverable`, and optional `user_handle`, `user_name` and `sign_count`; the ids and key are canonical base64url without padding, and a discoverable credential needs its `user_handle`). A write must say `discoverable` explicitly; a Bitwarden import reads a missing or null value as `false`, Bitwarden's own default. OAuth reads yield the access token and refresh expired credentials when possible. A passkey reads as its JSON object, for a program that signs with it.
 
 Presets only pre-fill fields at write time; no preset is stored:
 
@@ -35,7 +35,7 @@ Presets only pre-fill fields at write time; no preset is stored:
 | `totp`     | $default(totp)                                          | $default           |
 | `note`     | $default(secret)                                        | $default           |
 
-Without a preset, `set --stdin` stores `$default` (or overwrites the existing default field). Bare references choose `$default`, else the only field, else fail and list the fields. A login with several fields needs `#password` or another selector. `#$default` is rejected; use the bare name. OAuth parts use `#field.refresh_token`, or `#refresh_token` for the default field; an actual field with that name wins.
+Without a preset, `set --stdin` stores `$default` (or overwrites the existing default field). Bare references choose `$default`, else the only field, else fail and list the fields. A login with several fields needs `#password` or another selector. `#$default` is rejected; use the bare name. OAuth parts use `#field.refresh_token`, or `#refresh_token` for the default field; an actual field with that name wins. Passkey parts work the same way (`#passkey.user_name`); only `private_key` is secret.
 
 Field names keep their case, with up to 64 characters and no `=`, controls or surrounding spaces. Names starting with `$` are reserved except `$default`:
 
@@ -50,6 +50,13 @@ The `$default` field uses the entry name alone: `typevault://openai` becomes `OP
 outside Latin gets no variables at all; reach its fields with references. Override the default field's variable with `--env`.
 In `run`, TOTP fields carry the current code; `otp [ref]` prints a selected TOTP field, the default when typed TOTP, or the only TOTP field. `get` keeps the raw stored seed.
 `--field k=v` always writes a `text` field. Pass secrets through stdin, the browser, or `--prompt` (a hidden terminal prompt for the main field; not for OAuth JSON or SSH keys). `--stdin-json` accepts strings or full `{"type":"secret","value":"…"}` objects. Updates merge existing fields and preserve their types; `--replace` replaces all fields.
+
+A passkey is written as a typed field. `--stdin` writes only the main field (the preset's input, else `$default` or the only field), so on a login that also has `username` or `password` it would not reach `passkey`; name the field with `--stdin-json` instead:
+
+```sh
+echo '{"passkey":{"type":"passkey","value":{"rp_id":"example.com","credential_id":"…","private_key":"…","discoverable":true,"user_handle":"…"}}}' \
+  | typevault set typevault://example/bot --stdin-json
+```
 
 ### What `run` loads
 
