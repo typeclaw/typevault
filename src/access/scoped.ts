@@ -1,4 +1,5 @@
 import { appendAudit, type AuditEvent, type AuditMode } from '../audit/log'
+import { canonicalJson, type Json } from '../core/encoding'
 import { signerOf } from '../core/entries'
 import { TypeVaultError } from '../core/errors'
 import { withLock } from '../core/lock'
@@ -30,6 +31,16 @@ export type ScopedIdentity = {
   /** Tier used by `set` when the caller names none. */
   readonly defaultTier?: string
 }
+
+// Writes that keep landing during each refresh retry are a writer storm, not a race to wait out.
+const REFRESH_ATTEMPTS = 3
+
+// Key order means nothing in a field, so a writer that re-serializes an OAuth map must not look like a replacement.
+const sameEnvelope = (a: StoredEntry, b: StoredEntry): boolean =>
+  canonicalJson(a.envelope as unknown as Json) === canonicalJson(b.envelope as unknown as Json)
+
+const sameField = (a: Field | undefined, b: Field | undefined): boolean =>
+  a !== undefined && b !== undefined && canonicalJson(a as Json) === canonicalJson(b as Json)
 
 const valueOf = (entry: StoredEntry): EntryValue =>
   toValue(entry.envelope.tier, entry.envelope.id, entry.envelope.rev, entry.payload)
@@ -83,6 +94,13 @@ export class ScopedVault implements Access {
     return [...byName.values()].flatMap((copies) => resolveName(this.#vault.state.tiers, copies) ?? [])
   }
 
+  /** The copy of `name` this scope sees, chosen as `#visible` chooses it, without resolving any other name. */
+  async #visibleCopy(name: EntryName): Promise<StoredEntry | undefined> {
+    const { entries } = await this.#vault.scan()
+    const copies = entries.filter((entry) => entry.payload.name === name && this.#allows(entry))
+    return resolveName(this.#vault.state.tiers, copies)
+  }
+
   async unreadableEntries(): Promise<number> {
     return (await this.#vault.scan()).problems.length
   }
@@ -134,9 +152,80 @@ export class ScopedVault implements Access {
     return changed ? this.#storeRefreshed(entry, fields) : entry
   }
 
+  /**
+   * Stores the refreshed OAuth fields of `entry`. The provider call ran outside the vault lock, so another write may
+   * have landed since `entry` was read: the write is a compare-and-swap, and after a conflict only the OAuth fields
+   * still holding the value refreshed from are replaced, leaving every other change as it was. The re-read goes
+   * through this grant's scope against the vault's current tiers, so an entry the grant lost meanwhile is neither
+   * written nor returned. A removed or replaced entry gets nothing, and neither does one whose refreshed fields were
+   * all rewritten by someone else: there is nothing left to store, so it is returned as it stands.
+   */
   async #storeRefreshed(entry: StoredEntry, fields: Readonly<Record<string, Field>>): Promise<StoredEntry> {
+    const refreshed = Object.entries(fields).filter(([field, value]) => value !== entry.payload.fields[field])
+    let current = entry
+    for (let attempt = 0; attempt < REFRESH_ATTEMPTS; attempt++) {
+      const read = current
+      const merged = { ...read.payload.fields }
+      let applied = false
+      for (const [field, value] of refreshed) {
+        if (!sameField(current.payload.fields[field], entry.payload.fields[field])) continue
+        merged[field] = value
+        applied = true
+      }
+      if (!applied) return current
+      try {
+        const stored = await this.#vault.put(
+          this.#refreshInput(current, merged),
+          signerOf(await this.#refreshKey(current)),
+          // A refresh replaces short-lived tokens, not the credentials a rotation warning is about.
+          {
+            copy: read.envelope.id,
+            ifRev: read.envelope.rev,
+            rotates: false,
+            // Access can be withdrawn, or another copy can come to win the name in this scope, without this copy's
+            // revision changing, so both are judged under the lock, not just here. Two writes from one sealed bundle
+            // even share an id and revision, so the copy must also be byte for byte the one this attempt read.
+            allows: (found, copies) => {
+              if (!this.#allows(found)) return false
+              const winner = resolveName(
+                this.#vault.state.tiers,
+                copies.filter((copy) => this.#allows(copy)),
+              )
+              if (winner?.envelope.id !== found.envelope.id || !sameEnvelope(found, read)) {
+                throw new TypeVaultError(
+                  'conflict',
+                  `${found.payload.name} changed while its token was refreshed; read it again`,
+                )
+              }
+              return true
+            },
+          },
+        )
+        await this.#audit({ action: 'refresh', entries: [entry.payload.name] })
+        return stored
+      } catch (error) {
+        if (!(error instanceof TypeVaultError) || error.code !== 'conflict') throw error
+      }
+      // The copy this grant sees, chosen as `values()` chose it, so a same-name copy in another tier never stands in.
+      const found = await this.#visibleCopy(entry.payload.name)
+      if (found === undefined) throw new TypeVaultError('not_found', `no entry named ${entry.payload.name}`)
+      if (found.envelope.id !== entry.envelope.id) {
+        throw new TypeVaultError(
+          'conflict',
+          `${entry.payload.name} changed while its token was refreshed; read it again`,
+        )
+      }
+      current = found
+    }
+    throw new TypeVaultError(
+      'conflict',
+      `${entry.payload.name} kept changing while its token was refreshed; read it again`,
+    )
+  }
+
+  #refreshInput(entry: StoredEntry, fields: Readonly<Record<string, Field>>) {
     const { name, env, origin, tags } = entry.payload
-    const input = {
+    return {
       name,
       fields,
       tier: entry.envelope.tier,
@@ -144,8 +233,11 @@ export class ScopedVault implements Access {
       ...(env === undefined ? {} : { env }),
       ...(origin === undefined ? {} : { origin }),
     }
-    // A read must not promote the original writer's metadata to the reader's authority. Reuse its owner/tier
-    // key when held; certificates and unavailable signing keys narrow to the entry's own tier.
+  }
+
+  // A read must not promote the original writer's metadata to the reader's authority. Reuse its owner/tier key when
+  // held; certificates and unavailable signing keys narrow to the entry's own tier.
+  async #refreshKey(entry: StoredEntry) {
     const { signer, tier } = entry.envelope
     const original =
       signer.kind === 'owner'
@@ -155,10 +247,7 @@ export class ScopedVault implements Access {
           : undefined
     const key = original ?? (await this.#vault.keyring.unlock(tier))
     if (key === undefined) throw new TypeVaultError('denied', `no key here can refresh tier "${tier}"`)
-    // A refresh replaces short-lived tokens, not the credentials a rotation warning is about.
-    const refreshed = await this.#vault.put(input, signerOf(key), { rotates: false })
-    await this.#audit({ action: 'refresh', entries: [name] })
-    return refreshed
+    return key
   }
 
   #remember(value: EntryValue): EntryValue {

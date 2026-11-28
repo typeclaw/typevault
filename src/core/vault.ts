@@ -45,6 +45,18 @@ export type PutOptions = {
   readonly ifId?: string
   /** False for a write that changes fields without rotating the entry's credentials (an OAuth refresh, a counter). */
   readonly rotates?: boolean
+  /**
+   * Replace exactly the copy with this id instead of the copy the name resolves to: a scoped writer's own copy of a
+   * name that several tiers hold. A copy no longer stored is a conflict.
+   */
+  readonly copy?: string
+  /**
+   * Judges the copy being replaced under the write lock, against the state that lock just loaded, given every verified
+   * copy of the name: a scoped writer's own check that it may still write that copy, and that the copy is still the
+   * one its scope resolves the name to. An owner-backed vault would otherwise pass any copy it can open. Refused is
+   * not found.
+   */
+  readonly allows?: (found: StoredEntry, copies: readonly StoredEntry[]) => boolean
   readonly base?: EntryBase
 }
 
@@ -67,6 +79,12 @@ function parseJson(bytes: Uint8Array): unknown {
     if (error instanceof SyntaxError || error instanceof TypeError) return undefined
     throw error
   }
+}
+
+function copyIn(copies: readonly StoredEntry[], name: EntryName, id: string): StoredEntry {
+  const copy = copies.find((entry) => entry.envelope.id === id)
+  if (copy === undefined) throw new TypeVaultError('conflict', `${name} no longer has the copy ${id}`)
+  return copy
 }
 
 const sameFields = (a: Readonly<Record<string, Field>>, b: Readonly<Record<string, Field>>): boolean =>
@@ -247,6 +265,11 @@ export class Vault {
     )
   }
 
+  async #copies(name: EntryName): Promise<readonly StoredEntry[]> {
+    const { entries } = await this.scan()
+    return entries.filter((entry) => entry.payload.name === name)
+  }
+
   /** The envelope that writing `input` over `found` (or a blind writer's `base`) produces. */
   async #draft(
     input: EntryInput,
@@ -292,7 +315,22 @@ export class Vault {
    */
   put(input: EntryInput, signer: SignerContext, options: PutOptions = {}): Promise<StoredEntry> {
     return withLock(this.layout.lockFile, 'exclusive', async () => {
-      const found = await this.find(input.name)
+      const copies =
+        options.copy === undefined && options.allows === undefined ? undefined : await this.#copies(input.name)
+      const found =
+        copies === undefined
+          ? await this.find(input.name)
+          : options.copy === undefined
+            ? resolveName(this.#state.tiers, copies)
+            : copyIn(copies, input.name, options.copy)
+      if (
+        found !== undefined &&
+        copies !== undefined &&
+        options.allows !== undefined &&
+        !options.allows(found, copies)
+      ) {
+        throw new TypeVaultError('not_found', `no entry named ${input.name}`)
+      }
       const stored = await this.#draft(input, found, options, signer)
       atomicWrite(
         join(this.layout.entries, `${stored.envelope.id}.json`),
