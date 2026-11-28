@@ -3,7 +3,7 @@ import { TypeVaultError } from './errors'
 
 export type FieldType = 'secret' | 'text' | 'totp' | 'oauth' | 'passkey'
 /**
- * A WebAuthn credential. The ids and the PKCS#8 P-256 private key are base64url without padding. A discoverable
+ * A WebAuthn credential. The ids and the PKCS#8 private key (P-256, Ed25519 or RSA, as the site chose) are base64url without padding. A discoverable
  * credential (a site can find it with no allow-list, for username-less sign-in) always has its user handle.
  */
 export type Passkey = {

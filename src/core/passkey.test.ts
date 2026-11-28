@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'bun:test'
+import { generateKeyPairSync, type KeyObject } from 'node:crypto'
 
 import { p256 as curve } from '@noble/curves/nist.js'
 
 import { fromBase64Url, toBase64Url } from './encoding'
-import { decodeBase64Url, isP256PrivateKey, isUserHandle } from './passkey'
+import { decodeBase64Url, isP256PrivateKey, isPasskeyPrivateKey, isUserHandle } from './passkey'
 import { der, generatePasskeyKey, P256_PARAMETERS, pkcs8Of, publicKeyField } from './passkey.harness'
 
 const p256 = fromBase64Url(await generatePasskeyKey())
@@ -43,6 +44,103 @@ describe('isP256PrivateKey', () => {
     ],
   ])('refuses %s', (_, bytes) => {
     expect(isP256PrivateKey(bytes)).toBe(false)
+  })
+})
+
+const RSA_HEADER = [
+  0x02, 0x01, 0x00, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00,
+]
+
+describe('isPasskeyPrivateKey', () => {
+  const pkcs8 = (key: KeyObject) => new Uint8Array(key.export({ format: 'der', type: 'pkcs8' }))
+  const ed25519 = pkcs8(generateKeyPairSync('ed25519').privateKey)
+  const rsaKey = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey
+  const rsa = pkcs8(rsaKey)
+  // DER with a two-byte length, which an RSA key's structures need.
+  const long = (tag: number, content: Uint8Array): Uint8Array =>
+    new Uint8Array([tag, 0x82, content.length >> 8, content.length & 0xff, ...content])
+  // The version and rsaEncryption AlgorithmIdentifier, then an RSAPrivateKey of the given numbers.
+  const rsaPkcs8 = (numbers: Uint8Array): Uint8Array =>
+    long(0x30, new Uint8Array([...RSA_HEADER, ...long(0x04, long(0x30, numbers))]))
+  const numbers = new Uint8Array(rsaKey.export({ format: 'der', type: 'pkcs1' })).subarray(4)
+  const rsaRebuilt = rsaPkcs8(numbers)
+  const rsaWithExtraNumber = rsaPkcs8(new Uint8Array([...numbers, 0x02, 0x01, 0x01]))
+  // An RSA key from its numbers, so a test can pick numbers that agree with one another but break one of BoringSSL's
+  // bounds.
+  const jwk = rsaKey.export({ format: 'jwk' })
+  const big = (field: string | undefined): bigint =>
+    BigInt(`0x${Buffer.from(field ?? '', 'base64url').toString('hex')}`)
+  const [n, d, p, q] = [big(jwk.n), big(jwk.d), big(jwk.p), big(jwk.q)]
+  const integer = (value: bigint): number[] => {
+    let digits = value.toString(16)
+    if (digits.length % 2 === 1) digits = `0${digits}`
+    if (Number.parseInt(digits.slice(0, 2), 16) >= 0x80) digits = `00${digits}`
+    const bytes = [...Buffer.from(digits, 'hex')]
+    const length =
+      bytes.length < 0x80
+        ? [bytes.length]
+        : bytes.length < 0x100
+          ? [0x81, bytes.length]
+          : [0x82, bytes.length >> 8, bytes.length & 0xff]
+    return [0x02, ...length, ...bytes]
+  }
+  const inverse = (value: bigint, modulus: bigint): bigint => {
+    let [a, b, x, y] = [value % modulus, modulus, 1n, 0n]
+    while (b !== 0n) {
+      const k = a / b
+      ;[a, b, x, y] = [b, a - k * b, y, x - k * y]
+    }
+    return ((x % modulus) + modulus) % modulus
+  }
+  const rsaOf = (e: bigint, privateExponent: bigint): Uint8Array =>
+    rsaPkcs8(
+      new Uint8Array(
+        [
+          0n,
+          n,
+          e,
+          privateExponent,
+          p,
+          q,
+          privateExponent % (p - 1n),
+          privateExponent % (q - 1n),
+          inverse(q, p),
+        ].flatMap(integer),
+      ),
+    )
+  const phi = (p - 1n) * (q - 1n)
+  const gcd = (a: bigint, b: bigint): bigint => (b === 0n ? a : gcd(b, a % b))
+  // A 35-bit exponent with an inverse modulo φ, so only the 33-bit bound can refuse the key it builds.
+  let wideExponent = (1n << 34n) + 1n
+  while (gcd(wideExponent, phi) !== 1n) wideExponent += 2n
+  const rsaRebuiltFromNumbers = rsaOf(big(jwk.e), d)
+
+  it.each([
+    ['a P-256 key', p256],
+    ['an Ed25519 key', ed25519],
+    ['an RSA key', rsa],
+  ])('accepts %s, as Chromium creates for ES256, EdDSA and RS256', (_, bytes) => {
+    expect(isPasskeyPrivateKey(bytes)).toBe(true)
+  })
+
+  it('accepts the RSA keys this test rebuilds, so each malformed rebuild below differs only by what it breaks', () => {
+    expect(isPasskeyPrivateKey(rsaRebuilt)).toBe(true)
+    expect(isPasskeyPrivateKey(rsaRebuiltFromNumbers)).toBe(true)
+  })
+
+  it.each([
+    ['a P-384 key', p384],
+    ['an X25519 key', pkcs8(generateKeyPairSync('x25519').privateKey)],
+    ['a truncated Ed25519 key', ed25519.subarray(0, ed25519.length - 1)],
+    ['an Ed25519 key with trailing bytes', new Uint8Array([...ed25519, 0])],
+    ['an RSA key with trailing bytes', new Uint8Array([...rsa, 0])],
+    ['a truncated RSA key', rsa.subarray(0, rsa.length - 10)],
+    ['an RSA key with a number after its eight', rsaWithExtraNumber],
+    ['an RSA key whose private exponent, though consistent, is not below the modulus', rsaOf(big(jwk.e), d + 2n * phi)],
+    ['an RSA key with a public exponent of more than 33 bits', rsaOf(wideExponent, inverse(wideExponent, phi))],
+    ['an RSA key whose numbers disagree', new Uint8Array([...rsa.subarray(0, -1), (rsa.at(-1) ?? 0) ^ 0x01])],
+  ])('refuses %s', (_, bytes) => {
+    expect(isPasskeyPrivateKey(bytes)).toBe(false)
   })
 })
 

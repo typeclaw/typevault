@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { fromUtf8, utf8 } from './encoding'
 import { TypeVaultError } from './errors'
 import { type EntryName, type Field, isFieldName, isUsableEnvName, parseEntryName } from './naming'
-import { decodeBase64Url, isP256PrivateKey, isUserHandle, MAX_SIGN_COUNT } from './passkey'
+import { decodeBase64Url, isPasskeyPrivateKey, isUserHandle, MAX_SIGN_COUNT } from './passkey'
 
 /** The plaintext sealed inside an entry file: everything except the tier is secret. */
 export type EntryPayload = {
@@ -45,8 +45,8 @@ export const FieldSchema = z.discriminatedUnion('type', [
           credential_id: Base64UrlSchema,
           private_key: z.string().refine((key) => {
             const bytes = decodeBase64Url(key)
-            return bytes !== undefined && isP256PrivateKey(bytes)
-          }, 'expected a PKCS#8 P-256 private key in base64url'),
+            return bytes !== undefined && isPasskeyPrivateKey(bytes)
+          }, 'expected a PKCS#8 P-256, Ed25519 or RSA private key in base64url'),
           discoverable: z.boolean(),
           user_handle: z
             .string()
