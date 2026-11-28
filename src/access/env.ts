@@ -38,7 +38,9 @@ export function envFor(values: readonly EntryValue[], now: Date, policy: EnvPoli
   const owner = new Map<string, string>()
   for (const value of values.filter((candidate) => envEligible(candidate, policy))) {
     for (const [field, raw] of Object.entries(value.fields)) {
-      if (fieldValue(raw) === '') continue
+      // Every child of run gets this projection, so a passkey's private key would reach programs that never asked
+      // for it. A program that signs with one names it with a typevault:// reference instead.
+      if (raw.type === 'passkey' || fieldValue(raw) === '') continue
       // An entry from an included tier may pick its variable name only if its writer is at least as privileged
       // as the runner; otherwise it gets the derived name, so a lower writer can't aim it at OPENAI_BASE_URL.
       const ownOverride =

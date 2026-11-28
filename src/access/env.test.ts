@@ -104,13 +104,18 @@ describe('passkey fields', () => {
   }
   const entry: EntryValue = { ...value, fields: { passkey: { type: 'passkey', value: passkey } } }
 
-  it('loads the whole credential as JSON for a program to sign with', () => {
-    expect(envFor([entry], now, policy)).toEqual({ SERVICE_PASSKEY: JSON.stringify(passkey) })
+  it("leaves a passkey out of the projection every child gets, keeping the entry's other fields", () => {
+    const login = { ...entry, fields: { ...entry.fields, username: { type: 'text' as const, value: 'bob' } } }
+    expect(envFor([login], now, policy)).toEqual({ SERVICE_USERNAME: 'bob' })
   })
 
-  it('resolves a reference to one part', async () => {
-    const resolved = await resolveEnvRefs({ KEY: 'typevault://service#passkey.private_key' }, async () => entry, now)
-    expect(resolved.env).toEqual({ KEY: key })
+  it('hands the whole credential as JSON, or one part, to a program that names it in a reference', async () => {
+    const resolved = await resolveEnvRefs(
+      { CREDENTIAL: 'typevault://service#passkey', KEY: 'typevault://service#passkey.private_key' },
+      async () => entry,
+      now,
+    )
+    expect(resolved.env).toEqual({ CREDENTIAL: JSON.stringify(passkey), KEY: key })
   })
 
   it('redacts the private key as stored and in the standard base64 Chrome DevTools carries it in', () => {
